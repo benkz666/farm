@@ -36,7 +36,7 @@ function onLogin() {
   return run('login', () => client.login(username.value.trim(), password.value))
 }
 
-/** 登录（或沿用已有 token）→ connect → handshake → enterFarm(0) */
+/** 登录（或沿用已有 token）→ connect → handshake → enterFarm(0) → 切入 online */
 function onFetchSnapshot() {
   return run('enterFarm', async () => {
     if (!client.token) {
@@ -48,7 +48,15 @@ function onFetchSnapshot() {
       throw new Error(`handshake err=${hs.err}`)
     }
     const enter = await client.enterFarm(0)
-    return enter
+    if (enter.err !== 0) {
+      throw new Error(`enterFarm err=${enter.err}`)
+    }
+    const farm = window.__farm
+    if (!farm?.enterOnlineFromNet) {
+      throw new Error('game main not ready (__farm.enterOnlineFromNet)')
+    }
+    farm.enterOnlineFromNet(client, enter)
+    return { err: enter.err, online: true, uid: client.uid, payload: enter.payload }
   })
 }
 </script>

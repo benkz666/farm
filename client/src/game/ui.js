@@ -163,7 +163,7 @@ export class UI {
         btn.className = 'buy-btn';
         btn.textContent = locked ? `Lv.${c.unlock} 解锁` : '购买';
         btn.disabled = locked || state.gold < c.seedPrice;
-        btn.onclick = () => { this.cb.onBuySeed(c.id); this.renderShop(state, tab); };
+        btn.onclick = async () => { await this.cb.onBuySeed(c.id); this.renderShop(this.cb.getState(), tab); };
         card.appendChild(btn);
         grid.appendChild(card);
       }
@@ -261,7 +261,7 @@ export class UI {
     head.innerHTML = `<span style="font-weight:800;color:var(--brown)">总估值 💰 ${total.toLocaleString()}</span>`;
     const sellAll = document.createElement('button');
     sellAll.className = 'act-btn green'; sellAll.textContent = '全部出售';
-    sellAll.onclick = () => { this.cb.onSellAll(); this.renderBarn(state); };
+    sellAll.onclick = async () => { await this.cb.onSellAll(); this.renderBarn(this.cb.getState()); };
     head.appendChild(sellAll);
     body.appendChild(head);
     for (const [id, n] of items) {
@@ -272,7 +272,7 @@ export class UI {
         <div class="sub">单价 💰${c.fruitPrice} · 小计 💰${(n * c.fruitPrice).toLocaleString()}</div></div><b>×${n}</b>`;
       const btn = document.createElement('button');
       btn.className = 'act-btn green'; btn.textContent = '出售';
-      btn.onclick = () => { this.cb.onSell(id, n); this.renderBarn(state); };
+      btn.onclick = async () => { await this.cb.onSell(id, n); this.renderBarn(this.cb.getState()); };
       row.appendChild(btn);
       body.appendChild(row);
     }

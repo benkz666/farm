@@ -15,6 +15,11 @@ import { PLOT, defaultState, saveGame, loadGame, clearSave, levelOf, drawDailyTa
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
+import { enterOnline, isOnline } from '../net/session.js';
+import { CMD_PLANT } from '../net/client.js';
+import { errText } from '../net/errors.js';
+import { applyPatch, cropKeyToId } from './applyPatch.js';
+import { plotCmdForTool } from './onlineActions.js';
 
 // ---------------- 初始化 ----------------
 let state = loadGame() || defaultState();
@@ -31,6 +36,11 @@ let activeTool = null;
 let selectedSeed = null;
 let selectedFert = null;
 let hoverPlot = null;
+
+/** @type {import('../net/client.js').NetClient|null} */
+let netClient = null;
+/** 等 Rsp 期间防连点 */
+let onlineBusy = false;
 
 const hourMs = () => TIME_SCALES[state.timeScale].hourMs;
 const myLevel = () => levelOf(state.exp);
@@ -426,8 +436,189 @@ function npcStealFromMe(friend, now) {
   addMail({ title: '😿 作物被偷', content: `${friend.name} 偷走了你的 ${crop.name} ×${n}。`, gold: 0 });
 }
 
+// ---------------- online 入口（DevNetPanel / 联调） ----------------
+/**
+ * 登录 + Handshake + EnterFarm 成功后切入 online：applyPatch 快照并记录会话。
+ * @param {import('../net/client.js').NetClient} client
+ * @param {import('../net/client.js').Envelope} enterEnv
+ */
+function enterOnlineFromNet(client, enterEnv) {
+  if (!client?.uid || !client?.token) {
+    throw new Error('enterOnlineFromNet: missing uid/token');
+  }
+  if (!enterEnv || enterEnv.err !== 0) {
+    throw new Error(`enterOnlineFromNet: enterFarm err=${enterEnv?.err}`);
+  }
+  applyPatch(state, enterEnv.payload || {});
+  enterOnline({ uid: client.uid, token: client.token });
+  netClient = client;
+  viewing = 'me';
+  ui.setVisitor?.(null);
+  refreshToolbar();
+  refreshSubBar();
+  syncAllPlots();
+  ui.updateHUD(state);
+  ui.toast('已进入 online 模式：操作将发往服务端', 'ok');
+}
+
+function playOnlineFx(tool, plotId) {
+  switch (tool) {
+    case 'till':
+      sfx.till();
+      scene.burst(plotId, 0x8d6e63, 12, true);
+      break;
+    case 'plant':
+      sfx.plant();
+      scene.burst(plotId, 0x9be15d, 12, true);
+      break;
+    case 'water':
+      sfx.water();
+      scene.waterAnim(plotId);
+      break;
+    case 'weed':
+      sfx.weed();
+      scene.burst(plotId, 0x81c784, 10, true);
+      break;
+    case 'pest':
+      sfx.pest();
+      scene.burst(plotId, 0xffb74d, 10, true);
+      break;
+    case 'harvest':
+      sfx.harvest();
+      scene.harvestAnim(plotId);
+      break;
+    default:
+      break;
+  }
+}
+
+/** online：发意图 → 等 Rsp → applyPatch；失败 toast 不改地块 */
+async function onPlotClickOnline(plotId) {
+  if (onlineBusy || !netClient) return;
+  const farm = currentFarm();
+  const plot = farm.plots[plotId];
+  if (!plot || plotId >= farm.unlocked) return;
+
+  if (activeTool === 'fert') {
+    return fail('online 暂不支持施肥（期 2c）');
+  }
+  if (!activeTool) return showPlotTip(plotId);
+
+  const cmd = plotCmdForTool(activeTool, plot.state);
+  if (cmd == null) {
+    if (activeTool === 'till') return fail('这块地不需要锄地');
+    return showPlotTip(plotId);
+  }
+
+  let arg = 0;
+  if (cmd === CMD_PLANT) {
+    arg = cropKeyToId(selectedSeed);
+    if (!arg) return fail('请先选择种子');
+  }
+
+  onlineBusy = true;
+  try {
+    const rsp = await netClient.plotAction(cmd, plotId, arg);
+    if (rsp.err !== 0) {
+      fail(errText(rsp.err));
+      return;
+    }
+    applyPatch(state, rsp.payload || {});
+    playOnlineFx(activeTool, plotId);
+    ok(activeTool === 'harvest' ? '收获成功' : '操作成功');
+    ui.updateHUD(state);
+    syncAllPlots();
+    refreshSubBar();
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function onlineBuySeed(id) {
+  if (onlineBusy || !netClient) return;
+  const itemId = cropKeyToId(id);
+  if (!itemId) return fail('商品不存在');
+  onlineBusy = true;
+  try {
+    const rsp = await netClient.buy(itemId, 1);
+    if (rsp.err !== 0) {
+      fail(errText(rsp.err));
+      return;
+    }
+    applyPatch(state, rsp.payload || {});
+    sfx.gold();
+    const c = CROP_MAP[id];
+    ui.toast(`购买 ${c?.name || id} 种子 ×1`, 'ok');
+    ui.updateHUD(state);
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function onlineSell(id, n) {
+  if (onlineBusy || !netClient) return;
+  const itemId = cropKeyToId(id);
+  if (!itemId) return fail('该物品不可出售');
+  const have = state.warehouse[id] || 0;
+  const count = Math.min(n, have);
+  if (count <= 0) return;
+  onlineBusy = true;
+  try {
+    const rsp = await netClient.sell(itemId, count);
+    if (rsp.err !== 0) {
+      fail(errText(rsp.err));
+      return;
+    }
+    applyPatch(state, rsp.payload || {});
+    sfx.gold();
+    const c = CROP_MAP[id];
+    ui.toast(`出售 ${c?.name || id} ×${count}`, 'gold');
+    ui.updateHUD(state);
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function onlineSellAll() {
+  if (onlineBusy || !netClient) return;
+  const entries = Object.entries(state.warehouse).filter(([, n]) => n > 0);
+  if (!entries.length) return;
+  onlineBusy = true;
+  try {
+    for (const [id, n] of entries) {
+      const itemId = cropKeyToId(id);
+      if (!itemId) continue;
+      const rsp = await netClient.sell(itemId, n);
+      if (rsp.err !== 0) {
+        fail(errText(rsp.err));
+        break;
+      }
+      applyPatch(state, rsp.payload || {});
+    }
+    sfx.gold();
+    ui.toast('出售完成', 'gold');
+    ui.updateHUD(state);
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  } finally {
+    onlineBusy = false;
+  }
+}
+
 // ---------------- 地块点击 ----------------
 function onPlotClick(plotId) {
+  // online 自家农场：发 WS 意图，等 Rsp 再 patch
+  if (isOnline() && viewing === 'me') {
+    void onPlotClickOnline(plotId);
+    return;
+  }
+
   const now = Date.now();
   const farm = currentFarm();
   const plot = farm.plots[plotId];
@@ -640,7 +831,8 @@ const ui = new UI({
     }
   },
 
-  onBuySeed(id) {
+  async onBuySeed(id) {
+    if (isOnline()) return onlineBuySeed(id);
     const c = CROP_MAP[id];
     if (state.gold < c.seedPrice) return fail('金币不足');
     addGold(-c.seedPrice);
@@ -684,7 +876,8 @@ const ui = new UI({
     ui.toast(`🐶 ${d.name} 开始为你看家护院！`, 'gold');
   },
 
-  onSell(id, n) {
+  async onSell(id, n) {
+    if (isOnline()) return onlineSell(id, n);
     const c = CROP_MAP[id];
     const have = state.warehouse[id] || 0;
     const count = Math.min(n, have);
@@ -697,7 +890,8 @@ const ui = new UI({
     trackEvent('sell');
   },
 
-  onSellAll() {
+  async onSellAll() {
+    if (isOnline()) return onlineSellAll();
     let gain = 0, any = false;
     for (const [id, n] of Object.entries(state.warehouse)) {
       if (n > 0) { gain += n * CROP_MAP[id].fruitPrice; state.warehouse[id] = 0; any = true; }
@@ -784,8 +978,10 @@ function tick() {
 
   checkLogicDay(now);
 
-  // 玩家农场
-  tickPlots({ plots: state.plots, isMe: true }, now);
+  // online：自家地块以服务端为准，不做本地权威推进；NPC 假数据仍可本地运转
+  if (!isOnline()) {
+    tickPlots({ plots: state.plots, isMe: true }, now);
+  }
   // NPC 农场
   for (const f of state.friends) {
     tickPlots({ plots: f.plots, isMe: false }, now);
@@ -794,15 +990,15 @@ function tick() {
     if (f.dog && f.dogBowl <= 0) f.dogBowl = DOG_BOWL_CAP;
   }
 
-  // 玩家狗粮消耗（12.2 节）
+  // 玩家狗粮消耗（12.2 节）；online 暂保留本地狗粮动画
   if (state.dog && state.dogBowl > 0) {
     const dogDef = DOGS.find(d => d.id === state.dog.id);
     state.dogBowl = Math.max(0, state.dogBowl - (dogDef.consumption / hourMs()) * dt);
     if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
   }
 
-  // NPC 来偷菜（随机）
-  if (state.plots.some(p => p.state === PLOT.MATURE)) {
+  // NPC 来偷菜（随机）；online 不跑假偷菜，避免改写服务端镜像
+  if (!isOnline() && state.plots.some(p => p.state === PLOT.MATURE)) {
     for (const f of state.friends) {
       f.nextStealTime = f.nextStealTime || now + 40000 + rand() * 50000;
       if (now >= f.nextStealTime) {
@@ -843,7 +1039,14 @@ const lastMouse = [0, 0];
 addEventListener('pointermove', (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; });
 
 // ---------------- 启动 ----------------
-if (location.search.includes('debug')) window.__farm = { getState: () => state, scene };  // 调试接口（?debug 启用）
+// DevNetPanel / 调试：暴露 online 切入与状态
+window.__farm = {
+  getState: () => state,
+  scene,
+  enterOnlineFromNet,
+  isOnline,
+  getNetClient: () => netClient,
+};
 refreshToolbar();
 syncAllPlots();
 scene.start();
