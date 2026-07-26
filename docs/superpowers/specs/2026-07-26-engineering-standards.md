@@ -21,8 +21,8 @@
 | 期 | 目标 | 主要内容 | 验收 |
 | ---: | --- | --- | --- |
 | **0** | 规范落地 | 本规范 + 期 1 规格；前端归入 `client/`；compose；仓库骨架 | 文档审过；目录就位 |
-| **1** | 联通切片 | 注册/登录、WS Handshake、EnterFarm 快照；Redis+MySQL 轻量读写；`client/js/net` 占位 | 重启后数据仍在；smoke 主路径通过 |
-| **2** | 种植权威 | `advance` + 种植循环；validate/commit；最小配置集 | 服务端可种可收；状态机单测绿 |
+| **1** | 联通切片 | 注册/登录、WS Handshake、EnterFarm 快照；Redis+MySQL 轻量读写；`client` net 联调 | 见 `2026-07-26-phase1-login-farm-snapshot.md`（已完成） |
+| **2** | 种植权威 | `advance` + 种植循环；Buy/Sell；客户端 online 意图（等 Rsp）；期末化肥/多季 | 见 `2026-07-26-phase2-planting-authority.md` |
 | **3** | 多人同步 | 房间、FarmDelta、seq；客户端改为服务端镜像（可先全量刷新） | 两客户端同农场实时一致 |
 | **4** | 社交闭环 | 分享加好友、互助、偷菜+狗；任务/邮件做薄 | 策划重点场景可演示 |
 | **5** | 压测与材料 | 机器人、单机拐点、答辩材料 | 有数据 + 演示脚本 |
