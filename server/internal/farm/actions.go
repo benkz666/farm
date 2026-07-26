@@ -135,6 +135,7 @@ func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {
 	}
 	a.Plots[idx] = Plot{State: StateTilled}
 	a.Exp += 3
+	a.RecalcLevel()
 	a.FarmSeq++
 	return a.okPatch(idx)
 }
@@ -144,6 +145,7 @@ func (a *Aggregate) commitClear(idx uint8, work *Plot) ActionResult {
 	case StateResidue, StateWithered:
 		a.Plots[idx] = Plot{State: StateTilled}
 		a.Exp += 3
+		a.RecalcLevel()
 		a.FarmSeq++
 		return a.okPatch(idx)
 
@@ -199,6 +201,7 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64)
 		LastWaterAt:    now,
 	}
 	a.Exp += 2
+	a.RecalcLevel()
 	a.FarmSeq++
 	return a.okPatch(idx)
 }
@@ -220,6 +223,7 @@ func (a *Aggregate) commitWater(idx uint8, work *Plot, now int64) ActionResult {
 		work.LastWaterAt = now
 		a.Plots[idx] = *work
 		a.Exp += 2
+		a.RecalcLevel()
 		a.FarmSeq++
 		return a.okPatch(idx)
 	default:
@@ -243,6 +247,7 @@ func (a *Aggregate) commitWeed(idx uint8, work *Plot, now int64) ActionResult {
 		work.WeedSince = 0
 		a.Plots[idx] = *work
 		a.Exp += 2
+		a.RecalcLevel()
 		a.FarmSeq++
 		return a.okPatch(idx)
 	default:
@@ -266,6 +271,7 @@ func (a *Aggregate) commitPest(idx uint8, work *Plot, now int64) ActionResult {
 		work.PestSince = 0
 		a.Plots[idx] = *work
 		a.Exp += 2
+		a.RecalcLevel()
 		a.FarmSeq++
 		return a.okPatch(idx)
 	default:
@@ -347,6 +353,7 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 		a.Items[FruitItem(cropID)] += uint32(yield)
 	}
 	a.Exp += crop.HarvestExp
+	a.RecalcLevel()
 
 	if work.SeasonIndex+1 < work.SeasonTotal {
 		enterNextSeason(work, crop, now)

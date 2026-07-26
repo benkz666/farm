@@ -17,4 +17,8 @@ const (
 
 	// MaxPlots 是农场地块总数上限。
 	MaxPlots = 18
+
+	// ExpPerLevel 是到达等级 N 所需的累计经验分母：Level = Exp / ExpPerLevel。
+	// 与客户端 EXP_PER_LEVEL、策划 4.3 节一致（累计门槛 = N × 200）。
+	ExpPerLevel = 200
 )

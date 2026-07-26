@@ -62,3 +62,11 @@ func NewAggregate(uid uint64, nickname string) *Aggregate {
 	}
 	return agg
 }
+
+// RecalcLevel 按与客户端一致的规则刷新等级：Level = Exp / ExpPerLevel。
+func (a *Aggregate) RecalcLevel() {
+	if a == nil {
+		return
+	}
+	a.Level = uint16(a.Exp / gameconf.ExpPerLevel)
+}

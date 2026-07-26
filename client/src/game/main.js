@@ -960,6 +960,7 @@ const ui = new UI({
   },
 
   onClaimMail(id) {
+    if (isOnline()) return fail('线上暂不支持');
     const m = state.mails.find(m => m.id === id);
     if (!m || m.claimed) return fail('该邮件附件已领取');
     m.claimed = true; m.read = true;
@@ -994,6 +995,7 @@ const ui = new UI({
   },
 
   onExpand() {
+    if (isOnline()) return fail('线上暂不支持');
     const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
     if (!next) return;
     const [, needLv, cost] = next;
