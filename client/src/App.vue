@@ -1,8 +1,11 @@
 <script setup>
-import { onMounted } from 'vue'
-import DevNetPanel from './components/DevNetPanel.vue'
+import { onMounted, defineAsyncComponent, shallowRef } from 'vue'
 
-const isDev = import.meta.env.DEV
+const DevNetPanel = shallowRef(null)
+if (import.meta.env.DEV) {
+  // 仅开发态异步加载，避免生产包打入联调面板与默认口令文案
+  DevNetPanel.value = defineAsyncComponent(() => import('./components/DevNetPanel.vue'))
+}
 
 onMounted(() => {
   // #scene-container 需先挂载到 DOM，再加载有顶层副作用的游戏主逻辑
@@ -13,7 +16,7 @@ onMounted(() => {
 <template>
   <div id="scene-container"></div>
 
-  <DevNetPanel v-if="isDev" />
+  <component :is="DevNetPanel" v-if="DevNetPanel" />
 
   <div id="ui">
     <!-- 顶栏 -->
