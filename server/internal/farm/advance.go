@@ -46,6 +46,10 @@ func Advance(p *Plot, now int64, cfg AdvanceConfig) {
 	for {
 		switch p.State {
 		case StateGrowing:
+			// 未播种完整的地块（缺 MatureAt/时长）不随时间演化，避免脏数据误成熟。
+			if p.MatureAt <= 0 || p.SeasonDuration <= 0 {
+				return
+			}
 			if now < p.MatureAt {
 				settleTo(p, now, cfg)
 				return
