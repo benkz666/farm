@@ -3,6 +3,7 @@
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
 export const CMD_ENTER_FARM = 200
+export const CMD_ACCEPT_INVITE = 404
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -133,6 +134,15 @@ export class NetClient {
   }
 
   /**
+   * AcceptInvite（cmd 404）。
+   * @param {string} token
+   * @returns {Promise<Envelope>}
+   */
+  acceptInvite(token) {
+    return this.request(CMD_ACCEPT_INVITE, { token })
+  }
+
+  /**
    * 地块动作（Till/Clear/Plant/…）。返回完整 Envelope；err≠0 由调用方处理。
    * @param {number} cmd CMD_TILL 等
    * @param {number} plotIndex
@@ -207,7 +217,9 @@ export class NetClient {
     const body = await response.json().catch(() => ({}))
     if (!response.ok) {
       const err = body && typeof body.err === 'number' ? body.err : response.status
-      throw new Error(`net: ${path} failed err=${err}`)
+      const error = new Error(`net: ${path} failed err=${err}`)
+      error.code = err
+      throw error
     }
     if (!body.token || !body.ws_url) {
       throw new Error(`net: ${path} missing token/ws_url`)

@@ -1,5 +1,6 @@
 <script setup>
-import { onMounted, defineAsyncComponent, shallowRef } from 'vue'
+import { computed, onMounted, defineAsyncComponent, shallowRef } from 'vue'
+import { RouterView, useRoute } from 'vue-router'
 
 const DevNetPanel = shallowRef(null)
 if (import.meta.env.DEV) {
@@ -7,67 +8,90 @@ if (import.meta.env.DEV) {
   DevNetPanel.value = defineAsyncComponent(() => import('./components/DevNetPanel.vue'))
 }
 
+const route = useRoute()
+const showFarm = computed(() => route.name === 'farm')
+
+let resolveFarmReady
+let rejectFarmReady
+window.__farmReady = new Promise((resolve, reject) => {
+  resolveFarmReady = resolve
+  rejectFarmReady = reject
+})
+
 onMounted(() => {
   // #scene-container 需先挂载到 DOM，再加载有顶层副作用的游戏主逻辑
   import('./game/main.js')
+    .then(() => resolveFarmReady(window.__farm))
+    .catch(rejectFarmReady)
 })
 </script>
 
 <template>
-  <div id="scene-container"></div>
+  <div class="farm-shell" :class="{ 'farm-shell--covered': !showFarm }" :aria-hidden="!showFarm">
+    <div id="scene-container"></div>
 
-  <component :is="DevNetPanel" v-if="DevNetPanel" />
+    <component :is="DevNetPanel" v-if="showFarm && DevNetPanel" />
 
-  <div id="ui">
-    <!-- 顶栏 -->
-    <header id="topbar">
-      <div class="brand"><span class="brand-icon">🌾</span><span class="brand-name">QQ农场<em>3D</em></span></div>
-      <div class="level-box" title="等级与经验">
-        <div class="level-badge" id="level-badge">Lv.0</div>
-        <div class="exp-bar"><div id="exp-fill"></div><span id="exp-text">0/200</span></div>
+    <div id="ui">
+      <!-- 顶栏 -->
+      <header id="topbar">
+        <div class="brand"><span class="brand-icon">🌾</span><span class="brand-name">经典农场<em>3D</em></span></div>
+        <div class="level-box" title="等级与经验">
+          <div class="level-badge" id="level-badge">Lv.0</div>
+          <div class="exp-bar"><div id="exp-fill"></div><span id="exp-text">0/200</span></div>
+        </div>
+        <div class="stat-chip gold-chip" title="金币">💰<span id="gold-num">0</span></div>
+        <div class="stat-chip dog-chip hidden" id="dog-status" title="狗盆余量">🐶<span id="dog-food-num">0g</span></div>
+        <div class="stat-chip clock-chip" id="clock-chip" title="游戏时间">☀️</div>
+        <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
+      </header>
+
+      <!-- 参观横幅 -->
+      <div id="visitor-banner" class="hidden">
+        <span>🏡 正在参观 <b id="visitor-name"></b> 的农场</span>
+        <button id="btn-back-home">返回我的农场</button>
       </div>
-      <div class="stat-chip gold-chip" title="金币">💰<span id="gold-num">0</span></div>
-      <div class="stat-chip dog-chip hidden" id="dog-status" title="狗盆余量">🐶<span id="dog-food-num">0g</span></div>
-      <div class="stat-chip clock-chip" id="clock-chip" title="游戏时间">☀️</div>
-      <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
-    </header>
 
-    <!-- 参观横幅 -->
-    <div id="visitor-banner" class="hidden">
-      <span>🏡 正在参观 <b id="visitor-name"></b> 的农场</span>
-      <button id="btn-back-home">返回我的农场</button>
-    </div>
+      <!-- 右侧菜单 -->
+      <nav id="side-menu">
+        <button data-panel="shop"><i>🛒</i><span>商店</span></button>
+        <button data-panel="bag"><i>🎒</i><span>背包</span></button>
+        <button data-panel="barn"><i>🏠</i><span>仓库</span></button>
+        <button data-panel="tasks"><i>📋</i><span>任务</span><b class="dot hidden" id="dot-tasks"></b></button>
+        <button data-panel="codex"><i>📖</i><span>图鉴</span></button>
+        <button data-panel="mail"><i>📮</i><span>邮件</span><b class="dot hidden" id="dot-mail"></b></button>
+        <button data-panel="friends"><i>👥</i><span>好友</span></button>
+      </nav>
 
-    <!-- 右侧菜单 -->
-    <nav id="side-menu">
-      <button data-panel="shop"><i>🛒</i><span>商店</span></button>
-      <button data-panel="bag"><i>🎒</i><span>背包</span></button>
-      <button data-panel="barn"><i>🏠</i><span>仓库</span></button>
-      <button data-panel="tasks"><i>📋</i><span>任务</span><b class="dot hidden" id="dot-tasks"></b></button>
-      <button data-panel="codex"><i>📖</i><span>图鉴</span></button>
-      <button data-panel="mail"><i>📮</i><span>邮件</span><b class="dot hidden" id="dot-mail"></b></button>
-      <button data-panel="friends"><i>👥</i><span>好友</span></button>
-    </nav>
+      <!-- 扩地按钮 -->
+      <button id="btn-expand" class="hidden" title="开垦新地块">🚜 开垦土地</button>
 
-    <!-- 扩地按钮 -->
-    <button id="btn-expand" class="hidden" title="开垦新地块">🚜 开垦土地</button>
+      <!-- 底部工具栏 -->
+      <div id="toolbar-wrap">
+        <div id="sub-bar" class="hidden"></div>
+        <div id="toolbar"></div>
+      </div>
 
-    <!-- 底部工具栏 -->
-    <div id="toolbar-wrap">
-      <div id="sub-bar" class="hidden"></div>
-      <div id="toolbar"></div>
-    </div>
+      <!-- 提示 -->
+      <div id="toast-wrap"></div>
+      <div id="tooltip" class="hidden"></div>
 
-    <!-- 提示 -->
-    <div id="toast-wrap"></div>
-    <div id="tooltip" class="hidden"></div>
-
-    <!-- 模态 -->
-    <div id="modal-mask" class="hidden">
-      <div id="modal">
-        <div id="modal-head"><span id="modal-title"></span><button id="modal-close">✕</button></div>
-        <div id="modal-body"></div>
+      <!-- 模态 -->
+      <div id="modal-mask" class="hidden">
+        <div id="modal">
+          <div id="modal-head"><span id="modal-title"></span><button id="modal-close">✕</button></div>
+          <div id="modal-body"></div>
+        </div>
       </div>
     </div>
   </div>
+
+  <RouterView />
 </template>
+
+<style scoped>
+.farm-shell--covered {
+  visibility: hidden;
+  pointer-events: none;
+}
+</style>
