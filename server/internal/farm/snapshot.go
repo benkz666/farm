@@ -5,6 +5,8 @@ type PlotSnapshot struct {
 	Index          uint8  `json:"index"`
 	State          uint8  `json:"state"`
 	CropID         uint16 `json:"crop_id"`
+	SeasonIndex    uint8  `json:"season_index"`
+	SeasonTotal    uint8  `json:"season_total"`
 	MatureAt       int64  `json:"mature_at"`
 	SeasonDuration int64  `json:"season_duration"`
 	FinalYield     uint16 `json:"final_yield"`
@@ -54,6 +56,8 @@ func PlotSnapshotOf(index uint8, p Plot) PlotSnapshot {
 		Index:          index,
 		State:          p.State,
 		CropID:         p.CropID,
+		SeasonIndex:    p.SeasonIndex,
+		SeasonTotal:    p.SeasonTotal,
 		MatureAt:       p.MatureAt,
 		SeasonDuration: p.SeasonDuration,
 		FinalYield:     p.FinalYield,

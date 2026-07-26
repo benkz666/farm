@@ -138,6 +138,7 @@ export function applyPlotSnapshot(plot, snap) {
   const stateNum = typeof snap.state === 'number' ? snap.state : 0
   plot.state = plotStateFromNum(stateNum)
   plot.cropId = cropIdToKey(snap.crop_id)
+  plot.season = Number(snap.season_index) || 0
   plot.matureTime = Number(snap.mature_at) || 0
   const seasonMs = Number(snap.season_duration) || 0
   plot.seasonMs = seasonMs

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -352,6 +353,42 @@ func TestWebSocketFertilizeReturnsUpdatedPatch(t *testing.T) {
 	}
 	if payload.Patch.Plot == nil || payload.Patch.Plot.MatureAt != 64_000 {
 		t.Fatalf("Fertilize patch = %#v", payload.Patch)
+	}
+}
+
+func TestPlotActionRejectsArgOutsideUint16(t *testing.T) {
+	t.Parallel()
+
+	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{
+		err: errors.New("runtime must not be called for invalid arg"),
+	})
+	connection := &wsConnection{uid: 42}
+
+	for _, command := range []uint32{
+		CommandTill,
+		CommandClear,
+		CommandPlant,
+		CommandWater,
+		CommandRemoveWeed,
+		CommandRemovePest,
+		CommandFertilize,
+		CommandHarvest,
+	} {
+		t.Run(fmt.Sprintf("cmd_%d", command), func(t *testing.T) {
+			response := gateway.handlePlotOrShop(connection, Envelope{
+				Cmd:       command,
+				ClientSeq: 1,
+				Payload: marshalPayload(plotActionRequest{
+					OwnerUID:  0,
+					PlotIndex: 0,
+					Arg:       0x1_0000,
+				}),
+			})
+
+			if response.Err != pkgerr.BadRequest {
+				t.Fatalf("response.Err = %d, want %d", response.Err, pkgerr.BadRequest)
+			}
+		})
 	}
 }
 

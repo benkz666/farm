@@ -52,6 +52,10 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			response.Err = pkgerr.BadRequest
 			return response
 		}
+		if payload.Arg > 0xFFFF {
+			response.Err = pkgerr.BadRequest
+			return response
+		}
 
 		var result farm.ActionResult
 		var farmSeq uint64
