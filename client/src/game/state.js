@@ -1,7 +1,7 @@
 // ============================================================
-// 游戏状态：创建、派生计算、本地存档
+// 游戏状态：创建、派生计算（期 3：不再以 localStorage 为权威）
 // ============================================================
-import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, TASK_POOL, DAILY_TASK_COUNT, DOG_BOWL_CAP } from './config.js';
+import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, TASK_POOL, DAILY_TASK_COUNT } from './config.js';
 
 // 地块状态机（5.1 节）
 export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered' };
@@ -28,23 +28,7 @@ export function makePlot(id) {
   };
 }
 
-// NPC 好友（单机模拟，替代 11 章的分享链接加好友）
-const NPC_DEFS = [
-  { id: 'npc1', name: '小芳', level: 2,  plots: 6,  dog: null },
-  { id: 'npc2', name: '阿强', level: 6,  plots: 8,  dog: 'tugou' },
-  { id: 'npc3', name: '丽丽', level: 12, plots: 10, dog: 'muyang' },
-  { id: 'npc4', name: '老王', level: 18, plots: 12, dog: null },
-];
-
-function makeNpcFarm(def) {
-  return {
-    ...def,
-    plots: Array.from({ length: def.plots }, (_, i) => makePlot(i)),
-    dogBowl: def.dog ? DOG_BOWL_CAP : 0,
-    nextActionTime: 0,    // NPC 下一次自主操作时刻
-  };
-}
-
+/** 空镜像骨架；权威状态仅来自服务端 snapshot / Rsp / Delta。 */
 export function defaultState() {
   const now = Date.now();
   return {
@@ -63,7 +47,7 @@ export function defaultState() {
     codexMilestones: [],  // 已发放的里程碑条数
     mails: [],
     mailSeq: 1,
-    friends: NPC_DEFS.map(makeNpcFarm),
+    friends: [],          // 期 3：真实好友由 Task 11 接入；不再预置 NPC
     tasks: [],            // [{taskId, progress, done}]
     daily: { dayStart: now - 2 * 60 * 1000, careCount: 0 },  // 初始落在上午时段
     stats: { tilled: 0, planted: 0, watered: 0, weeded: 0, depested: 0, harvested: 0, stolen: 0, helped: 0, fertilized: 0, sold: 0, caught: 0 },
@@ -88,24 +72,22 @@ export function drawDailyTasks(state) {
   state.tasks = tasks;
 }
 
-// ---- 存档 ----
+// ---- 存档（期 3 停用：不写、不读权威）----
 const SAVE_KEY = 'farm3d_save_v1';
 
-export function saveGame(state) {
-  state.lastSeen = Date.now();
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch (e) { /* 存储满时静默 */ }
+/** @deprecated 期 3 起不再持久化本地权威；保留空实现以免旧调用炸掉。 */
+export function saveGame(_state) {
+  /* no-op：玩法权威在服务端 */
 }
 
+/** @deprecated 期 3 起忽略遗留 localStorage 存档。 */
 export function loadGame() {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
-    if (!s || s.version !== 1) return null;
-    return s;
-  } catch (e) { return null; }
+  return null;
 }
 
+/** 清理遗留 localStorage 键（设置里「重置」可调用）。 */
 export function clearSave() {
-  localStorage.removeItem(SAVE_KEY);
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) { /* 隐私模式等 */ }
 }

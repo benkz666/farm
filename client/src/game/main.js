@@ -3,15 +3,11 @@
 // 规则实现严格对照 docs/design/game-design-full.md
 // ============================================================
 import {
-  TIME_SCALES, CROP_MAP, CROPS, FERTILIZERS, DOGS, EXPANSION, TASK_POOL,
-  EXP, DAILY_CARE_CAP, FRIEND_CARE_GOLD, W_DRY, W_WEED, W_PEST, YIELD_FLOOR,
-  WATER_SPAN, RISK_WINDOW, WEED_CHANCE, PEST_CHANCE, WITHER_SPAN,
-  STEAL_CAP_RATIO, STEAL_MIN, STEAL_MAX, DOG_BOWL_CAP, DOG_FOOD_PRICE,
-  CATCH_PENALTY_MULT, DOG_MAX_LEVEL, DOG_CATCHES_PER_LEVEL,
-  HIDDEN_DROP_CHANCE, CODEX_MILESTONES, MAX_PLOTS, seasonHours, stageCount,
-  STAGE_NAMES_3, STAGE_NAMES_4, levelUpGold, logicDayMs,
+  TIME_SCALES, CROP_MAP, FERTILIZERS, DOGS, EXPANSION, TASK_POOL,
+  YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO,
+  CODEX_MILESTONES, stageCount, STAGE_NAMES_3, STAGE_NAMES_4, levelUpGold, logicDayMs,
 } from './config.js';
-import { PLOT, defaultState, saveGame, loadGame, clearSave, levelOf, drawDailyTasks } from './state.js';
+import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks } from './state.js';
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
@@ -22,8 +18,9 @@ import { applyPatch, cropKeyToId } from './applyPatch.js';
 import { plotCmdForTool } from './onlineActions.js';
 import { shouldApplyPatchFromError } from './onlineResponse.js';
 
-// ---------------- 初始化 ----------------
-let state = loadGame() || defaultState();
+// ---------------- 初始化（期 3：无本地权威存档；状态由 snapshot/Rsp 驱动） ----------------
+clearSave(); // 清理遗留 farm3d_save_v1，避免误以为本地仍可玩
+let state = defaultState();
 if (!state.tasks.length) drawDailyTasks(state);
 state.settings = state.settings || { sound: true };
 
@@ -64,27 +61,12 @@ const TOOLS_VISIT = [
 ];
 
 // ---------------- 通用辅助 ----------------
-const rand = Math.random;
 const cropOf = (plot) => CROP_MAP[plot.cropId];
 
 function currentFarm() {
   if (viewing === 'me') return { plots: state.plots, owner: 'me', unlocked: state.unlockedPlots, isMe: true };
   const f = state.friends.find(f => f.id === viewing);
   return { plots: f.plots, owner: f.id, unlocked: f.plots.length, isMe: false, friend: f };
-}
-
-// 健康度增量结算（7.5 节）
-function settleHealth(plot, now) {
-  if (plot.state !== PLOT.GROWING) return;
-  const to = Math.min(now, plot.matureTime);
-  const from = plot.settleTime;
-  if (to <= from) return;
-  let dry = 0, weed = 0, pest = 0;
-  if (plot.waterUntil < to) dry = to - Math.max(from, plot.waterUntil);
-  if (plot.weedSince) weed = to - Math.max(from, plot.weedSince);
-  if (plot.pestSince) pest = to - Math.max(from, plot.pestSince);
-  plot.penalty += 100 * (W_DRY * dry + W_WEED * weed + W_PEST * pest) / plot.seasonMs;
-  plot.settleTime = to;
 }
 
 const healthOf = (plot) => Math.max(0, Math.min(100, 100 - plot.penalty));
@@ -175,270 +157,11 @@ function checkLogicDay(now) {
   }
 }
 
-// ---------------- 地块推进（玩家与 NPC 共用） ----------------
-function tickPlots(farm, now) {
-  for (const plot of farm.plots) {
-    if (plot.state === PLOT.GROWING) {
-      // 风险窗口判定（7.2 节）
-      const windowMs = plot.seasonMs * RISK_WINDOW;
-      let guard = 0;
-      while (plot.nextRiskTime <= now && plot.nextRiskTime < plot.matureTime && guard++ < 1000) {
-        if (!plot.weedSince && rand() < WEED_CHANCE) plot.weedSince = plot.nextRiskTime;
-        if (!plot.pestSince && rand() < PEST_CHANCE) plot.pestSince = plot.nextRiskTime;
-        plot.nextRiskTime += windowMs;
-      }
-      settleHealth(plot, now);
-      if (now >= plot.matureTime) {
-        plot.state = PLOT.MATURE;
-        plot.stolenTotal = 0;
-        plot.stolenBy = [];
-        plot.stealRound++;
-        if (farm.isMe) ui.toast(`✨ ${cropOf(plot).name} 成熟了！`, 'gold');
-      }
-    } else if (plot.state === PLOT.MATURE) {
-      if (now > plot.matureTime + plot.seasonMs * WITHER_SPAN) {
-        plot.state = PLOT.WITHERED;
-        if (farm.isMe) ui.toast(`🥀 ${cropOf(plot).name} 枯萎了，产量全失…`, 'err');
-      }
-    }
-  }
-}
-
-// ---------------- 农事动作 ----------------
+// ---------------- 农事反馈 ----------------
 function fail(msg) { sfx.error(); ui.toast(msg, 'err'); }
 function ok(msg, type = 'ok') { ui.toast(msg, type); }
 
-function careExp() {  // 维护动作经验（每日 150 次上限，4.4 节）
-  if (state.daily.careCount < DAILY_CARE_CAP) {
-    state.daily.careCount++;
-    return EXP.care;
-  }
-  return 0;
-}
-
-function doTill(plot, now) {
-  const fromState = plot.state;
-  if (fromState !== PLOT.WASTELAND && fromState !== PLOT.RESIDUE && fromState !== PLOT.WITHERED) {
-    return fail('这块地不需要锄地');
-  }
-  plot.state = PLOT.TILLED;
-  Object.assign(plot, { cropId: null, season: 0, penalty: 0, weedSince: 0, pestSince: 0, stolenTotal: 0, stolenBy: [] });
-  sfx.till();
-  scene.burst(plot.id, 0x8d6e63, 12, true);
-  addExp(EXP.till, true);
-  ok(fromState === PLOT.WASTELAND ? `锄地完成 +${EXP.till} 经验` : `清理完成 +${EXP.till} 经验`);
-  // 3% 隐藏种子掉落（6.5 节）
-  if (rand() < HIDDEN_DROP_CHANCE) {
-    const pool = CROPS.filter(c => c.hidden && c.dropLevel <= myLevel());
-    if (pool.length) {
-      const drop = pool[Math.floor(rand() * pool.length)];
-      state.inventory.seeds[drop.id] = (state.inventory.seeds[drop.id] || 0) + 1;
-      sfx.mail();
-      ui.toast(`✨ 意外发现隐藏种子：${drop.name}！已放入背包`, 'gold');
-      scene.magicAnim(plot.id);
-    }
-  }
-}
-
-function doPlant(plot, now) {
-  if (plot.state !== PLOT.TILLED) return fail('需要先锄地才能播种');
-  const crop = CROP_MAP[selectedSeed];
-  if (!crop) return fail('请先选择种子');
-  if (!crop.hidden && myLevel() < crop.unlock) return fail(`需要 Lv.${crop.unlock} 解锁`);
-  const count = state.inventory.seeds[crop.id] || 0;
-  if (count <= 0) return fail('背包中没有该种子，请先去商店购买');
-  state.inventory.seeds[crop.id]--;
-  const seasonMs = seasonHours(crop, 0) * hourMs();
-  Object.assign(plot, {
-    state: PLOT.GROWING, cropId: crop.id, season: 0,
-    plantTime: now, matureTime: now + seasonMs, seasonMs,
-    penalty: 0, settleTime: now,
-    waterUntil: now + seasonMs * WATER_SPAN,   // 播种视为已浇水（7.2 节）
-    weedSince: 0, pestSince: 0,
-    nextRiskTime: now + seasonMs * RISK_WINDOW,
-    fertilizedStages: [], stolenTotal: 0, stolenBy: [],
-  });
-  sfx.plant();
-  scene.burst(plot.id, 0x9be15d, 12, true);
-  addExp(EXP.plant, true);
-  ok(`播种 ${crop.name} +${EXP.plant} 经验`);
-  trackEvent('plant');
-  if ((state.inventory.seeds[crop.id] || 0) <= 0) refreshSubBar();
-}
-
-function doWater(plot, now, isFriend) {
-  if (plot.state !== PLOT.GROWING) return fail('该地块没有生长中的作物');
-  if (now < plot.waterUntil) return fail('水分本已充足，无需浇水');
-  settleHealth(plot, now);
-  plot.waterUntil = now + plot.seasonMs * WATER_SPAN;
-  sfx.water();
-  scene.waterAnim(plot.id);
-  const exp = careExp();
-  if (exp) addExp(exp, true);
-  ok(exp ? `浇水完成 +${exp} 经验` : '浇水完成（今日维护经验已达上限）');
-  trackEvent('water');
-  if (isFriend) trackEvent('help');
-}
-
-function doWeed(plot, now, isFriend) {
-  if (plot.state !== PLOT.GROWING) return fail('该地块没有生长中的作物');
-  if (!plot.weedSince) return fail('该地块没有杂草');
-  settleHealth(plot, now);
-  plot.weedSince = 0;
-  sfx.weed();
-  scene.burst(plot.id, 0x81c784, 10, true);
-  const exp = careExp();
-  if (exp) addExp(exp, true);
-  let msg = exp ? `除草完成 +${exp} 经验` : '除草完成';
-  if (isFriend) {
-    if (exp) { addGold(FRIEND_CARE_GOLD); msg += ` +${FRIEND_CARE_GOLD} 金币`; }
-    trackEvent('help');
-  }
-  ok(msg);
-}
-
-function doPest(plot, now, isFriend) {
-  if (plot.state !== PLOT.GROWING) return fail('该地块没有生长中的作物');
-  if (!plot.pestSince) return fail('该地块没有害虫');
-  settleHealth(plot, now);
-  plot.pestSince = 0;
-  sfx.pest();
-  scene.burst(plot.id, 0xffb74d, 10, true);
-  const exp = careExp();
-  if (exp) addExp(exp, true);
-  let msg = exp ? `除虫完成 +${exp} 经验` : '除虫完成';
-  if (isFriend) {
-    if (exp) { addGold(FRIEND_CARE_GOLD); msg += ` +${FRIEND_CARE_GOLD} 金币`; }
-    trackEvent('help');
-  }
-  ok(msg);
-}
-
-function doFertilize(plot, now) {
-  if (plot.state !== PLOT.GROWING) return fail('该地块没有生长中的作物');
-  const fert = FERTILIZERS.find(f => f.id === selectedFert);
-  if (!fert) return fail('请先选择化肥');
-  if ((state.inventory.fertilizers[fert.id] || 0) <= 0) return fail('背包中没有该化肥');
-  const { stage } = stageOf(plot, now);
-  if (plot.fertilizedStages.includes(stage)) return fail('当前阶段已经施过肥了');
-  const crop = cropOf(plot);
-  const total = stageCount(crop);
-  const stageEnd = plot.plantTime + plot.seasonMs * ((stage + 1) / total);
-  const reduce = Math.min(fert.reduceH * hourMs(), stageEnd - now);  // 不超过当前阶段剩余（9.1 节）
-  if (reduce <= 0) return fail('当前阶段即将结束，无法施肥');
-  state.inventory.fertilizers[fert.id]--;
-  plot.fertilizedStages.push(stage);
-  plot.matureTime -= reduce;
-  plot.seasonMs -= reduce;
-  sfx.fertilize();
-  scene.magicAnim(plot.id);
-  ok(`施肥成功，成熟期提前 ${Math.round(reduce / 1000)} 秒`);
-  trackEvent('fertilize');
-  refreshSubBar();
-}
-
-function doHarvest(plot, now, farm) {
-  if (plot.state !== PLOT.MATURE) return fail('该地块作物还未成熟');
-  const crop = cropOf(plot);
-  settleHealth(plot, plot.matureTime);
-  const h = healthOf(plot);
-  const totalYield = actualYield(crop, h);
-  const got = Math.max(0, totalYield - plot.stolenTotal);
-  state.warehouse[crop.id] = (state.warehouse[crop.id] || 0) + got;
-  sfx.harvest();
-  scene.harvestAnim(plot.id);
-  unlockCodex(crop.id);
-  addExp(crop.harvestExp, true);
-  ok(`收获 ${crop.name} ×${got}（健康度 ${Math.round(h)}）+${crop.harvestExp} 经验`, 'gold');
-  if (plot.stolenTotal > 0) ui.toast(`😿 有 ${plot.stolenTotal} 个果实被偷走了`, 'err');
-  trackEvent('harvest');
-
-  if (plot.season < crop.seasons - 1) {   // 多季作物进入下一季（6.3 节）
-    const seasonMs = seasonHours(crop, plot.season + 1) * hourMs();
-    Object.assign(plot, {
-      state: PLOT.GROWING, season: plot.season + 1,
-      plantTime: now, matureTime: now + seasonMs, seasonMs,
-      penalty: 0, settleTime: now,
-      waterUntil: now + seasonMs * WATER_SPAN,
-      weedSince: 0, pestSince: 0,
-      nextRiskTime: now + seasonMs * RISK_WINDOW,
-      fertilizedStages: [], stolenTotal: 0, stolenBy: [],
-    });
-  } else {
-    plot.state = PLOT.RESIDUE;
-  }
-}
-
-// 偷菜（11.3 节）
-function doSteal(farm, plot, now) {
-  if (plot.state !== PLOT.MATURE) return fail('该地块没有成熟的作物');
-  if (plot.stolenBy.includes('me')) return fail('本轮成熟你已经偷过这块地了');
-  const crop = cropOf(plot);
-  const h = healthOf(plot);
-  const cap = Math.floor(actualYield(crop, h) * STEAL_CAP_RATIO);
-  const remain = cap - plot.stolenTotal;
-  if (remain <= 0) return fail('这块地已被偷到上限，主人至少保留 60%');
-
-  // 狗拦截判定（12.4 节）
-  const friend = farm.friend;
-  if (friend && friend.dog && friend.dogBowl > 0) {
-    const dogDef = DOGS.find(d => d.id === friend.dog);
-    if (rand() < dogDef.intercept) {
-      const penalty = crop.fruitPrice * CATCH_PENALTY_MULT;
-      plot.stolenBy.push('me');
-      state.gold = Math.max(0, state.gold - penalty);
-      sfx.dog();
-      ui.toast(`🐕 被 ${friend.name} 家的${dogDef.name}抓住了！赔付 ${penalty} 金币`, 'err');
-      ui.updateHUD(state);
-      return;
-    }
-  }
-  const n = Math.min(STEAL_MIN + Math.floor(rand() * (STEAL_MAX - STEAL_MIN + 1)), remain);
-  plot.stolenTotal += n;
-  plot.stolenBy.push('me');
-  state.warehouse[crop.id] = (state.warehouse[crop.id] || 0) + n;
-  sfx.steal();
-  scene.harvestAnim(plot.id);
-  ok(`🥷 偷到 ${crop.name} ×${n}，已放入仓库`, 'gold');
-  trackEvent('steal');
-}
-
-// NPC 偷玩家（单机模拟）
-function npcStealFromMe(friend, now) {
-  const mature = state.plots.filter(p => p.state === PLOT.MATURE && !p.stolenBy.includes(friend.id));
-  if (!mature.length) return;
-  const plot = mature[Math.floor(rand() * mature.length)];
-  const crop = cropOf(plot);
-  const cap = Math.floor(actualYield(crop, healthOf(plot)) * STEAL_CAP_RATIO);
-  const remain = cap - plot.stolenTotal;
-  if (remain <= 0) return;
-
-  if (state.dog && state.dogBowl > 0) {
-    const dogDef = DOGS.find(d => d.id === state.dog.id);
-    const rate = dogDef.intercept + state.dog.level * 0.01;
-    if (rand() < rate) {
-      const gain = crop.fruitPrice * CATCH_PENALTY_MULT;
-      plot.stolenBy.push(friend.id);
-      addGold(gain);
-      state.dog.catches++;
-      const newLv = Math.min(DOG_MAX_LEVEL, Math.floor(state.dog.catches / DOG_CATCHES_PER_LEVEL));
-      if (newLv > state.dog.level) {
-        state.dog.level = newLv;
-        addMail({ title: '狗狗升级了', content: `${dogDef.name}升到 Lv.${newLv}，拦截率提升至 ${Math.round((dogDef.intercept + newLv * 0.01) * 100)}%！` });
-      }
-      sfx.dog();
-      addMail({ title: '🐶 拦截成功', content: `${friend.name} 试图偷你的 ${crop.name}，被${dogDef.name}当场抓住，对方赔付 ${gain} 金币！`, gold: 0 });
-      ui.toast(`🐶 ${dogDef.name}抓住了 ${friend.name}！获赔 ${gain} 金币`, 'gold');
-      return;
-    }
-  }
-  const n = Math.min(STEAL_MIN + Math.floor(rand() * (STEAL_MAX - STEAL_MIN + 1)), remain);
-  plot.stolenTotal += n;
-  plot.stolenBy.push(friend.id);
-  addMail({ title: '😿 作物被偷', content: `${friend.name} 偷走了你的 ${crop.name} ×${n}。`, gold: 0 });
-}
-
-// ---------------- online 入口（DevNetPanel / 联调） ----------------
+// ---------------- online 入口（登录页 authFlow / DEV 诊断） ----------------
 /**
  * 登录 + Handshake + EnterFarm 成功后切入 online：applyPatch 快照并记录会话。
  * @param {import('../net/client.js').NetClient} client
@@ -660,42 +383,16 @@ async function onlineSellAll() {
 
 // ---------------- 地块点击 ----------------
 function onPlotClick(plotId) {
-  // online 自家农场：发 WS 意图，等 Rsp 再 patch
-  if (isOnline() && viewing === 'me') {
-    void onPlotClickOnline(plotId);
+  // 期 3：仅 online 意图；未登录不可种收（路由已挡 /farm，此处再兜底）
+  if (!isOnline() || !netClient) {
+    fail('请先登录后再操作');
     return;
   }
-  if (isOnline()) {
+  if (viewing !== 'me') {
     fail('线上暂不支持');
     return;
   }
-
-  const now = Date.now();
-  const farm = currentFarm();
-  const plot = farm.plots[plotId];
-  if (!plot) return;
-  if (farm.isMe) {
-    switch (activeTool) {
-      case 'till': doTill(plot, now); break;
-      case 'plant': doPlant(plot, now); break;
-      case 'water': doWater(plot, now, false); break;
-      case 'weed': doWeed(plot, now, false); break;
-      case 'pest': doPest(plot, now, false); break;
-      case 'fert': doFertilize(plot, now); break;
-      case 'harvest': doHarvest(plot, now, farm); break;
-      default: return showPlotTip(plotId);
-    }
-  } else {
-    switch (activeTool) {
-      case 'water': doWater(plot, now, true); break;
-      case 'weed': doWeed(plot, now, true); break;
-      case 'pest': doPest(plot, now, true); break;
-      case 'steal': doSteal(farm, plot, now); break;
-      default: return showPlotTip(plotId);
-    }
-  }
-  ui.updateHUD(state);
-  syncAllPlots();
+  void onPlotClickOnline(plotId);
 }
 
 // 未选工具时点击：显示地块信息 toast
@@ -810,54 +507,6 @@ function refreshSubBar() {
   }
 }
 
-// ---------------- NPC 模拟 ----------------
-function npcAction(friend, now) {
-  if (now < friend.nextActionTime) return;
-  friend.nextActionTime = now + 8000 + rand() * 14000;
-
-  const farmRef = { plots: friend.plots, isMe: false };
-  const byState = (s) => friend.plots.filter(p => p.state === s);
-  const r = rand();
-
-  // 优先收获/清理/锄地/播种，保证 NPC 农场持续运转
-  const mature = byState(PLOT.MATURE);
-  if (mature.length && r < 0.5) {
-    const plot = mature[Math.floor(rand() * mature.length)];
-    const crop = cropOf(plot);
-    if (plot.season < crop.seasons - 1) {
-      const seasonMs = seasonHours(crop, plot.season + 1) * hourMs();
-      Object.assign(plot, { state: PLOT.GROWING, season: plot.season + 1, plantTime: now, matureTime: now + seasonMs, seasonMs, penalty: 0, settleTime: now, waterUntil: now + seasonMs * WATER_SPAN, weedSince: 0, pestSince: 0, nextRiskTime: now + seasonMs * RISK_WINDOW, fertilizedStages: [], stolenTotal: 0, stolenBy: [] });
-    } else plot.state = PLOT.RESIDUE;
-    return;
-  }
-  const residue = byState(PLOT.RESIDUE).concat(byState(PLOT.WITHERED));
-  if (residue.length && r < 0.75) {
-    const plot = residue[Math.floor(rand() * residue.length)];
-    Object.assign(plot, { state: PLOT.TILLED, cropId: null, penalty: 0, weedSince: 0, pestSince: 0 });
-    return;
-  }
-  const waste = byState(PLOT.WASTELAND);
-  if (waste.length) { waste[0].state = PLOT.TILLED; return; }
-  const tilled = byState(PLOT.TILLED);
-  if (tilled.length) {
-    const pool = CROPS.filter(c => !c.hidden && c.unlock <= friend.level);
-    const crop = pool[Math.floor(rand() * pool.length)];
-    const plot = tilled[Math.floor(rand() * tilled.length)];
-    const seasonMs = seasonHours(crop, 0) * hourMs();
-    Object.assign(plot, { state: PLOT.GROWING, cropId: crop.id, season: 0, plantTime: now, matureTime: now + seasonMs, seasonMs, penalty: 0, settleTime: now, waterUntil: now + seasonMs * WATER_SPAN, weedSince: 0, pestSince: 0, nextRiskTime: now + seasonMs * RISK_WINDOW, fertilizedStages: [], stolenTotal: 0, stolenBy: [] });
-    return;
-  }
-  // NPC 照料：概率较低，让草虫有机会积累
-  const growing = byState(PLOT.GROWING);
-  if (growing.length) {
-    const plot = growing[Math.floor(rand() * growing.length)];
-    settleHealth(plot, now);
-    if (now > plot.waterUntil) plot.waterUntil = now + plot.seasonMs * WATER_SPAN;
-    else if (plot.weedSince && rand() < 0.45) plot.weedSince = 0;
-    else if (plot.pestSince && rand() < 0.45) plot.pestSince = 0;
-  }
-}
-
 // ---------------- UI 回调 ----------------
 const ui = new UI({
   getState: () => state,
@@ -883,105 +532,40 @@ const ui = new UI({
   },
 
   async onBuySeed(id) {
-    if (isOnline()) return onlineBuySeed(id);
-    const c = CROP_MAP[id];
-    if (state.gold < c.seedPrice) return fail('金币不足');
-    addGold(-c.seedPrice);
-    state.inventory.seeds[id] = (state.inventory.seeds[id] || 0) + 1;
-    sfx.gold();
-    ui.toast(`购买 ${c.name} 种子 ×1`, 'ok');
+    if (!isOnline()) return fail('请先登录后再操作');
+    return onlineBuySeed(id);
   },
 
   async onBuyFert(id) {
-    if (isOnline()) return onlineBuyFertilizer(id);
-    const f = FERTILIZERS.find(f => f.id === id);
-    if (state.gold < f.price) return fail('金币不足');
-    addGold(-f.price);
-    state.inventory.fertilizers[id]++;
-    sfx.gold();
-    ui.toast(`购买 ${f.name} ×1`, 'ok');
+    if (!isOnline()) return fail('请先登录后再操作');
+    return onlineBuyFertilizer(id);
   },
 
-  onBuyFood(g) {
-    // 狗粮属更后期；online 禁止本地改 gold/dogBowl
-    if (isOnline()) return fail('线上暂不支持');
-    const grams = g === -1 ? DOG_BOWL_CAP - Math.floor(state.dogBowl) : g;
-    if (grams <= 0) return fail('狗盆已经是满的');
-    const cost = grams * DOG_FOOD_PRICE;
-    if (state.gold < cost) return fail('金币不足');
-    addGold(-cost);
-    state.dogBowl = Math.min(DOG_BOWL_CAP, state.dogBowl + grams);
-    sfx.gold();
-    ui.toast(`狗粮 +${grams}g`, 'ok');
+  onBuyFood(_g) {
+    return fail('线上暂不支持');
   },
 
-  onBuyDog(id) {
-    // 买狗属更后期；online 禁止本地改 gold/dog
-    if (isOnline()) return fail('线上暂不支持');
-    const d = DOGS.find(d => d.id === id);
-    if (myLevel() < d.unlock) return fail(`需要 Lv.${d.unlock}`);
-    if (state.gold < d.price) return fail('金币不足');
-    addGold(-d.price);
-    // 更换狗种时各自等级独立保留（12.3 节）
-    state.dogArchive = state.dogArchive || {};
-    if (state.dog) state.dogArchive[state.dog.id] = { level: state.dog.level, catches: state.dog.catches };
-    const arch = state.dogArchive[id] || { level: 0, catches: 0 };
-    state.dog = { id, level: arch.level, catches: arch.catches };
-    if (state.dogBowl <= 0) state.dogBowl = DOG_BOWL_CAP / 2;  // 新狗附赠半盆粮
-    sfx.dog();
-    ui.toast(`🐶 ${d.name} 开始为你看家护院！`, 'gold');
+  onBuyDog(_id) {
+    return fail('线上暂不支持');
   },
 
   async onSell(id, n) {
-    if (isOnline()) return onlineSell(id, n);
-    const c = CROP_MAP[id];
-    const have = state.warehouse[id] || 0;
-    const count = Math.min(n, have);
-    if (count <= 0) return;
-    state.warehouse[id] -= count;
-    const gain = count * c.fruitPrice;
-    addGold(gain);
-    sfx.gold();
-    ui.toast(`出售 ${c.name} ×${count}，+${gain} 金币`, 'gold');
-    trackEvent('sell');
+    if (!isOnline()) return fail('请先登录后再操作');
+    return onlineSell(id, n);
   },
 
   async onSellAll() {
-    if (isOnline()) return onlineSellAll();
-    let gain = 0, any = false;
-    for (const [id, n] of Object.entries(state.warehouse)) {
-      if (n > 0) { gain += n * CROP_MAP[id].fruitPrice; state.warehouse[id] = 0; any = true; }
-    }
-    if (!any) return;
-    addGold(gain);
-    sfx.gold();
-    ui.toast(`全部出售，+${gain} 金币`, 'gold');
-    trackEvent('sell');
+    if (!isOnline()) return fail('请先登录后再操作');
+    return onlineSellAll();
   },
 
-  onClaimMail(id) {
-    if (isOnline()) return fail('线上暂不支持');
-    const m = state.mails.find(m => m.id === id);
-    if (!m || m.claimed) return fail('该邮件附件已领取');
-    m.claimed = true; m.read = true;
-    if (m.gold) addGold(m.gold);
-    if (m.exp) addExp(m.exp, true);
-    sfx.gold();
-    ui.toast(`领取成功${m.gold ? ` +${m.gold} 金币` : ''}${m.exp ? ` +${m.exp} 经验` : ''}`, 'gold');
-    ui.updateHUD(state);
+  onClaimMail(_id) {
+    return fail('线上暂不支持');
   },
 
-  onVisit(friendId) {
-    if (isOnline()) return fail('线上暂不支持');
-    viewing = friendId;
-    activeTool = null;
-    const f = state.friends.find(f => f.id === friendId);
-    ui.setVisitor(f.name);
-    refreshToolbar();
-    refreshSubBar();
-    syncAllPlots();
-    scene.setDog(f.dog ? DOGS.find(d => d.id === f.dog) : null, false);
-    ui.toast(`来到 ${f.name} 的农场，可以帮忙照料或偷菜`, 'info');
+  onVisit(_friendId) {
+    // Task 11 接入真实拜访；期 3 本地 NPC 拜访已移除
+    return fail('线上暂不支持');
   },
 
   onBackHome() {
@@ -995,18 +579,7 @@ const ui = new UI({
   },
 
   onExpand() {
-    if (isOnline()) return fail('线上暂不支持');
-    const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-    if (!next) return;
-    const [, needLv, cost] = next;
-    if (myLevel() < needLv) return fail(`需要 Lv.${needLv}`);
-    if (state.gold < cost) return fail(`金币不足（需要 💰${cost.toLocaleString()}）`);
-    addGold(-cost);
-    state.unlockedPlots++;
-    sfx.till();
-    ui.toast(`🚜 开垦成功！现在拥有 ${state.unlockedPlots} 块土地`, 'gold');
-    syncAllPlots();
-    ui.updateHUD(state);
+    return fail('线上暂不支持');
   },
 
   onSetTimeScale(id) { state.timeScale = id; sfx.click(); },
@@ -1022,12 +595,8 @@ scene.hoverCb = (plotId, x, y) => {
   ui.showTooltip(tooltipHTML(plotId), x, y);
 };
 
-addEventListener('beforeunload', () => saveGame(state));
-document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(state); });
-
 // ---------------- 主循环 ----------------
 const CLOCK_ICONS = [[0.22, '🌙'], [0.28, '🌅'], [0.42, '☀️'], [0.68, '☀️'], [0.78, '🌇'], [0.84, '🌙'], [1.01, '🌙']];
-let lastSave = 0;
 let lastTick = Date.now();
 
 function tick() {
@@ -1037,34 +606,13 @@ function tick() {
 
   checkLogicDay(now);
 
-  // online：自家地块以服务端为准，不做本地权威推进。
-  if (!isOnline()) {
-    tickPlots({ plots: state.plots, isMe: true }, now);
-    // NPC 好友仅属本地模式；online 禁止其改写本地镜像。
-    for (const f of state.friends) {
-      tickPlots({ plots: f.plots, isMe: false }, now);
-      npcAction(f, now);
-      // NPC 狗粮消耗与补充（简化：保持有粮）
-      if (f.dog && f.dogBowl <= 0) f.dogBowl = DOG_BOWL_CAP;
-    }
-  }
+  // 期 3：不做本地权威地块推进 / NPC 假好友写；镜像仅由 snapshot/Rsp/Delta 更新
 
-  // 玩家狗粮消耗（12.2 节）；online 暂保留本地狗粮动画
+  // 玩家狗粮消耗（展示用；写权威在后期服务端）
   if (state.dog && state.dogBowl > 0) {
     const dogDef = DOGS.find(d => d.id === state.dog.id);
     state.dogBowl = Math.max(0, state.dogBowl - (dogDef.consumption / hourMs()) * dt);
     if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
-  }
-
-  // NPC 来偷菜（随机）；online 不跑假偷菜，避免改写服务端镜像
-  if (!isOnline() && state.plots.some(p => p.state === PLOT.MATURE)) {
-    for (const f of state.friends) {
-      f.nextStealTime = f.nextStealTime || now + 40000 + rand() * 50000;
-      if (now >= f.nextStealTime) {
-        f.nextStealTime = now + 45000 + rand() * 50000;
-        if (rand() < 0.35) npcStealFromMe(f, now);
-      }
-    }
   }
 
   // 日夜循环（跟随逻辑日）
@@ -1090,15 +638,13 @@ function tick() {
       ui.showTooltip(tooltipHTML(hoverPlot), x, y);
     }
   }
-
-  if (now - lastSave > 5000) { lastSave = now; saveGame(state); }
 }
 
 const lastMouse = [0, 0];
 addEventListener('pointermove', (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; });
 
 // ---------------- 启动 ----------------
-// DevNetPanel / 调试：暴露 online 切入与状态
+// 登录页 authFlow / DEV 诊断：暴露 online 切入与状态
 window.__farm = {
   getState: () => state,
   scene,
@@ -1112,10 +658,4 @@ scene.start();
 setInterval(tick, 300);
 tick();
 
-// 离线收益提示
-const offline = Date.now() - (state.lastSeen || Date.now());
-if (offline > 60000) {
-  setTimeout(() => ui.toast(`👋 欢迎回来！离开了 ${Math.round(offline / 60000)} 分钟，农场已继续运转`, 'info'), 800);
-} else if (state.stats && state.exp === 0) {
-  setTimeout(() => ui.toast('🌾 欢迎来到农场！先去 🛒 商店买种子，再 ⛏️ 锄地播种吧', 'info'), 800);
-}
+// 未 online 时不提示本地开局指引（须登录）；online 后由 enterOnlineFromNet toast

@@ -359,7 +359,11 @@ export class UI {
   // ---------------- 好友 ----------------
   renderFriends(state) {
     const body = this.openModal('👥 好友');
-    body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">访问好友农场可帮忙浇水除草除虫（+经验+金币），也可以……顺手摘点成熟的果子 🥷</div>`);
+    body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">真实好友与拜访将在后续版本接入；本地 NPC 假好友已移除。</div>`);
+    if (!state.friends?.length) {
+      body.insertAdjacentHTML('beforeend', `<div style="font-size:13px;color:var(--ink-soft);padding:18px 4px">暂无好友</div>`);
+      return;
+    }
     for (const f of state.friends) {
       const dog = f.dog ? DOGS.find(d => d.id === f.dog) : null;
       const row = document.createElement('div');
@@ -367,7 +371,7 @@ export class UI {
       row.innerHTML = `<span class="crop-badge" style="background:linear-gradient(135deg,#a8d5a2,#5a8f54)">${f.name[0]}</span>
         <div class="grow"><div class="title">${f.name} <span style="font-size:11.5px;color:var(--ink-soft)">Lv.${f.level}</span>
         ${dog ? `<span class="friend-dog">🐶 ${dog.name}看家</span>` : ''}</div>
-        <div class="sub">${f.plots.length} 块地</div></div>`;
+        <div class="sub">${f.plots?.length || 0} 块地</div></div>`;
       const btn = document.createElement('button');
       btn.className = 'act-btn blue'; btn.textContent = '访问农场';
       btn.onclick = () => { this.closeModal(); this.cb.onVisit(f.id); };
@@ -414,11 +418,11 @@ export class UI {
     const resetRow = document.createElement('div');
     resetRow.className = 'set-row';
     resetRow.style.borderBottom = 'none';
-    resetRow.innerHTML = `<div><div class="lab">🗑️ 重置游戏</div><div class="desc">清空存档，从零开始（不可恢复）</div></div>`;
+    resetRow.innerHTML = `<div><div class="lab">🗑️ 清理本地残留</div><div class="desc">清除旧版 localStorage 键（进度以服务器为准）</div></div>`;
     const resetBtn = document.createElement('button');
-    resetBtn.className = 'danger-btn'; resetBtn.textContent = '重置存档';
+    resetBtn.className = 'danger-btn'; resetBtn.textContent = '清理并刷新';
     resetBtn.onclick = () => {
-      if (confirm('确定要清空存档重新开始吗？')) { this.cb.onReset(); this.closeModal(); }
+      if (confirm('确定清理本地残留并刷新？服务器进度不受影响。')) { this.cb.onReset(); this.closeModal(); }
     };
     resetRow.appendChild(resetBtn);
     body.appendChild(resetRow);

@@ -1,86 +1,60 @@
 <script setup>
-import { ref } from 'vue'
-import { NetClient } from '../net/client.js'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-const client = new NetClient()
+import { session } from '../net/session.js'
 
-const username = ref(`dev${Date.now().toString(36).slice(-6)}`)
-const password = ref('secret12')
-const busy = ref(false)
-const resultJson = ref('（尚未操作）')
-const status = ref('idle')
+const online = ref(false)
+const uid = ref(null)
+const dump = ref('（等待游戏桥接）')
+let timer = 0
 
-function show(label, value) {
-  status.value = label
-  resultJson.value = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-}
+const statusLabel = computed(() => (online.value ? 'online' : 'offline'))
 
-async function run(label, fn) {
-  if (busy.value) return
-  busy.value = true
-  try {
-    const value = await fn()
-    show(label, value)
-  } catch (err) {
-    show(`${label} ERROR`, err instanceof Error ? err.message : String(err))
-  } finally {
-    busy.value = false
+function refresh() {
+  online.value = session.isOnline === true
+  uid.value = session.uid
+  const farm = window.__farm
+  if (!farm?.getState) {
+    dump.value = 'game bridge 未就绪'
+    return
   }
+  const state = farm.getState()
+  dump.value = JSON.stringify(
+    {
+      online: farm.isOnline?.() ?? online.value,
+      uid: session.uid,
+      gold: state.gold,
+      exp: state.exp,
+      unlockedPlots: state.unlockedPlots,
+      friends: Array.isArray(state.friends) ? state.friends.length : 0,
+      net: Boolean(farm.getNetClient?.()),
+    },
+    null,
+    2,
+  )
 }
 
-function onRegister() {
-  return run('register', () => client.register(username.value.trim(), password.value))
-}
+onMounted(() => {
+  refresh()
+  timer = window.setInterval(refresh, 1000)
+})
 
-function onLogin() {
-  return run('login', () => client.login(username.value.trim(), password.value))
-}
-
-/** 登录（或沿用已有 token）→ connect → handshake → enterFarm(0) → 切入 online */
-function onFetchSnapshot() {
-  return run('enterFarm', async () => {
-    if (!client.token) {
-      await client.login(username.value.trim(), password.value)
-    }
-    await client.connect()
-    const hs = await client.handshake()
-    if (hs.err !== 0) {
-      throw new Error(`handshake err=${hs.err}`)
-    }
-    const enter = await client.enterFarm(0)
-    if (enter.err !== 0) {
-      throw new Error(`enterFarm err=${enter.err}`)
-    }
-    const farm = window.__farm
-    if (!farm?.enterOnlineFromNet) {
-      throw new Error('game main not ready (__farm.enterOnlineFromNet)')
-    }
-    farm.enterOnlineFromNet(client, enter)
-    return { err: enter.err, online: true, uid: client.uid, payload: enter.payload }
-  })
-}
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
+})
 </script>
 
 <template>
-  <aside class="dev-net-panel" aria-label="网络联调面板">
+  <aside class="dev-net-panel" aria-label="开发诊断面板">
     <header class="dev-net-panel__head">
-      <strong>Net 联调</strong>
-      <span class="dev-net-panel__status">{{ status }}</span>
+      <strong>Net 诊断</strong>
+      <span class="dev-net-panel__status">{{ statusLabel }}</span>
     </header>
-    <label>
-      用户名
-      <input v-model="username" autocomplete="username" :disabled="busy" />
-    </label>
-    <label>
-      密码
-      <input v-model="password" type="password" autocomplete="current-password" :disabled="busy" />
-    </label>
-    <div class="dev-net-panel__actions">
-      <button type="button" :disabled="busy" @click="onRegister">注册</button>
-      <button type="button" :disabled="busy" @click="onLogin">登录</button>
-      <button type="button" :disabled="busy" @click="onFetchSnapshot">拉快照</button>
-    </div>
-    <pre class="dev-net-panel__out">{{ resultJson }}</pre>
+    <p class="dev-net-panel__hint">
+      仅 DEV 可见。登录入口在 <code>/login</code>；此处不提供注册/进房。
+    </p>
+    <p class="dev-net-panel__meta">uid: {{ uid ?? '—' }}</p>
+    <pre class="dev-net-panel__out">{{ dump }}</pre>
   </aside>
 </template>
 
@@ -90,87 +64,61 @@ function onFetchSnapshot() {
   right: 12px;
   bottom: 12px;
   z-index: 1000;
-  width: 320px;
-  max-height: min(48vh, 420px);
+  width: 280px;
+  max-height: min(40vh, 320px);
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
   border-radius: 10px;
   background: rgba(20, 28, 24, 0.88);
-  color: #e8f0e9;
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #e8f0ea;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .dev-net-panel__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
 .dev-net-panel__status {
-  color: #9ec9a4;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(120, 180, 130, 0.25);
+  color: #b6e0bf;
   font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60%;
 }
 
-.dev-net-panel label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  color: #b7c8ba;
+.dev-net-panel__hint {
+  margin: 0;
+  color: rgba(232, 240, 234, 0.72);
+  font-size: 11px;
+  line-height: 1.45;
 }
 
-.dev-net-panel input {
-  padding: 4px 6px;
-  border: 1px solid #3a4a3e;
-  border-radius: 4px;
-  background: #121a16;
-  color: #e8f0e9;
+.dev-net-panel__hint code {
+  font: inherit;
+  color: #9be15d;
 }
 
-.dev-net-panel__actions {
-  display: flex;
-  gap: 6px;
-}
-
-.dev-net-panel__actions button {
-  flex: 1;
-  padding: 5px 0;
-  border: 1px solid #4a6b52;
-  border-radius: 4px;
-  background: #2a4032;
-  color: #e8f0e9;
-  cursor: pointer;
-}
-
-.dev-net-panel__actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.dev-net-panel__actions button:not(:disabled):hover {
-  background: #355240;
+.dev-net-panel__meta {
+  margin: 0;
+  color: rgba(232, 240, 234, 0.85);
 }
 
 .dev-net-panel__out {
   margin: 0;
-  padding: 6px;
+  padding: 8px;
   overflow: auto;
-  flex: 1;
-  min-height: 80px;
-  max-height: 220px;
-  border-radius: 4px;
-  background: #0c1210;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
   white-space: pre-wrap;
   word-break: break-word;
+  flex: 1;
+  min-height: 0;
 }
 </style>

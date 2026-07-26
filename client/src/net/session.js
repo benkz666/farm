@@ -1,6 +1,6 @@
 /**
- * Online 会话标志（期 2b）。
- * 登录 + Handshake + EnterFarm 成功后由调用方 enterOnline；未登录保持本地权威。
+ * Online 会话标志（期 3）。
+ * 登录页完成 Handshake + EnterFarm 后 enterOnline；玩法写路径仅 online。
  */
 
 /** @type {{ isOnline: boolean, uid: number|null, token: string|null }} */
@@ -23,7 +23,7 @@ export function enterOnline({ uid, token }) {
   session.isOnline = true
 }
 
-/** 退出 online（保留本地模式可用）；不清空 token，便于重连。 */
+/** 退出 online；不清空 token，便于重连。 */
 export function leaveOnline() {
   session.isOnline = false
 }
