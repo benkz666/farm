@@ -146,6 +146,8 @@ docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/001_init.sql
 docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/002_items.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/003_friendship.sql
 
 info "启动 farm-server → :${HTTP_PORT}"
 (
@@ -180,6 +182,6 @@ cat <<EOF
   日志:  ${LOG_DIR}/
   停止:  ./scripts/stop.sh
 
-开发页右下角「Net 联调」可注册 / 登录 / 拉快照。
+登录入口：http://127.0.0.1:${VITE_PORT}/login （右下角 Net 诊断仅 DEV 用）。
 
 EOF
