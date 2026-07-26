@@ -9,16 +9,22 @@ compose-down:
 	docker compose -f $(COMPOSE_FILE) down
 
 migrate:
-	@echo TODO: run server migrations
+	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/001_init.sql
 
 run:
-	@echo TODO: start farm-server
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/farm-server
 
 client-dev:
 	cd client && npm run dev
 
 test:
-	@echo TODO: go test ./...
+	cd server && go test ./...
 
 smoke:
-	@echo TODO: run smoke checks
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke
