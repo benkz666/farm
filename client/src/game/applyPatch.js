@@ -20,6 +20,7 @@ export const CROP_ID_TO_KEY = Object.freeze({
   1: 'bailuobo',
   2: 'huluobo',
   3: 'dabaicai',
+  4: 'pingguo',
 })
 
 /** 客户端字符串 id → 服务端作物 ID。 */
@@ -27,6 +28,13 @@ export const CROP_KEY_TO_ID = Object.freeze({
   bailuobo: 1,
   huluobo: 2,
   dabaicai: 3,
+  pingguo: 4,
+})
+
+const FERTILIZER_ID_TO_KEY = Object.freeze({
+  1: 'normal',
+  2: 'fast',
+  3: 'super',
 })
 
 /**
@@ -77,6 +85,26 @@ export function bagToSeeds(bag) {
     seeds[cropKey] = n
   }
   return seeds
+}
+
+/**
+ * bag `fert:N` → inventory.fertilizers[key]。
+ * @param {Record<string, number>|null|undefined} bag
+ * @returns {Record<string, number>}
+ */
+export function bagToFertilizers(bag) {
+  /** @type {Record<string, number>} */
+  const fertilizers = {}
+  if (!bag || typeof bag !== 'object') return fertilizers
+  for (const [itemKey, count] of Object.entries(bag)) {
+    if (!itemKey.startsWith('fert:')) continue
+    const fertilizerKey = FERTILIZER_ID_TO_KEY[Number(itemKey.slice(5))]
+    if (!fertilizerKey) continue
+    const n = Number(count)
+    if (!Number.isFinite(n) || n <= 0) continue
+    fertilizers[fertilizerKey] = n
+  }
+  return fertilizers
 }
 
 /**
@@ -146,6 +174,7 @@ function applyFullSnapshot(state, snap) {
   if (snap.bag) {
     if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
     state.inventory.seeds = bagToSeeds(snap.bag)
+    state.inventory.fertilizers = bagToFertilizers(snap.bag)
   }
   if (snap.warehouse) {
     state.warehouse = warehouseFromServer(snap.warehouse)
@@ -177,6 +206,7 @@ function applyActionPatch(state, patch) {
   if (patch.bag) {
     if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
     state.inventory.seeds = bagToSeeds(patch.bag)
+    state.inventory.fertilizers = bagToFertilizers(patch.bag)
   }
   if (patch.warehouse) {
     state.warehouse = warehouseFromServer(patch.warehouse)

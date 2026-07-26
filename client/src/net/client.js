@@ -4,13 +4,14 @@ export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
 export const CMD_ENTER_FARM = 200
 
-/** 地块动作（protocol 5.3）；Fertilize=218 留待 2c。 */
+/** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
 export const CMD_CLEAR = 208
 export const CMD_PLANT = 210
 export const CMD_WATER = 212
 export const CMD_REMOVE_WEED = 214
 export const CMD_REMOVE_PEST = 216
+export const CMD_FERTILIZE = 218
 export const CMD_HARVEST = 220
 
 /** 商店 */
@@ -135,7 +136,7 @@ export class NetClient {
    * 地块动作（Till/Clear/Plant/…）。返回完整 Envelope；err≠0 由调用方处理。
    * @param {number} cmd CMD_TILL 等
    * @param {number} plotIndex
-   * @param {number} [arg=0] 播种时为 crop_id，其余为 0
+   * @param {number} [arg=0] 播种时为 crop_id，施肥时为 fertilizer_id
    * @param {number} [ownerUid=0]
    * @returns {Promise<Envelope>}
    */

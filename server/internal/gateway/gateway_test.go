@@ -307,6 +307,54 @@ func TestWebSocketTillSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestWebSocketFertilizeReturnsUpdatedPatch(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Items[farm.FertilizerItem(1)] = 1
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		SeasonDuration: 60_000,
+		MatureAt:       70_000,
+		LastSettleAt:   10_000,
+		LastWaterAt:    10_000,
+	}
+	gw := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	gw.SetClock(func() int64 { return 11_000 })
+
+	conn := openWebSocket(t, gw.Handler())
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   json.RawMessage(`{"token":"token-42","client_config_ver":1}`),
+	})
+	if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
+		t.Fatalf("handshake = %#v", got)
+	}
+
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandFertilize,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
+	})
+	got := readEnvelope(t, conn)
+	if got.Err != pkgerr.OK {
+		t.Fatalf("Fertilize = %#v", got)
+	}
+	if aggregate.Plots[0].MatureAt != 64_000 || aggregate.Items[farm.FertilizerItem(1)] != 0 {
+		t.Fatalf("aggregate after fertilize = %#v, items=%v", aggregate.Plots[0], aggregate.Items)
+	}
+	var payload actionResponse
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatalf("decode Fertilize payload: %v", err)
+	}
+	if payload.Patch.Plot == nil || payload.Patch.Plot.MatureAt != 64_000 {
+		t.Fatalf("Fertilize patch = %#v", payload.Patch)
+	}
+}
+
 func openWebSocket(t *testing.T, handler http.Handler) *websocket.Conn {
 	t.Helper()
 

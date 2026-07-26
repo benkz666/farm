@@ -20,6 +20,7 @@ const (
 	CommandWater      uint32 = 212
 	CommandRemoveWeed uint32 = 214
 	CommandRemovePest uint32 = 216
+	CommandFertilize  uint32 = 218
 	CommandHarvest    uint32 = 220
 	CommandBuy        uint32 = 302
 	CommandSell       uint32 = 304

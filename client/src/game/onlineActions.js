@@ -1,5 +1,5 @@
 /**
- * online 工具栏 → 协议 cmd 映射（期 2b；不含 Fertilize）。
+ * online 工具栏 → 协议 cmd 映射。
  */
 import { PLOT } from './state.js'
 import {
@@ -9,6 +9,7 @@ import {
   CMD_WATER,
   CMD_REMOVE_WEED,
   CMD_REMOVE_PEST,
+  CMD_FERTILIZE,
   CMD_HARVEST,
 } from '../net/client.js'
 
@@ -34,7 +35,7 @@ export function plotCmdForTool(tool, plotState) {
     case 'harvest':
       return CMD_HARVEST
     case 'fert':
-      return null // Task 10
+      return CMD_FERTILIZE
     default:
       return null
   }

@@ -16,7 +16,7 @@ import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
 import { enterOnline, isOnline } from '../net/session.js';
-import { CMD_PLANT } from '../net/client.js';
+import { CMD_FERTILIZE, CMD_PLANT } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
 import { plotCmdForTool } from './onlineActions.js';
@@ -44,6 +44,7 @@ let onlineBusy = false;
 
 const hourMs = () => TIME_SCALES[state.timeScale].hourMs;
 const myLevel = () => levelOf(state.exp);
+const fertilizerKeyToId = (key) => ({ normal: 1, fast: 2, super: 3 }[key] || 0);
 
 const TOOLS_HOME = [
   { id: 'till', name: '锄地', icon: '⛏️' },
@@ -483,6 +484,10 @@ function playOnlineFx(tool, plotId) {
       sfx.pest();
       scene.burst(plotId, 0xffb74d, 10, true);
       break;
+    case 'fert':
+      sfx.fertilize();
+      scene.magicAnim(plotId);
+      break;
     case 'harvest':
       sfx.harvest();
       scene.harvestAnim(plotId);
@@ -499,9 +504,6 @@ async function onPlotClickOnline(plotId) {
   const plot = farm.plots[plotId];
   if (!plot || plotId >= farm.unlocked) return;
 
-  if (activeTool === 'fert') {
-    return fail('online 暂不支持施肥（期 2c）');
-  }
   if (!activeTool) return showPlotTip(plotId);
 
   const cmd = plotCmdForTool(activeTool, plot.state);
@@ -514,6 +516,10 @@ async function onPlotClickOnline(plotId) {
   if (cmd === CMD_PLANT) {
     arg = cropKeyToId(selectedSeed);
     if (!arg) return fail('请先选择种子');
+  }
+  if (cmd === CMD_FERTILIZE) {
+    arg = fertilizerKeyToId(selectedFert);
+    if (!arg) return fail('请先选择化肥');
   }
 
   onlineBusy = true;

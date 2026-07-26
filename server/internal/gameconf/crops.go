@@ -29,9 +29,10 @@ type CropConf struct {
 //
 // 顺序即 ID 顺序；新增作物时按客户端 CROPS 表追加，禁止重排已有 ID。
 var cropTable = []CropConf{
-	{ID: 1, UnlockLevel: 0, SeedPrice: 125, FruitPrice: 17, Yield: 16, Seasons: 1, CycleHours: 10, HarvestExp: 15}, // 白萝卜
-	{ID: 2, UnlockLevel: 0, SeedPrice: 163, FruitPrice: 21, Yield: 17, Seasons: 1, CycleHours: 13, HarvestExp: 18}, // 胡萝卜
-	{ID: 3, UnlockLevel: 1, SeedPrice: 168, FruitPrice: 22, Yield: 17, Seasons: 1, CycleHours: 14, HarvestExp: 19}, // 大白菜
+	{ID: 1, UnlockLevel: 0, SeedPrice: 125, FruitPrice: 17, Yield: 16, Seasons: 1, CycleHours: 10, HarvestExp: 15},  // 白萝卜
+	{ID: 2, UnlockLevel: 0, SeedPrice: 163, FruitPrice: 21, Yield: 17, Seasons: 1, CycleHours: 13, HarvestExp: 18},  // 胡萝卜
+	{ID: 3, UnlockLevel: 1, SeedPrice: 168, FruitPrice: 22, Yield: 17, Seasons: 1, CycleHours: 14, HarvestExp: 19},  // 大白菜
+	{ID: 4, UnlockLevel: 10, SeedPrice: 578, FruitPrice: 24, Yield: 23, Seasons: 2, CycleHours: 30, HarvestExp: 18}, // 苹果
 }
 
 // CropByID 查表，找不到返回 false。id==0 视为「无作物」返回 false。
@@ -40,4 +41,16 @@ func CropByID(id uint16) (CropConf, bool) {
 		return CropConf{}, false
 	}
 	return cropTable[id-1], true
+}
+
+// SeasonHours 按策划 6.3 的多季拆分规则返回当前季的缩放小时数。
+func SeasonHours(crop CropConf, seasonIndex uint8) uint16 {
+	if crop.Seasons <= 1 {
+		return crop.CycleHours
+	}
+	later := crop.CycleHours / uint16(crop.Seasons+1)
+	if seasonIndex == 0 {
+		return later * 2
+	}
+	return later
 }

@@ -262,3 +262,105 @@ func TestApplyPlotActionClearFailureDeductsGrowingHealth(t *testing.T) {
 		t.Fatalf("AccruedWeighted = %d, want %d", got, want)
 	}
 }
+
+func TestApplyPlotActionFertilizeMovesMatureAtWithoutChangingSeasonDuration(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[FertilizerItem(1)] = 1
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		SeasonDuration: 60_000,
+		MatureAt:       actionNow + 60_000,
+		LastSettleAt:   actionNow,
+		LastWaterAt:    actionNow,
+	}
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Fertilize, PlotIndex: 0, Arg: 1}, actionNow+1_000)
+
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	got := agg.Plots[0]
+	if got.MatureAt != actionNow+54_000 {
+		t.Fatalf("MatureAt = %d, want %d", got.MatureAt, actionNow+54_000)
+	}
+	if got.SeasonDuration != 60_000 {
+		t.Fatalf("SeasonDuration = %d, want 60000", got.SeasonDuration)
+	}
+	if got.FertMask != 0b001 {
+		t.Fatalf("FertMask = %03b, want 001", got.FertMask)
+	}
+	if agg.Items[FertilizerItem(1)] != 0 {
+		t.Fatalf("fertilizer count = %d, want 0", agg.Items[FertilizerItem(1)])
+	}
+}
+
+func TestApplyPlotActionFertilizeRejectsSameStageWithoutMutation(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[FertilizerItem(1)] = 1
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		FertMask:       0b001,
+		SeasonDuration: 60_000,
+		MatureAt:       actionNow + 60_000,
+		LastSettleAt:   actionNow,
+		LastWaterAt:    actionNow,
+	}
+	before := cloneAggregate(agg)
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Fertilize, PlotIndex: 0, Arg: 1}, actionNow+1_000)
+
+	if result.Err != pkgerr.StageAlreadyFertilized {
+		t.Fatalf("Err = %d, want %d", result.Err, pkgerr.StageAlreadyFertilized)
+	}
+	if !reflect.DeepEqual(*agg, before) {
+		t.Fatal("duplicate fertilize mutated aggregate")
+	}
+}
+
+func TestApplyPlotActionHarvestMovesMultiSeasonCropToNextGrowingSeason(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Plots[0] = Plot{
+		State:           StateMature,
+		CropID:          4,
+		SeasonIndex:     0,
+		SeasonTotal:     2,
+		StageCount:      4,
+		FertMask:        0b1111,
+		FinalYield:      23,
+		StolenCount:     2,
+		SeasonDuration:  120_000,
+		MatureAt:        actionNow,
+		LastSettleAt:    actionNow,
+		LastWaterAt:     actionNow,
+		AccruedWeighted: 9_999,
+		WeedSince:       actionNow - 1,
+		PestSince:       actionNow - 1,
+		WeedNextWin:     3,
+		PestNextWin:     4,
+		HarvestRound:    1,
+	}
+	now := actionNow + 5_000
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Harvest, PlotIndex: 0}, now)
+
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	got := agg.Plots[0]
+	if got.State != StateGrowing || got.SeasonIndex != 1 || got.SeasonTotal != 2 {
+		t.Fatalf("plot = %#v, want second growing season", got)
+	}
+	if got.SeasonStartAt != now || got.MatureAt != now+60_000 || got.SeasonDuration != 60_000 {
+		t.Fatalf("next season times = start:%d mature:%d duration:%d", got.SeasonStartAt, got.MatureAt, got.SeasonDuration)
+	}
+	if got.FertMask != 0 || got.AccruedWeighted != 0 || got.WeedSince != 0 || got.PestSince != 0 || got.LastWaterAt != now {
+		t.Fatalf("next season fields not reset: %#v", got)
+	}
+	if agg.Items[FruitItem(4)] != 21 {
+		t.Fatalf("apple harvest = %d, want 21", agg.Items[FruitItem(4)])
+	}
+}

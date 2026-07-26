@@ -12,7 +12,7 @@ const defaultTimeProfile = gameconf.TimeProfileDemo
 // AccruedWeighted 单位为「百分点·毫秒」，故惩罚 = 点数 × SeasonDuration。
 const clearFailPenaltyPoints int64 = 10
 
-// PlotActionKind 是地块动作种类（期 2a 主路径，不含 Fertilize）。
+// PlotActionKind 是地块动作种类。
 type PlotActionKind uint8
 
 const (
@@ -22,6 +22,7 @@ const (
 	Water
 	Weed
 	Pest
+	Fertilize
 	Harvest
 )
 
@@ -39,6 +40,8 @@ func (k PlotActionKind) String() string {
 		return "Weed"
 	case Pest:
 		return "Pest"
+	case Fertilize:
+		return "Fertilize"
 	case Harvest:
 		return "Harvest"
 	default:
@@ -46,7 +49,7 @@ func (k PlotActionKind) String() string {
 	}
 }
 
-// PlotAction 是一次地块意图。Plant 时 Arg 为 crop_id，其余为 0。
+// PlotAction 是一次地块意图。Plant 时 Arg 为 crop_id，Fertilize 时为 fertilizer_id。
 type PlotAction struct {
 	Kind      PlotActionKind
 	PlotIndex uint8
@@ -94,8 +97,10 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 		return a.commitWeed(act.PlotIndex, &work, now)
 	case Pest:
 		return a.commitPest(act.PlotIndex, &work, now)
+	case Fertilize:
+		return a.commitFertilize(act.PlotIndex, &work, act.Arg, now)
 	case Harvest:
-		return a.commitHarvest(act.PlotIndex, &work)
+		return a.commitHarvest(act.PlotIndex, &work, now)
 	default:
 		return ActionResult{Err: pkgerr.BadRequest}
 	}
@@ -167,12 +172,12 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64)
 		delete(a.Items, seedKey)
 	}
 
-	duration := int64(crop.CycleHours) * gameconf.HourMs(defaultTimeProfile)
+	duration := seasonDuration(crop, 0)
 	a.Plots[idx] = Plot{
 		State:          StateGrowing,
 		SeasonIndex:    0,
 		SeasonTotal:    crop.Seasons,
-		StageCount:     3,
+		StageCount:     stageCount(crop),
 		CropID:         cropID,
 		SeasonStartAt:  now,
 		SeasonDuration: duration,
@@ -255,7 +260,58 @@ func (a *Aggregate) commitPest(idx uint8, work *Plot, now int64) ActionResult {
 	}
 }
 
-func (a *Aggregate) commitHarvest(idx uint8, work *Plot) ActionResult {
+func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, now int64) ActionResult {
+	if work.State != StateGrowing {
+		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	}
+	if work.CropID == 0 {
+		return ActionResult{Err: pkgerr.PlotEmpty}
+	}
+	fertilizer, ok := gameconf.FertilizerByID(fertilizerID)
+	if !ok {
+		return ActionResult{Err: pkgerr.BadRequest}
+	}
+	key := FertilizerItem(fertilizerID)
+	if a.Items[key] == 0 {
+		return ActionResult{Err: pkgerr.FertilizerNotOwned}
+	}
+	if work.SeasonDuration <= 0 || work.StageCount == 0 {
+		return ActionResult{Err: pkgerr.Internal}
+	}
+
+	progress := work.SeasonDuration - (work.MatureAt - now)
+	if progress < 0 {
+		progress = 0
+	}
+	stage := progress * int64(work.StageCount) / work.SeasonDuration
+	if stage >= int64(work.StageCount) {
+		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	}
+	stageBit := uint8(1 << stage)
+	if work.FertMask&stageBit != 0 {
+		return ActionResult{Err: pkgerr.StageAlreadyFertilized}
+	}
+	stageEnd := (stage + 1) * work.SeasonDuration / int64(work.StageCount)
+	reduce := fertilizer.ReduceDuration(defaultTimeProfile)
+	if remaining := stageEnd - progress; reduce > remaining {
+		reduce = remaining
+	}
+	if reduce <= 0 {
+		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	}
+
+	a.Items[key]--
+	if a.Items[key] == 0 {
+		delete(a.Items, key)
+	}
+	work.MatureAt -= reduce
+	work.FertMask |= stageBit
+	a.Plots[idx] = *work
+	a.FarmSeq++
+	return a.okPatch(idx)
+}
+
+func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult {
 	if work.State == StateWithered {
 		return ActionResult{Err: pkgerr.PlotWithered}
 	}
@@ -279,13 +335,45 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot) ActionResult {
 	}
 	a.Exp += crop.HarvestExp
 
-	// 期 2a：单季作物收获后进入残茬；多季交 Task 10。
-	a.Plots[idx] = Plot{
-		State:  StateResidue,
-		CropID: cropID,
+	if work.SeasonIndex+1 < work.SeasonTotal {
+		enterNextSeason(work, crop, now)
+		a.Plots[idx] = *work
+	} else {
+		a.Plots[idx] = Plot{
+			State:  StateResidue,
+			CropID: cropID,
+		}
 	}
 	a.FarmSeq++
 	return a.okPatch(idx)
+}
+
+func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64) {
+	p.SeasonIndex++
+	p.SeasonStartAt = now
+	p.SeasonDuration = seasonDuration(crop, p.SeasonIndex)
+	p.MatureAt = now + p.SeasonDuration
+	p.LastSettleAt = now
+	p.LastWaterAt = now
+	p.AccruedWeighted = 0
+	p.WeedSince, p.PestSince = 0, 0
+	p.WeedNextWin, p.PestNextWin = 0, 0
+	p.FertMask = 0
+	p.FinalYield = 0
+	p.StolenCount = 0
+	p.Stealers = nil
+	p.State = StateGrowing
+}
+
+func seasonDuration(crop gameconf.CropConf, seasonIndex uint8) int64 {
+	return int64(gameconf.SeasonHours(crop, seasonIndex)) * gameconf.HourMs(defaultTimeProfile)
+}
+
+func stageCount(crop gameconf.CropConf) uint8 {
+	if crop.UnlockLevel >= 3 {
+		return 4
+	}
+	return 3
 }
 
 func waterFull(p *Plot, now int64, cfg AdvanceConfig) bool {

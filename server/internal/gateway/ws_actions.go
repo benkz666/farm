@@ -33,7 +33,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 
 	switch request.Cmd {
 	case CommandTill, CommandClear, CommandPlant, CommandWater,
-		CommandRemoveWeed, CommandRemovePest, CommandHarvest:
+		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest:
 		var payload plotActionRequest
 		if err := unmarshalPayload(request.Payload, &payload); err != nil {
 			response.Err = pkgerr.BadRequest
@@ -140,6 +140,8 @@ func plotActionKind(cmd uint32) (farm.PlotActionKind, bool) {
 		return farm.Weed, true
 	case CommandRemovePest:
 		return farm.Pest, true
+	case CommandFertilize:
+		return farm.Fertilize, true
 	case CommandHarvest:
 		return farm.Harvest, true
 	default:

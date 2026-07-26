@@ -11,13 +11,19 @@ import (
 type ItemKey string
 
 const (
-	seedItemPrefix  = "seed:"
-	fruitItemPrefix = "fruit:"
+	seedItemPrefix       = "seed:"
+	fertilizerItemPrefix = "fert:"
+	fruitItemPrefix      = "fruit:"
 )
 
 // SeedItem 返回作物种子的背包键。
 func SeedItem(cropID uint16) ItemKey {
 	return ItemKey(seedItemPrefix + strconv.FormatUint(uint64(cropID), 10))
+}
+
+// FertilizerItem 返回化肥背包键。
+func FertilizerItem(fertilizerID uint16) ItemKey {
+	return ItemKey(fertilizerItemPrefix + strconv.FormatUint(uint64(fertilizerID), 10))
 }
 
 // FruitItem 返回作物果实的仓库键。

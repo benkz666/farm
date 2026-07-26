@@ -213,7 +213,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		}
 		response.Payload = marshalPayload(enter)
 	case CommandTill, CommandClear, CommandPlant, CommandWater,
-		CommandRemoveWeed, CommandRemovePest, CommandHarvest,
+		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest,
 		CommandBuy, CommandSell:
 		return g.handlePlotOrShop(connection, request)
 	default:

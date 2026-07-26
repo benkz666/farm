@@ -17,13 +17,15 @@ const (
 )
 
 // ParseItemKey 把聚合内的 ItemKey 解析为 (kind, item_id)。
-// 期 2 支持 seed:/fruit:；化肥键留给 Task 10。
 func ParseItemKey(key farm.ItemKey) (kind uint8, itemID uint16, err error) {
 	s := string(key)
 	switch {
 	case strings.HasPrefix(s, "seed:"):
 		kind = ItemKindSeed
 		s = strings.TrimPrefix(s, "seed:")
+	case strings.HasPrefix(s, "fert:"):
+		kind = ItemKindFertilizer
+		s = strings.TrimPrefix(s, "fert:")
 	case strings.HasPrefix(s, "fruit:"):
 		kind = ItemKindFruit
 		s = strings.TrimPrefix(s, "fruit:")
@@ -45,6 +47,8 @@ func FormatItemKey(kind uint8, itemID uint16) (farm.ItemKey, error) {
 	switch kind {
 	case ItemKindSeed:
 		return farm.SeedItem(itemID), nil
+	case ItemKindFertilizer:
+		return farm.FertilizerItem(itemID), nil
 	case ItemKindFruit:
 		return farm.FruitItem(itemID), nil
 	default:

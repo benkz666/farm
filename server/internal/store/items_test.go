@@ -8,6 +8,7 @@ func TestParseFormatItemKeyRoundTrip(t *testing.T) {
 		itemID uint16
 	}{
 		{ItemKindSeed, 1},
+		{ItemKindFertilizer, 2},
 		{ItemKindFruit, 16},
 	}
 	for _, tc := range cases {
@@ -26,7 +27,7 @@ func TestParseFormatItemKeyRoundTrip(t *testing.T) {
 }
 
 func TestParseItemKeyRejectsUnknown(t *testing.T) {
-	if _, _, err := ParseItemKey("fert:1"); err == nil {
+	if _, _, err := ParseItemKey("dogfood:1"); err == nil {
 		t.Fatal("expected error for unsupported key")
 	}
 }
