@@ -230,6 +230,18 @@ function applyActionPatch(state, patch) {
 }
 
 /**
+ * 应用服务端 FarmDelta。Delta 只含发生变化的地块，不覆盖本地其余镜像。
+ * @param {object} state
+ * @param {{ plots?: object[] }} delta
+ * @returns {object} state
+ */
+export function applyFarmDelta(state, delta) {
+  if (!state || !Array.isArray(delta?.plots)) return state
+  applyFullSnapshot(state, { plots: delta.plots })
+  return state
+}
+
+/**
  * 将服务端 snapshot 或动作 Rsp 补丁写入本地 state（原地修改并返回）。
  *
  * 可接受：
@@ -237,6 +249,7 @@ function applyActionPatch(state, patch) {
  * - PatchJSON（含 plot / coin / bag）
  * - EnterFarm Rsp payload：`{ snapshot, farm_seq, ... }`
  * - 动作 Rsp payload：`{ farm_seq, patch }`
+ * - FarmDelta：`{ owner_uid, farm_seq, plots[] }`
  *
  * @param {object} state
  * @param {object} source
@@ -254,7 +267,7 @@ export function applyPatch(state, source) {
     return state
   }
   if (Array.isArray(source.plots)) {
-    applyFullSnapshot(state, source)
+    applyFarmDelta(state, source)
     return state
   }
   // 单地块 / 商店补丁（无外层包装）

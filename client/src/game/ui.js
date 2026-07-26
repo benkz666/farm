@@ -30,6 +30,7 @@ export class UI {
   constructor(cb) {
     this.cb = cb;               // { onTool, onSubSelect, onPanel, onBuy..., onVisit, onBackHome, onExpand, onSetting }
     this.activeTool = null;
+    this.readOnly = false;
     this.toastWrap = $('#toast-wrap');
     this.tooltip = $('#tooltip');
 
@@ -61,7 +62,7 @@ export class UI {
     $('#dot-tasks').classList.toggle('hidden', !state.tasks.some(t => t.done && !t.seen));
     // 扩地按钮
     const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-    const canExpand = !!next && lv >= next[1] && state.gold >= next[2];
+    const canExpand = !this.readOnly && !!next && lv >= next[1] && state.gold >= next[2];
     $('#btn-expand').classList.toggle('hidden', !canExpand);
   }
 
@@ -79,6 +80,13 @@ export class UI {
       b.onclick = () => this.cb.onTool(t.id);
       bar.appendChild(b);
     }
+  }
+
+  /** 访客农场只保留浏览入口，隐藏一切写入农场的控件。 */
+  setReadOnly(readOnly) {
+    this.readOnly = readOnly;
+    $('#side-menu button[data-panel="shop"]').classList.toggle('hidden', readOnly);
+    $('#btn-expand').classList.toggle('hidden', readOnly);
   }
 
   showSubBar(items, activeId, onPick) {
@@ -359,23 +367,83 @@ export class UI {
   // ---------------- 好友 ----------------
   renderFriends(state) {
     const body = this.openModal('👥 好友');
-    body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">真实好友与拜访将在后续版本接入；本地 NPC 假好友已移除。</div>`);
+    const { uid } = this.cb.getSession?.() || {};
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:12.5px;color:var(--ink-soft);margin-bottom:12px';
+    info.textContent = `我的 UID：${uid ?? '—'}`;
+    body.appendChild(info);
+
+    const shareRow = document.createElement('div');
+    shareRow.className = 'set-row';
+    shareRow.style.marginBottom = '10px';
+    const shareButton = document.createElement('button');
+    shareButton.className = 'act-btn blue';
+    shareButton.textContent = '复制分享链接';
+    shareButton.onclick = async () => {
+      const link = await this.cb.onGenShareLink?.();
+      if (!link) return;
+      try {
+        await navigator.clipboard?.writeText(link);
+        this.toast('分享链接已复制', 'ok');
+      } catch {
+        this.toast('请手动复制分享链接', 'info');
+      }
+      shareInput.value = link;
+    };
+    const shareInput = document.createElement('input');
+    shareInput.readOnly = true;
+    shareInput.placeholder = '生成后可分享给好友';
+    shareInput.style.cssText = 'flex:1;min-width:0';
+    shareRow.append(shareInput, shareButton);
+    body.appendChild(shareRow);
+
+    const addRow = document.createElement('div');
+    addRow.className = 'set-row';
+    addRow.style.marginBottom = '10px';
+    const addInput = document.createElement('input');
+    addInput.placeholder = '输入 UID 或粘贴分享链接';
+    addInput.style.cssText = 'flex:1;min-width:0';
+    const addButton = document.createElement('button');
+    addButton.className = 'act-btn';
+    addButton.textContent = '添加';
+    addButton.onclick = async () => {
+      if (await this.cb.onAddFriend?.(addInput.value)) this.renderFriends(state);
+    };
+    addRow.append(addInput, addButton);
+    body.appendChild(addRow);
+
     if (!state.friends?.length) {
       body.insertAdjacentHTML('beforeend', `<div style="font-size:13px;color:var(--ink-soft);padding:18px 4px">暂无好友</div>`);
       return;
     }
     for (const f of state.friends) {
-      const dog = f.dog ? DOGS.find(d => d.id === f.dog) : null;
       const row = document.createElement('div');
       row.className = 'list-row';
-      row.innerHTML = `<span class="crop-badge" style="background:linear-gradient(135deg,#a8d5a2,#5a8f54)">${f.name[0]}</span>
-        <div class="grow"><div class="title">${f.name} <span style="font-size:11.5px;color:var(--ink-soft)">Lv.${f.level}</span>
-        ${dog ? `<span class="friend-dog">🐶 ${dog.name}看家</span>` : ''}</div>
-        <div class="sub">${f.plots?.length || 0} 块地</div></div>`;
-      const btn = document.createElement('button');
-      btn.className = 'act-btn blue'; btn.textContent = '访问农场';
-      btn.onclick = () => { this.closeModal(); this.cb.onVisit(f.id); };
-      row.appendChild(btn);
+      const avatar = document.createElement('span');
+      avatar.className = 'crop-badge';
+      avatar.style.background = 'linear-gradient(135deg,#a8d5a2,#5a8f54)';
+      avatar.textContent = (f.nickname || String(f.uid))[0];
+      const detail = document.createElement('div');
+      detail.className = 'grow';
+      const title = document.createElement('div');
+      title.className = 'title';
+      title.textContent = f.nickname || `农场主 ${f.uid}`;
+      const sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = `UID：${f.uid}`;
+      detail.append(title, sub);
+      const visit = document.createElement('button');
+      visit.className = 'act-btn blue';
+      visit.textContent = '访问农场';
+      visit.onclick = () => { this.closeModal(); this.cb.onVisit(f.uid, f.nickname); };
+      const remove = document.createElement('button');
+      remove.className = 'danger-btn';
+      remove.style.marginLeft = '6px';
+      remove.textContent = '删除';
+      remove.onclick = async () => {
+        if (await this.cb.onRemoveFriend?.(f.uid)) this.renderFriends(state);
+      };
+      row.append(avatar, detail, visit, remove);
       body.appendChild(row);
     }
   }

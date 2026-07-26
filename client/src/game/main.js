@@ -11,10 +11,11 @@ import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks } from './state.
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
-import { enterOnline, isOnline } from '../net/session.js';
+import { enterOnline, isOnline, session, setFarmView } from '../net/session.js';
 import { CMD_FERTILIZE, CMD_PLANT } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
+import { createFarmMirror } from './farmMirror.js';
 import { plotCmdForTool } from './onlineActions.js';
 import { shouldApplyPatchFromError } from './onlineResponse.js';
 
@@ -29,7 +30,6 @@ sfx.enabled = state.settings.sound;
 
 const scene = new FarmScene(document.getElementById('scene-container'));
 
-let viewing = 'me';            // 'me' | friendId
 let activeTool = null;
 let selectedSeed = null;
 let selectedFert = null;
@@ -37,6 +37,8 @@ let hoverPlot = null;
 
 /** @type {import('../net/client.js').NetClient|null} */
 let netClient = null;
+let farmMirror = null;
+let stopDeltaSubscription = null;
 /** 等 Rsp 期间防连点 */
 let onlineBusy = false;
 
@@ -53,20 +55,37 @@ const TOOLS_HOME = [
   { id: 'fert', name: '施肥', icon: '🧪' },
   { id: 'harvest', name: '收获', icon: '🧺' },
 ];
-const TOOLS_VISIT = [
-  { id: 'water', name: '浇水', icon: '💧' },
-  { id: 'weed', name: '除草', icon: '🌿' },
-  { id: 'pest', name: '除虫', icon: '🐛' },
-  { id: 'steal', name: '偷菜', icon: '🥷' },
-];
-
 // ---------------- 通用辅助 ----------------
 const cropOf = (plot) => CROP_MAP[plot.cropId];
 
 function currentFarm() {
-  if (viewing === 'me') return { plots: state.plots, owner: 'me', unlocked: state.unlockedPlots, isMe: true };
-  const f = state.friends.find(f => f.id === viewing);
-  return { plots: f.plots, owner: f.id, unlocked: f.plots.length, isMe: false, friend: f };
+  return {
+    plots: state.plots,
+    owner: session.viewingOwnerUid,
+    unlocked: state.unlockedPlots,
+    isMe: session.relation !== 'FRIEND',
+  };
+}
+
+const isVisitingFriend = () => session.relation === 'FRIEND';
+
+function applyResponsePatch(payload) {
+  applyPatch(state, payload || {});
+  const farmSeq = Number(payload?.farm_seq);
+  if (session.relation === 'SELF' && Number.isSafeInteger(farmSeq) && farmSeq >= session.lastFarmSeq) {
+    session.lastFarmSeq = farmSeq;
+  }
+}
+
+function refreshFarmMirror() {
+  const visiting = isVisitingFriend();
+  activeTool = visiting ? null : activeTool;
+  ui.setReadOnly?.(visiting);
+  ui.setVisitor?.(visiting ? `UID ${session.viewingOwnerUid}` : null);
+  refreshToolbar();
+  refreshSubBar();
+  syncAllPlots();
+  ui.updateHUD(state);
 }
 
 const healthOf = (plot) => Math.max(0, Math.min(100, 100 - plot.penalty));
@@ -174,16 +193,65 @@ function enterOnlineFromNet(client, enterEnv) {
   if (!enterEnv || enterEnv.err !== 0) {
     throw new Error(`enterOnlineFromNet: enterFarm err=${enterEnv?.err}`);
   }
-  applyPatch(state, enterEnv.payload || {});
+  const payload = enterEnv.payload || {};
+  const snapshot = payload.snapshot || {};
+  const ownerUid = Number(snapshot.owner_uid) || client.uid;
+  const relation = payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF';
+  applyPatch(state, payload);
   enterOnline({ uid: client.uid, token: client.token });
   netClient = client;
-  viewing = 'me';
-  ui.setVisitor?.(null);
-  refreshToolbar();
-  refreshSubBar();
-  syncAllPlots();
-  ui.updateHUD(state);
+  setFarmView({
+    ownerUid,
+    farmSeq: Number(payload.farm_seq) || 0,
+    relation,
+  });
+  stopDeltaSubscription?.();
+  farmMirror = createFarmMirror({
+    state,
+    session,
+    syncFarm: async (viewOwnerUid, fromSeq) => {
+      const response = await client.syncFarm(viewOwnerUid, fromSeq);
+      if (response.err !== 0) throw new Error(errText(response.err));
+      return response;
+    },
+    onApplied: refreshFarmMirror,
+  });
+  stopDeltaSubscription = client.onDelta((deltaEnv) => {
+    void farmMirror.onDelta(deltaEnv.payload).catch((error) => {
+      fail(error instanceof Error ? error.message : String(error));
+    });
+  });
+  refreshFarmMirror();
   ui.toast('已进入 online 模式：操作将发往服务端', 'ok');
+}
+
+async function enterFarm(ownerUid, nickname = '') {
+  if (!netClient) return;
+  onlineBusy = true;
+  try {
+    const response = await netClient.enterFarm(ownerUid);
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return;
+    }
+    const payload = response.payload || {};
+    const snapshot = payload.snapshot || {};
+    applyPatch(state, payload);
+    setFarmView({
+      ownerUid: Number(snapshot.owner_uid) || (ownerUid || netClient.uid),
+      farmSeq: Number(payload.farm_seq) || 0,
+      relation: payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF',
+    });
+    refreshFarmMirror();
+    if (isVisitingFriend()) {
+      ui.setVisitor?.(nickname || snapshot.nickname || `UID ${session.viewingOwnerUid}`);
+      ui.toast('已进入好友农场，只可浏览', 'info');
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  } finally {
+    onlineBusy = false;
+  }
 }
 
 function playOnlineFx(tool, plotId) {
@@ -251,7 +319,7 @@ async function onPlotClickOnline(plotId) {
     const rsp = await netClient.plotAction(cmd, plotId, arg);
     if (rsp.err !== 0) {
       if (shouldApplyPatchFromError(rsp.err, rsp.payload)) {
-        applyPatch(state, rsp.payload);
+        applyResponsePatch(rsp.payload);
         ui.updateHUD(state);
         syncAllPlots();
         refreshSubBar();
@@ -259,7 +327,7 @@ async function onPlotClickOnline(plotId) {
       fail(errText(rsp.err));
       return;
     }
-    applyPatch(state, rsp.payload || {});
+    applyResponsePatch(rsp.payload);
     playOnlineFx(activeTool, plotId);
     ok(activeTool === 'harvest' ? '收获成功' : '操作成功');
     ui.updateHUD(state);
@@ -273,7 +341,7 @@ async function onPlotClickOnline(plotId) {
 }
 
 async function onlineBuySeed(id) {
-  if (onlineBusy || !netClient) return;
+  if (onlineBusy || !netClient || isVisitingFriend()) return;
   const itemId = cropKeyToId(id);
   if (!itemId) return fail('商品不存在');
   onlineBusy = true;
@@ -283,7 +351,7 @@ async function onlineBuySeed(id) {
       fail(errText(rsp.err));
       return;
     }
-    applyPatch(state, rsp.payload || {});
+    applyResponsePatch(rsp.payload);
     sfx.gold();
     const c = CROP_MAP[id];
     ui.toast(`购买 ${c?.name || id} 种子 ×1`, 'ok');
@@ -296,7 +364,7 @@ async function onlineBuySeed(id) {
 }
 
 async function onlineBuyFertilizer(id) {
-  if (onlineBusy || !netClient) return;
+  if (onlineBusy || !netClient || isVisitingFriend()) return;
   const fertilizer = FERTILIZERS.find(item => item.id === id);
   if (!fertilizer?.shopItemId) return fail('商品不存在');
   onlineBusy = true;
@@ -306,7 +374,7 @@ async function onlineBuyFertilizer(id) {
       fail(errText(rsp.err));
       return;
     }
-    applyPatch(state, rsp.payload || {});
+    applyResponsePatch(rsp.payload);
     sfx.gold();
     ui.toast(`购买 ${fertilizer.name} ×1`, 'ok');
     ui.updateHUD(state);
@@ -319,7 +387,7 @@ async function onlineBuyFertilizer(id) {
 }
 
 async function onlineSell(id, n) {
-  if (onlineBusy || !netClient) return;
+  if (onlineBusy || !netClient || isVisitingFriend()) return;
   const itemId = cropKeyToId(id);
   if (!itemId) return fail('该物品不可出售');
   const have = state.warehouse[id] || 0;
@@ -332,7 +400,7 @@ async function onlineSell(id, n) {
       fail(errText(rsp.err));
       return;
     }
-    applyPatch(state, rsp.payload || {});
+    applyResponsePatch(rsp.payload);
     sfx.gold();
     const c = CROP_MAP[id];
     ui.toast(`出售 ${c?.name || id} ×${count}`, 'gold');
@@ -345,7 +413,7 @@ async function onlineSell(id, n) {
 }
 
 async function onlineSellAll() {
-  if (onlineBusy || !netClient) return;
+  if (onlineBusy || !netClient || isVisitingFriend()) return;
   const entries = Object.entries(state.warehouse).filter(([, n]) => n > 0);
   if (!entries.length) return;
   onlineBusy = true;
@@ -360,7 +428,7 @@ async function onlineSellAll() {
         lastErrMsg = errText(rsp.err);
         break;
       }
-      applyPatch(state, rsp.payload || {});
+      applyResponsePatch(rsp.payload);
       sold++;
     }
     if (sold > 0) {
@@ -388,8 +456,8 @@ function onPlotClick(plotId) {
     fail('请先登录后再操作');
     return;
   }
-  if (viewing !== 'me') {
-    fail('线上暂不支持');
+  if (isVisitingFriend()) {
+    fail('好友农场仅可浏览');
     return;
   }
   void onPlotClickOnline(plotId);
@@ -485,8 +553,97 @@ function syncAllPlots() {
 
 // ---------------- 工具选择 ----------------
 function refreshToolbar() {
-  const tools = viewing === 'me' ? TOOLS_HOME : TOOLS_VISIT;
+  const tools = isVisitingFriend() ? [] : TOOLS_HOME;
   ui.renderToolbar(tools, activeTool);
+}
+
+async function refreshFriends() {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.friendList();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.friends = Array.isArray(response.payload?.friends) ? response.payload.friends : [];
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function generateShareLink() {
+  if (!netClient) return '';
+  try {
+    const response = await netClient.genShareLink();
+    if (response.err !== 0 || !response.payload?.path) {
+      fail(errText(response.err));
+      return '';
+    }
+    return new URL(response.payload.path, location.origin).href;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return '';
+  }
+}
+
+function inviteTokenFromInput(value) {
+  const input = value.trim();
+  if (!input) return '';
+  try {
+    const url = new URL(input, location.origin);
+    return url.pathname.startsWith('/i/') ? decodeURIComponent(url.pathname.slice(3)) : '';
+  } catch {
+    return input.startsWith('/i/') ? decodeURIComponent(input.slice(3)) : '';
+  }
+}
+
+async function addFriend(value) {
+  if (!netClient) return false;
+  const input = value.trim();
+  if (!input) {
+    fail('请输入 UID 或分享链接');
+    return false;
+  }
+  try {
+    const token = inviteTokenFromInput(input);
+    const peerUid = Number(input);
+    if (!token && (!Number.isSafeInteger(peerUid) || peerUid <= 0)) {
+      fail('UID 格式无效');
+      return false;
+    }
+    const response = token
+      ? await netClient.acceptInvite(token)
+      : await netClient.addFriendByUID(peerUid);
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    await refreshFriends();
+    ui.toast('添加好友成功', 'ok');
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function removeFriend(peerUid) {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.removeFriend(peerUid);
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    await refreshFriends();
+    ui.toast('已删除好友', 'info');
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
 }
 
 function refreshSubBar() {
@@ -520,6 +677,9 @@ const ui = new UI({
 
   onPanel(panel) {
     sfx.click();
+    if (panel === 'shop' && isVisitingFriend()) {
+      return fail('好友农场无法使用商店');
+    }
     switch (panel) {
       case 'shop': ui.renderShop(state); break;
       case 'bag': ui.renderBag(state); break;
@@ -527,17 +687,24 @@ const ui = new UI({
       case 'tasks': ui.renderTasks(state, logicDayMs(state.timeScale) - (Date.now() - state.daily.dayStart)); break;
       case 'codex': ui.renderCodex(state); break;
       case 'mail': ui.renderMail(state); break;
-      case 'friends': ui.renderFriends(state); break;
+      case 'friends':
+        ui.renderFriends(state);
+        void refreshFriends().then((ok) => {
+          if (ok && ui.modalOpen) ui.renderFriends(state);
+        });
+        break;
     }
   },
 
   async onBuySeed(id) {
     if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法购买');
     return onlineBuySeed(id);
   },
 
   async onBuyFert(id) {
     if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法购买');
     return onlineBuyFertilizer(id);
   },
 
@@ -551,11 +718,13 @@ const ui = new UI({
 
   async onSell(id, n) {
     if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法出售');
     return onlineSell(id, n);
   },
 
   async onSellAll() {
     if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法出售');
     return onlineSellAll();
   },
 
@@ -563,19 +732,30 @@ const ui = new UI({
     return fail('线上暂不支持');
   },
 
-  onVisit(_friendId) {
-    // Task 11 接入真实拜访；期 3 本地 NPC 拜访已移除
-    return fail('线上暂不支持');
+  onVisit(friendId, nickname) {
+    void enterFarm(friendId, nickname);
   },
 
   onBackHome() {
-    viewing = 'me';
-    activeTool = null;
-    ui.setVisitor(null);
-    refreshToolbar();
-    refreshSubBar();
-    syncAllPlots();
+    if (!netClient || !isVisitingFriend()) return;
+    void enterFarm(0);
     sfx.click();
+  },
+
+  getSession() {
+    return session;
+  },
+
+  onGenShareLink() {
+    return generateShareLink();
+  },
+
+  onAddFriend(value) {
+    return addFriend(value);
+  },
+
+  onRemoveFriend(peerUid) {
+    return removeFriend(peerUid);
   },
 
   onExpand() {
@@ -623,8 +803,10 @@ function tick() {
   ui.setClock(icon);
 
   // 狗模型（仅自己农场显示）
-  if (viewing === 'me') {
+  if (!isVisitingFriend()) {
     scene.setDog(state.dog ? DOGS.find(d => d.id === state.dog.id) : null, state.dog ? state.dogBowl <= 0 : false);
+  } else {
+    scene.setDog(null, false);
   }
 
   syncAllPlots();

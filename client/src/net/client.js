@@ -3,7 +3,14 @@
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
 export const CMD_ENTER_FARM = 200
+export const CMD_LEAVE_FARM = 202
+export const CMD_SYNC_FARM = 204
+export const CMD_FRIEND_LIST = 400
+export const CMD_GEN_SHARE_LINK = 402
 export const CMD_ACCEPT_INVITE = 404
+export const CMD_REMOVE_FRIEND = 406
+export const CMD_ADD_FRIEND_BY_UID = 408
+export const CMD_FARM_DELTA = 9000
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -40,6 +47,8 @@ export class NetClient {
     this._clientSeq = 0
     /** @type {Map<number, { resolve: (e: Envelope) => void, reject: (e: Error) => void, cmd: number }>} */
     this._pending = new Map()
+    /** @type {Map<number, Set<(envelope: Envelope) => void>>} */
+    this._pushHandlers = new Map()
   }
 
   /**
@@ -133,6 +142,31 @@ export class NetClient {
     return this.request(CMD_ENTER_FARM, { owner_uid: ownerUid })
   }
 
+  /** 离开当前农场房间（cmd 202）。 */
+  leaveFarm() {
+    return this.request(CMD_LEAVE_FARM, {})
+  }
+
+  /**
+   * 从指定序列补齐农场镜像（cmd 204）。
+   * @param {number} ownerUid
+   * @param {number} fromSeq
+   * @returns {Promise<Envelope>}
+   */
+  syncFarm(ownerUid, fromSeq) {
+    return this.request(CMD_SYNC_FARM, { owner_uid: ownerUid, from_seq: fromSeq })
+  }
+
+  /** 获取好友列表（cmd 400）。 */
+  friendList() {
+    return this.request(CMD_FRIEND_LIST, {})
+  }
+
+  /** 创建分享链接（cmd 402）。 */
+  genShareLink() {
+    return this.request(CMD_GEN_SHARE_LINK, {})
+  }
+
   /**
    * AcceptInvite（cmd 404）。
    * @param {string} token
@@ -140,6 +174,46 @@ export class NetClient {
    */
   acceptInvite(token) {
     return this.request(CMD_ACCEPT_INVITE, { token })
+  }
+
+  /**
+   * 删除好友（cmd 406）。
+   * @param {number} peerUid
+   * @returns {Promise<Envelope>}
+   */
+  removeFriend(peerUid) {
+    return this.request(CMD_REMOVE_FRIEND, { peer_uid: peerUid })
+  }
+
+  /**
+   * 按 UID 添加好友（cmd 408）。
+   * @param {number} peerUid
+   * @returns {Promise<Envelope>}
+   */
+  addFriendByUID(peerUid) {
+    return this.request(CMD_ADD_FRIEND_BY_UID, { peer_uid: peerUid })
+  }
+
+  /**
+   * 订阅服务端主动推送，返回取消订阅函数。
+   * @param {number} cmd
+   * @param {(envelope: Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onPush(cmd, handler) {
+    if (!this._pushHandlers.has(cmd)) this._pushHandlers.set(cmd, new Set())
+    const handlers = this._pushHandlers.get(cmd)
+    handlers.add(handler)
+    return () => handlers.delete(handler)
+  }
+
+  /**
+   * 订阅 FarmDelta（cmd 9000）。
+   * @param {(envelope: Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onDelta(handler) {
+    return this.onPush(CMD_FARM_DELTA, handler)
   }
 
   /**
@@ -239,6 +313,12 @@ export class NetClient {
       return
     }
     if (!envelope || typeof envelope.client_seq !== 'number') return
+    if (envelope.client_seq === 0) {
+      for (const handler of this._pushHandlers.get(envelope.cmd) || []) {
+        handler(envelope)
+      }
+      return
+    }
     const pending = this._pending.get(envelope.client_seq)
     if (!pending) return
     if (pending.cmd !== envelope.cmd) return

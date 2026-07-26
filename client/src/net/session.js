@@ -3,11 +3,21 @@
  * 登录页完成 Handshake + EnterFarm 后 enterOnline；玩法写路径仅 online。
  */
 
-/** @type {{ isOnline: boolean, uid: number|null, token: string|null }} */
+/** @type {{
+ *   isOnline: boolean,
+ *   uid: number|null,
+ *   token: string|null,
+ *   viewingOwnerUid: number|null,
+ *   lastFarmSeq: number,
+ *   relation: 'SELF'|'FRIEND'|null,
+ * }} */
 export const session = {
   isOnline: false,
   uid: null,
   token: null,
+  viewingOwnerUid: null,
+  lastFarmSeq: 0,
+  relation: null,
 }
 
 /**
@@ -26,6 +36,19 @@ export function enterOnline({ uid, token }) {
 /** 退出 online；不清空 token，便于重连。 */
 export function leaveOnline() {
   session.isOnline = false
+  session.viewingOwnerUid = null
+  session.lastFarmSeq = 0
+  session.relation = null
+}
+
+/**
+ * 记录 EnterFarm 快照确定的当前房间与 FarmDelta 基准序列。
+ * @param {{ ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND' }} view
+ */
+export function setFarmView({ ownerUid, farmSeq, relation }) {
+  session.viewingOwnerUid = ownerUid
+  session.lastFarmSeq = farmSeq
+  session.relation = relation
 }
 
 /** 是否处于 online 意图路径。 */
