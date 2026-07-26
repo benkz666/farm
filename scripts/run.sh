@@ -144,6 +144,8 @@ done
 info "执行数据库迁移"
 docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/001_init.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/002_items.sql
 
 info "启动 farm-server → :${HTTP_PORT}"
 (

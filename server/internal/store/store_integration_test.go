@@ -167,9 +167,55 @@ func assertFreshFarm(t *testing.T, agg *farm.Aggregate, uid uint64, username str
 	if len(agg.Plots) != gameconf.MaxPlots {
 		t.Fatalf("want %d plots got %d", gameconf.MaxPlots, len(agg.Plots))
 	}
+	if agg.Items == nil {
+		t.Fatal("Items map is nil")
+	}
 	for i, p := range agg.Plots {
 		if p.State != farm.StateWasteland || p.CropID != 0 {
 			t.Fatalf("plot[%d] want wasteland/crop=0, got state=%d crop=%d", i, p.State, p.CropID)
 		}
+	}
+}
+
+// TestItemPersistenceAfterPlant 覆盖期 2 Task 4：种子数量变更经 SaveFarm 后可从 MySQL 回填。
+func TestItemPersistenceAfterPlant(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	uid := testUID(t)
+	username := "it_item_" + time.Now().Format("150405.000000")
+
+	if err := s.SaveAccount(ctx, uid, username, "bcrypt-hash-placeholder"); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+
+	agg, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm: %v", err)
+	}
+	agg.Items[farm.SeedItem(1)] = 2
+	agg.Plots[0] = farm.Plot{State: farm.StateTilled}
+	result := agg.ApplyPlotAction(farm.PlotAction{Kind: farm.Plant, PlotIndex: 0, Arg: 1}, 10_000)
+	if result.Err != 0 {
+		t.Fatalf("Plant Err = %d, want 0", result.Err)
+	}
+	if got := agg.Items[farm.SeedItem(1)]; got != 1 {
+		t.Fatalf("seed count after plant = %d, want 1", got)
+	}
+	if err := s.SaveFarm(ctx, agg); err != nil {
+		t.Fatalf("SaveFarm: %v", err)
+	}
+	if err := s.DeleteFarmCache(ctx, uid); err != nil {
+		t.Fatalf("DeleteFarmCache: %v", err)
+	}
+
+	reloaded, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm after save: %v", err)
+	}
+	if got := reloaded.Items[farm.SeedItem(1)]; got != 1 {
+		t.Fatalf("persisted seed count = %d, want 1", got)
+	}
+	if reloaded.Plots[0].State != farm.StateGrowing || reloaded.Plots[0].CropID != 1 {
+		t.Fatalf("plot after reload = %#v, want growing white radish", reloaded.Plots[0])
 	}
 }

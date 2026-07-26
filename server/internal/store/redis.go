@@ -25,7 +25,7 @@ func (s *Store) Put(ctx context.Context, token string, uid uint64, ttl time.Dura
 }
 
 // Get 读取 session:{token} 对应的 uid；不存在或已过期返回 ErrSessionNotFound
-//（供 Auth 映射 1101/1102，勿与账号不存在的 ErrAccountNotFound 混用）。
+// （供 Auth 映射 1101/1102，勿与账号不存在的 ErrAccountNotFound 混用）。
 func (s *Store) Get(ctx context.Context, token string) (uint64, error) {
 	val, err := s.rdb.Get(ctx, sessionKey(token)).Result()
 	if errors.Is(err, redis.Nil) {
@@ -56,6 +56,7 @@ func (s *Store) LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, erro
 	if err == nil {
 		var agg farm.Aggregate
 		if jsonErr := json.Unmarshal(cached, &agg); jsonErr == nil {
+			ensureItems(&agg)
 			return &agg, nil
 		}
 		// 缓存内容损坏：忽略并回落 MySQL 重建缓存，而不是直接失败。
@@ -67,11 +68,18 @@ func (s *Store) LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, erro
 	if err != nil {
 		return nil, err
 	}
+	ensureItems(agg)
 
 	if err := s.cacheFarm(ctx, agg); err != nil {
 		return nil, err
 	}
 	return agg, nil
+}
+
+func ensureItems(agg *farm.Aggregate) {
+	if agg.Items == nil {
+		agg.Items = make(map[farm.ItemKey]uint32)
+	}
 }
 
 // SaveFarm 写 MySQL（持久权威）后同步重写 `farm:{uid}` 缓存（规格 5.3 节写路径）。

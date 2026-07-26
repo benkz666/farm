@@ -139,7 +139,46 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 		return nil, fmt.Errorf("store: farm_plot count %d want %d for uid %d", plotCount, gameconf.MaxPlots, uid)
 	}
 
+	items, err := s.loadItemsFromMySQL(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	agg.Items = items
+
 	return agg, nil
+}
+
+// loadItemsFromMySQL 读取 item 表并映射为聚合 Items。表不存在行时返回空 map。
+func (s *Store) loadItemsFromMySQL(ctx context.Context, uid uint64) (map[farm.ItemKey]uint32, error) {
+	items := make(map[farm.ItemKey]uint32)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT kind, item_id, count FROM item WHERE uid = ?`, uid,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: query item: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kind uint8
+		var itemID uint16
+		var count uint32
+		if err := rows.Scan(&kind, &itemID, &count); err != nil {
+			return nil, fmt.Errorf("store: scan item: %w", err)
+		}
+		if count == 0 {
+			continue
+		}
+		key, err := FormatItemKey(kind, itemID)
+		if err != nil {
+			return nil, fmt.Errorf("store: format item kind=%d id=%d: %w", kind, itemID, err)
+		}
+		items[key] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate item: %w", err)
+	}
+	return items, nil
 }
 
 // saveFarmToMySQL 更新 player 行与全部 MaxPlots 行 farm_plot（regard 期 1 无脏位跟踪，整块覆盖）。
@@ -174,8 +213,35 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 		}
 	}
 
+	if err := replaceItemsTx(ctx, tx, agg); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit save farm tx: %w", err)
+	}
+	return nil
+}
+
+// replaceItemsTx 用聚合 Items 全量替换该 uid 的 item 行（期 2 无脏位，简单可靠）。
+func replaceItemsTx(ctx context.Context, tx *sql.Tx, agg *farm.Aggregate) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM item WHERE uid = ?`, agg.UID); err != nil {
+		return fmt.Errorf("store: delete item: %w", err)
+	}
+	for key, count := range agg.Items {
+		if count == 0 {
+			continue
+		}
+		kind, itemID, err := ParseItemKey(key)
+		if err != nil {
+			return fmt.Errorf("store: parse item key %q: %w", key, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO item (uid, kind, item_id, count) VALUES (?, ?, ?, ?)`,
+			agg.UID, kind, itemID, count,
+		); err != nil {
+			return fmt.Errorf("store: insert item %q: %w", key, err)
+		}
 	}
 	return nil
 }
