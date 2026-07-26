@@ -1,5 +1,8 @@
 <script setup>
 import { onMounted } from 'vue'
+import DevNetPanel from './components/DevNetPanel.vue'
+
+const isDev = import.meta.env.DEV
 
 onMounted(() => {
   // #scene-container 需先挂载到 DOM，再加载有顶层副作用的游戏主逻辑
@@ -9,6 +12,8 @@ onMounted(() => {
 
 <template>
   <div id="scene-container"></div>
+
+  <DevNetPanel v-if="isDev" />
 
   <div id="ui">
     <!-- 顶栏 -->
