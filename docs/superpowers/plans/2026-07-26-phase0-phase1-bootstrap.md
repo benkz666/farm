@@ -21,6 +21,27 @@
 
 ---
 
+## Progress
+
+> 更新于 2026-07-26 · 分支 `feat/phase0-phase1-bootstrap` · 账本 `.superpowers/sdd/progress.md`
+
+| Task | 状态 | 关键提交 |
+| ---: | --- | --- |
+| 1 前端迁入 Vite+Vue | ✅ 完成 | `0afec0b` |
+| 2 Compose/Makefile/README | ✅ 完成 | `dcaed81` |
+| 3 Go 模块 / 错误码 / 迁移 | ✅ 完成 | `9912a52` |
+| 4 FarmStore / SessionStore | ✅ 完成 | `d4173bc` → 修复 `3af04f0` |
+| 5 Auth 注册登录 | ✅ 完成 | `46a902f` |
+| 6 Actor 运行时 | ✅ 完成 | `aba17ec` → panic 修复 `69e1275` |
+| 7 FarmSnapshot | ✅ 完成 | `dba0e80` |
+| 8 HTTP+WS Gateway | ✅ 完成 | `4f49e00` → 网关修复 `94403e1` |
+| 9 migrate / smoke | ✅ 完成 | `cde4cc8` |
+| 10 net 联调面板 | ✅ 完成 | `0c05e9f` → 生产排除 `3871045` 等 |
+
+**整期结论：** Task 1–10 全部完成；`make smoke` 与 Vite proxy 主路径已验收。后续为期 2（种植权威）另开 plan。
+
+---
+
 ## File Structure (target)
 
 ```text
@@ -52,7 +73,7 @@ server/
 
 ---
 
-### Task 1: 前端迁入 `client/` + Vite Vue 3 壳
+### Task 1: 前端迁入 `client/` + Vite Vue 3 壳 · ✅ 完成
 
 **Files:**
 - Create: `client/package.json`, `client/vite.config.js`, `client/index.html`, `client/src/main.js`, `client/src/App.vue`, `client/src/style.css`
@@ -62,7 +83,7 @@ server/
 **Interfaces:**
 - Produces: `npm run dev` 可打开本地权威 3D demo；`three` 从 npm 解析
 
-- [ ] **Step 1: 创建 Vite Vue 工程文件**
+- [x] **Step 1: 创建 Vite Vue 工程文件**
 
 在仓库根执行（不要用交互式 create）：
 
@@ -133,7 +154,7 @@ import './style.css'
 createApp(App).mount('#app')
 ```
 
-- [ ] **Step 2: 迁移游戏资源并改 three 引用**
+- [x] **Step 2: 迁移游戏资源并改 three 引用**
 
 ```bash
 git mv js client/src/game
@@ -159,13 +180,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 
 删除对 `vendor/` 的依赖。`main.js` 内相对 import 保持 `./config.js` 等即可。
 
-- [ ] **Step 3: App.vue 挂载原 UI + 启动原 main**
+- [x] **Step 3: App.vue 挂载原 UI + 启动原 main**
 
 将原 `index.html` 的 `#scene-container` 与 `#ui` 结构贴进 `App.vue` 的 template；`onMounted` 中动态 `import './game/main.js'`（若 main 有顶层副作用则直接 import）。
 
 确保 `#scene-container` 在 DOM 中后再加载游戏模块。
 
-- [ ] **Step 4: 安装并验证**
+- [x] **Step 4: 安装并验证**
 
 ```bash
 cd client && npm install && npm run dev
@@ -173,7 +194,7 @@ cd client && npm install && npm run dev
 
 Expected: 浏览器打开 `http://127.0.0.1:5173` 可看到 3D 农场且可本地操作。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add client .gitignore
@@ -183,7 +204,7 @@ git commit -m "chore: 将前端迁入 Vite + Vue 3 的 client 目录"
 
 ---
 
-### Task 2: Compose、Makefile、README 骨架
+### Task 2: Compose、Makefile、README 骨架 · ✅ 完成
 
 **Files:**
 - Create: `deploy/compose.yml`, `Makefile`, `README.md`, `.env.example`
@@ -192,7 +213,7 @@ git commit -m "chore: 将前端迁入 Vite + Vue 3 的 client 目录"
 **Interfaces:**
 - Produces: `make compose-up` 起 MySQL+Redis；文档写清三步启动
 
-- [ ] **Step 1: 写 compose**
+- [x] **Step 1: 写 compose**
 
 `deploy/compose.yml`：
 
@@ -231,13 +252,13 @@ FARM_REDIS_ADDR=127.0.0.1:6379
 FARM_TOKEN_SECRET=dev-only-change-me
 ```
 
-- [ ] **Step 2: Makefile + README**
+- [x] **Step 2: Makefile + README**
 
 `Makefile` 最小目标：`compose-up`、`compose-down`、`migrate`、`run`、`client-dev`、`test`、`smoke`（smoke/migrate/run 可先 stub `echo TODO`，后续 Task 填实）。
 
 `README.md` 写：复制 `.env.example` → `.env`；`make compose-up`；`make migrate && make run`；另开 `make client-dev`。
 
-- [ ] **Step 3: 验证 compose**
+- [x] **Step 3: 验证 compose**
 
 ```bash
 docker compose -f deploy/compose.yml up -d
@@ -246,7 +267,7 @@ docker compose -f deploy/compose.yml ps
 
 Expected: mysql/redis healthy 或至少 running。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add deploy Makefile README.md .env.example config proto
@@ -255,7 +276,7 @@ git commit -m "chore: 添加 compose、Makefile 与本地依赖说明"
 
 ---
 
-### Task 3: Go module + 错误码 + 迁移 SQL
+### Task 3: Go module + 错误码 + 迁移 SQL · ✅ 完成
 
 **Files:**
 - Create: `server/go.mod`, `server/internal/pkgerr/codes.go`, `server/migrations/001_init.sql`, `server/internal/gameconf/const.go`
@@ -264,7 +285,7 @@ git commit -m "chore: 添加 compose、Makefile 与本地依赖说明"
 **Interfaces:**
 - Produces: `pkgerr` 常量与 protocol 数字一致；`ConfigVer = 1`；初始金币/地块常量
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```go
 package pkgerr_test
@@ -296,7 +317,7 @@ func TestProtocolCodes(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 cd server && go mod init farm/server && go test ./internal/pkgerr/ -v
@@ -304,7 +325,7 @@ cd server && go mod init farm/server && go test ./internal/pkgerr/ -v
 
 Expected: FAIL（包不存在或常量缺失）
 
-- [ ] **Step 3: 实现 codes + gameconf + SQL**
+- [x] **Step 3: 实现 codes + gameconf + SQL**
 
 `codes.go` 导出上述常量及 `OK=0`、`BadRequest=1002`、`TokenExpired=1102`、`Internal=1001`。
 
@@ -321,7 +342,7 @@ const (
 
 `migrations/001_init.sql`：按期 1 规格建 `account`/`player`/`farm_plot` 三表。
 
-- [ ] **Step 4: 测试通过**
+- [x] **Step 4: 测试通过**
 
 ```bash
 cd server && go test ./internal/pkgerr/ -v
@@ -329,7 +350,7 @@ cd server && go test ./internal/pkgerr/ -v
 
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add server
@@ -338,7 +359,7 @@ git commit -m "feat: 添加 Go 模块、协议错误码与 MySQL 迁移"
 
 ---
 
-### Task 4: Store 接口 + MySQL/Redis 实现（含回填）
+### Task 4: Store 接口 + MySQL/Redis 实现（含回填） · ✅ 完成
 
 **Files:**
 - Create: `server/internal/store/store.go`, `mysql.go`, `redis.go`, `farm_codec.go`
@@ -352,15 +373,15 @@ git commit -m "feat: 添加 Go 模块、协议错误码与 MySQL 迁移"
   - Redis key：`session:{token}`、`farm:{uid}`；farm 缓存 JSON；plot blob 单一编解码函数
 - Consumes: `pkgerr`, `gameconf`, MySQL DSN / Redis addr
 
-- [ ] **Step 1: 写 Plot/Aggregate 与 codec 单测（先红）**
+- [x] **Step 1: 写 Plot/Aggregate 与 codec 单测（先红）**
 
 `plot.go`：`StateWasteland = 0`；`type Plot struct { State uint8; CropID uint16 /* 其余字段按架构置零预留 */ }`
 
 测试：18 块荒地 round-trip gob/binary → 再解码一致。
 
-- [ ] **Step 2: 实现 codec 使单测绿**
+- [x] **Step 2: 实现 codec 使单测绿**
 
-- [ ] **Step 3: 集成测试（需 compose）**
+- [x] **Step 3: 集成测试（需 compose）**
 
 `store_integration_test.go`：
 
@@ -378,7 +399,7 @@ cd server && go test -tags=integration ./internal/store/ -v -count=1
 
 Expected: PASS（DSN 从环境变量读，缺省用 `.env.example`）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add server/internal/store server/internal/farm
@@ -387,7 +408,7 @@ git commit -m "feat: 实现基于 MySQL 与 Redis 的 FarmStore/SessionStore"
 
 ---
 
-### Task 5: Auth 注册/登录
+### Task 5: Auth 注册/登录 · ✅ 完成
 
 **Files:**
 - Create: `server/internal/auth/service.go`, `token.go`
@@ -397,15 +418,15 @@ git commit -m "feat: 实现基于 MySQL 与 Redis 的 FarmStore/SessionStore"
 - Produces: `Register(ctx, username, password) (uid, token, err)`；`Login(...)`；密码 bcrypt；冲突 → `pkgerr.UsernameTaken`；错密 → `BadCredential`
 - Token：HMAC-SHA256 随机 token 字符串，写入 `SessionStore` TTL 7d；uid 雪花或 `UNIX_ms<<10 | rand` 简化生成即可（文档注明非生产级）
 
-- [ ] **Step 1: 失败测试 — 重复用户名**
+- [x] **Step 1: 失败测试 — 重复用户名**
 
 断言第二次 `Register` 返回码/错误为 `UsernameTaken`。
 
-- [ ] **Step 2: 实现最小 Auth + 测试绿**
+- [x] **Step 2: 实现最小 Auth + 测试绿**
 
 注册事务写 `account`+`player`+18 `farm_plot`（解锁 6，状态荒地）。
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "feat: 实现注册登录与会话 token"
@@ -413,7 +434,7 @@ git commit -am "feat: 实现注册登录与会话 token"
 
 ---
 
-### Task 6: Actor 运行时
+### Task 6: Actor 运行时 · ✅ 完成
 
 **Files:**
 - Create: `server/internal/actor/runtime.go`, `actor.go`
@@ -422,13 +443,13 @@ git commit -am "feat: 实现注册登录与会话 token"
 **Interfaces:**
 - Produces: `Runtime.Do(uid uint64, fn func(*FarmActor) error) error` 保证同 uid 串行；首次 Do 经 `FarmStore.LoadFarm`；空闲 10min 后 flush+卸载（测试可用短 TTL）
 
-- [ ] **Step 1: 测试并发同 uid 串行**
+- [x] **Step 1: 测试并发同 uid 串行**
 
 两个 goroutine 对同一 uid `Do` 递增计数，最终为 2 且无 data race（`go test -race`）。
 
-- [ ] **Step 2: 实现 Runtime 使测试通过**
+- [x] **Step 2: 实现 Runtime 使测试通过**
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "feat: 实现按 uid 串行的 Actor 运行时"
@@ -436,7 +457,7 @@ git commit -am "feat: 实现按 uid 串行的 Actor 运行时"
 
 ---
 
-### Task 7: EnterFarm 快照
+### Task 7: EnterFarm 快照 · ✅ 完成
 
 **Files:**
 - Modify: `server/internal/farm/snapshot.go`, `aggregate.go`
@@ -445,13 +466,13 @@ git commit -am "feat: 实现按 uid 串行的 Actor 运行时"
 **Interfaces:**
 - Produces: `Aggregate.Snapshot() FarmSnapshotJSON` — 18 plots，`unlocked_plots`，`coin=1000` 等；`relation` 由 gateway 填 `SELF`
 
-- [ ] **Step 1: 单测初始快照形状**
+- [x] **Step 1: 单测初始快照形状**
 
 断言 `len(plots)==18`、`plots[0].State==0`、`UnlockedPlots==6`、`Coin==1000`。
 
-- [ ] **Step 2: 实现 NewAggregate / Snapshot**
+- [x] **Step 2: 实现 NewAggregate / Snapshot**
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "feat: 实现 EnterFarm 所需的 FarmSnapshot"
@@ -459,7 +480,7 @@ git commit -am "feat: 实现 EnterFarm 所需的 FarmSnapshot"
 
 ---
 
-### Task 8: Gateway HTTP + WebSocket
+### Task 8: Gateway HTTP + WebSocket · ✅ 完成
 
 **Files:**
 - Create: `server/internal/gateway/envelope.go`, `http_auth.go`, `ws.go`, `limiter.go`
@@ -472,25 +493,25 @@ git commit -am "feat: 实现 EnterFarm 所需的 FarmSnapshot"
 - WS：`/ws`；子协议 `farm.v1.json`；Handshake 校验 token+config_ver；Ping→Pong；EnterFarm 调 Actor
 - 限流：每连接 20 容量 / 10 rps → `1003`
 
-- [ ] **Step 1: Envelope 编解码单测**
+- [x] **Step 1: Envelope 编解码单测**
 
-- [ ] **Step 2: 实现 HTTP handlers + WS 状态机**
+- [x] **Step 2: 实现 HTTP handlers + WS 状态机**
 
 Handshake 成功后绑定 `conn.uid`。EnterFarm：`owner==0 || owner==uid` 否则回 `err:1401`。
 
-- [ ] **Step 3: main 装配**
+- [x] **Step 3: main 装配**
 
 读环境变量；连接 MySQL/Redis；跑 migrate（或文档要求先 `make migrate`）；listen `:8080`。
 
 静态：可选 `client/dist`；开发期前端走 Vite proxy，不必强依赖。
 
-- [ ] **Step 4: 手工冒烟（可选）**
+- [x] **Step 4: 手工冒烟（可选）**
 
 ```bash
 curl -s localhost:8080/api/register -H 'content-type: application/json' -d '{"username":"a","password":"secret12"}'
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: 实现 HTTP 鉴权与 WebSocket 网关"
@@ -498,7 +519,7 @@ git commit -am "feat: 实现 HTTP 鉴权与 WebSocket 网关"
 
 ---
 
-### Task 9: migrate / smoke / Makefile 接线
+### Task 9: migrate / smoke / Makefile 接线 · ✅ 完成
 
 **Files:**
 - Create: `server/scripts/smoke.sh` 或 `server/cmd/smoke/main.go`
@@ -509,11 +530,11 @@ git commit -am "feat: 实现 HTTP 鉴权与 WebSocket 网关"
 - `make smoke`：注册→登录→WS Handshake→EnterFarm，断言 `err==0`、`coin==1000`、`unlocked_plots==6`
 - 另测：停掉 server、再起、登录 EnterFarm 数据仍在；`redis-cli FLUSHDB` 后仍能回填
 
-- [ ] **Step 1: 实现 smoke 客户端（Go 或脚本）**
+- [x] **Step 1: 实现 smoke 客户端（Go 或脚本）**
 
 推荐小 Go 程序：`server/cmd/smoke/main.go`，用 `gorilla/websocket` 或 ` nhooyr.io/websocket`。
 
-- [ ] **Step 2: 跑通**
+- [x] **Step 2: 跑通**
 
 ```bash
 make compose-up
@@ -524,9 +545,9 @@ make smoke
 
 Expected: exit 0
 
-- [ ] **Step 3: 重启与 Redis 清空回归（手写检查清单勾掉）**
+- [x] **Step 3: 重启与 Redis 清空回归（手写检查清单勾掉）**
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git commit -am "feat: 接通 migrate 与期 1 主路径 smoke"
@@ -534,7 +555,7 @@ git commit -am "feat: 接通 migrate 与期 1 主路径 smoke"
 
 ---
 
-### Task 10: 客户端 `src/net` 联调面板
+### Task 10: 客户端 `src/net` 联调面板 · ✅ 完成
 
 **Files:**
 - Create: `client/src/net/client.js`, `client/src/components/DevNetPanel.vue`
@@ -544,15 +565,15 @@ git commit -am "feat: 接通 migrate 与期 1 主路径 smoke"
 - `register/login` → 存 token；`connect()` WS；`handshake()`；`enterFarm(0)` 返回 snapshot
 - UI：角落小面板「注册/登录/拉快照」，结果 JSON 展示；**不**写入本地 `game/state`
 
-- [ ] **Step 1: 实现 net client**
+- [x] **Step 1: 实现 net client**
 
 Envelope 发送与 `client_seq` 自增；按 cmd 匹配响应。
 
-- [ ] **Step 2: 挂上 DevNetPanel（仅 import.meta.env.DEV 显示亦可）**
+- [x] **Step 2: 挂上 DevNetPanel（仅 import.meta.env.DEV 显示亦可）**
 
-- [ ] **Step 3: 手动验证 Vite proxy 下拉到快照**
+- [x] **Step 3: 手动验证 Vite proxy 下拉到快照**
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add client
@@ -571,10 +592,8 @@ git commit -m "feat: 添加登录与 EnterFarm 快照联调面板"
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-26-phase0-phase1-bootstrap.md`. Two execution options:
+本 plan 已于 2026-07-26 在分支 `feat/phase0-phase1-bootstrap` 上执行完毕（Subagent-Driven）。
 
-**1. Subagent-Driven (recommended)** — 每个 Task 派发新子代理，Task 间复查，迭代快
-
-**2. Inline Execution** — 本会话用 executing-plans 按 Task 推进，设检查点
-
-Which approach?
+- 进度账本：`.superpowers/sdd/progress.md`
+- Agent 协议：`AGENTS.md` / `.cursor/rules/agent-protocol.mdc`
+- 下一期：种植权威（期 2）——另写 `docs/superpowers/plans/` 新 plan，勿在本文件继续堆任务
