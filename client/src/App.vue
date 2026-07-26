@@ -1,16 +1,13 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QQ农场 · 3D</title>
-  <link rel="stylesheet" href="css/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌾</text></svg>">
-  <script type="importmap">
-    { "imports": { "three": "./vendor/three.module.js" } }
-  </script>
-</head>
-<body>
+<script setup>
+import { onMounted } from 'vue'
+
+onMounted(() => {
+  // #scene-container 需先挂载到 DOM，再加载有顶层副作用的游戏主逻辑
+  import('./game/main.js')
+})
+</script>
+
+<template>
   <div id="scene-container"></div>
 
   <div id="ui">
@@ -65,7 +62,4 @@
       </div>
     </div>
   </div>
-
-  <script type="module" src="js/main.js"></script>
-</body>
-</html>
+</template>

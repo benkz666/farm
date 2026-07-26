@@ -2,7 +2,7 @@
 // 3D 农场场景：低多边形田园 + 日夜循环 + 交互动画
 // ============================================================
 import * as THREE from 'three';
-import { OrbitControls } from '../vendor/OrbitControls.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { mat, createCropModel, createWeedModel, createPestModel, createResidueModel, createDogModel } from './crops.js';
 import { PLOT } from './state.js';
 
