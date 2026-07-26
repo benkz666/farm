@@ -30,6 +30,6 @@ CREATE TABLE IF NOT EXISTS player (
 CREATE TABLE IF NOT EXISTS farm_plot (
   uid         BIGINT UNSIGNED NOT NULL,
   plot_index  TINYINT UNSIGNED NOT NULL,
-  blob        VARBINARY(256) NOT NULL,
+  `blob`      VARBINARY(256) NOT NULL, -- `blob` 是 MySQL 保留字，需反引号转义
   PRIMARY KEY (uid, plot_index)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

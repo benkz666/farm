@@ -7,7 +7,7 @@ services:
       MYSQL_USER: farm
       MYSQL_PASSWORD: farm
     ports: ["3306:3306"]
-    command: ["--default-authentication-plugin=caching_sha2_password", "--character-set-server=utf8mb4"]
+    command: ["--character-set-server=utf8mb4"]
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ufarm", "-pfarm"]
       interval: 5s
