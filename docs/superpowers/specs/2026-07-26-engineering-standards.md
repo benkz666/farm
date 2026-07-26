@@ -129,7 +129,7 @@ make smoke            # 注册 → 登录 → WS EnterFarm
 | --- | --- |
 | `FARM_MYSQL_DSN` | MySQL 连接 |
 | `FARM_REDIS_ADDR` | Redis 地址 |
-| `FARM_HTTP_ADDR` | HTTP/WS 监听（如 `:8080`） |
+| `FARM_HTTP_ADDR` | HTTP/WS 监听（本地固定 `:9002`） |
 | `FARM_TOKEN_SECRET` | 会话签名密钥 |
 
 禁止将生产密钥提交入库。`deploy/compose.yml` 可含**开发默认**账号口令，并在 README 标明仅限本地。

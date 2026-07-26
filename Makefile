@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down migrate run client-dev test smoke
+.PHONY: compose-up compose-down migrate run client-dev test smoke run-all stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -28,3 +28,9 @@ smoke:
 	if [ -f .env ]; then . ./.env; fi; \
 	set +a; \
 	cd server && go run ./cmd/smoke
+
+run-all:
+	./scripts/run.sh
+
+stop-all:
+	./scripts/stop.sh

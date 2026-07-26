@@ -1,55 +1,73 @@
-# Farm
+# Farm · 经典农场
 
-本地联调用的农场游戏工程：Vite + Vue 3 客户端（`client/`）与 Go 服务端（`server/`，待实现）。
+本地联调工程：Vite + Vue 3 客户端（`client/`）与 Go 单进程服务端（`server/`）。
 
 ## 前置依赖
 
 - Docker（MySQL 8.4、Redis 7）
-- Node.js 18+（客户端）
-- Go 1.22+（服务端，后续 Task）
+- Node.js 18+
+- Go 1.22+
+- `curl`、`lsof`（启动脚本用）
 
-## 本地启动
+## 一键启动（推荐）
 
-1. **配置环境变量**
+```bash
+chmod +x scripts/run.sh scripts/stop.sh   # 只需一次
+./scripts/run.sh
+```
 
-   ```bash
-   cp .env.example .env
-   ```
+> 请用 `./scripts/run.sh`（走 bash shebang），不要用 `sh scripts/run.sh`。
 
-   按需修改 `.env` 中的连接串与密钥（开发环境可保持默认）。
+脚本会：
 
-2. **启动依赖**
+1. 检查并安装前端依赖（`client/npm install`，若缺失）
+2. 检查并下载后端 Go 模块（`go mod download`）
+3. 启动 MySQL / Redis，执行迁移
+4. **固定端口**启动：前端 `9001`、后端 `9002`（占用则先 kill 再起）
 
-   ```bash
-   make compose-up
-   ```
+成功后打开：
 
-   启动 MySQL 与 Redis。可用 `docker compose -f deploy/compose.yml ps` 查看状态。
+- 前端：http://127.0.0.1:9001/
+- 后端：http://127.0.0.1:9002/
 
-3. **迁移并启动服务端**
+开发页右下角有 **Net 联调** 面板。日志在 `.run/logs/`。
 
-   ```bash
-   make migrate && make run
-   ```
+停止前后端：
 
-   > 当前 `migrate` / `run` 为占位，后续 Task 会接入 Go 服务。
+```bash
+./scripts/stop.sh
+```
 
-4. **另开终端启动客户端**
+连同数据库一起停：
 
-   ```bash
-   make client-dev
-   ```
+```bash
+./scripts/stop.sh --compose
+```
 
-   浏览器打开 Vite 提示的本地地址即可。
+也可用 Make：`make run-all` / `make stop-all`。
+
+## 分步启动
+
+```bash
+cp -n .env.example .env
+make compose-up
+make migrate
+# 终端 1：后端默认 :9002
+make run
+# 终端 2：前端默认 :9001（见 client/vite.config.js）
+make client-dev
+```
 
 ## Makefile 目标
 
 | 目标 | 说明 |
 |------|------|
+| `make run-all` | 一键启动（`./scripts/run.sh`） |
+| `make stop-all` | 停止前后端（`./scripts/stop.sh`） |
 | `make compose-up` | 启动 MySQL + Redis |
-| `make compose-down` | 停止并移除 compose 容器 |
-| `make migrate` | 执行数据库迁移（待实现） |
-| `make run` | 启动 `farm-server`（待实现） |
-| `make client-dev` | 启动 Vite 开发服务器 |
-| `make test` | 运行测试（待实现） |
-| `make smoke` | 冒烟测试（待实现） |
+| `make compose-down` | 停止 compose 容器 |
+| `make migrate` | 执行数据库迁移 |
+| `make run` | 前台启动 `farm-server` |
+| `make client-dev` | 前台启动 Vite |
+| `make test` | `go test ./...` |
+| `make smoke` | 冒烟（默认打 `http://127.0.0.1:9002`） |

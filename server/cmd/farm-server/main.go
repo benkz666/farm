@@ -82,7 +82,7 @@ func run() error {
 
 func loadConfig() config {
 	return config{
-		httpAddr:    getenv("FARM_HTTP_ADDR", ":8080"),
+		httpAddr:    getenv("FARM_HTTP_ADDR", ":9002"),
 		mysqlDSN:    getenv("FARM_MYSQL_DSN", "farm:farm@tcp(127.0.0.1:3306)/farm?parseTime=true&loc=Local"),
 		redisAddr:   getenv("FARM_REDIS_ADDR", "127.0.0.1:6379"),
 		tokenSecret: getenv("FARM_TOKEN_SECRET", "dev-only-change-me"),
