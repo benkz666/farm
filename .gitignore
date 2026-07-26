@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+server/bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Node / Vite
+client/node_modules/
+client/dist/
+npm-debug.log*
+yarn-error.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Proto generated (if we decide not to commit gens — currently TBD; keep gens in repo when added)
