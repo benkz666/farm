@@ -118,14 +118,15 @@ func TestApplyPlotActionIllegalStateDoesNotMutateAggregate(t *testing.T) {
 	agg.Plots[0] = Plot{
 		State:          StateGrowing,
 		CropID:         1,
-		SeasonDuration: 1_000,
-		MatureAt:       actionNow + 1_000,
+		SeasonDuration: 60_000,
+		MatureAt:       actionNow + 60_000,
 		LastSettleAt:   actionNow,
 		LastWaterAt:    actionNow,
 	}
 	before := cloneAggregate(agg)
 
-	result := agg.ApplyPlotAction(PlotAction{Kind: Till, PlotIndex: 0}, actionNow)
+	// now 推过水分窗：若错误地把 advance 写回，AccruedWeighted / LastSettleAt 会变。
+	result := agg.ApplyPlotAction(PlotAction{Kind: Till, PlotIndex: 0}, actionNow+30_000)
 
 	if result.Err != pkgerr.PlotNotWasteland {
 		t.Fatalf("Err = %d, want %d", result.Err, pkgerr.PlotNotWasteland)
@@ -133,6 +134,78 @@ func TestApplyPlotActionIllegalStateDoesNotMutateAggregate(t *testing.T) {
 	if !reflect.DeepEqual(*agg, before) {
 		t.Fatalf("illegal action mutated aggregate:\n got %#v\nwant %#v", *agg, &before)
 	}
+}
+
+func TestApplyPlotActionPlantOnWastelandRejected(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[SeedItem(1)] = 1
+	before := cloneAggregate(agg)
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Plant, PlotIndex: 0, Arg: 1}, actionNow)
+
+	if result.Err != pkgerr.PlotNotTilled {
+		t.Fatalf("Err = %d, want %d", result.Err, pkgerr.PlotNotTilled)
+	}
+	if !reflect.DeepEqual(*agg, before) {
+		t.Fatalf("illegal plant mutated aggregate")
+	}
+}
+
+func TestApplyPlotActionWeedAndPestClearHazards(t *testing.T) {
+	cfg := NewAdvanceConfig(mustCrop(1))
+	const elapsed int64 = 1_000
+
+	t.Run("Weed", func(t *testing.T) {
+		agg := NewAggregate(1, "alice")
+		agg.Plots[0] = Plot{
+			State:          StateGrowing,
+			CropID:         1,
+			SeasonDuration: 60_000,
+			MatureAt:       actionNow + 60_000,
+			LastSettleAt:   actionNow,
+			LastWaterAt:    actionNow,
+			WeedSince:      actionNow,
+		}
+
+		result := agg.ApplyPlotAction(PlotAction{Kind: Weed, PlotIndex: 0}, actionNow+elapsed)
+		if result.Err != pkgerr.OK {
+			t.Fatalf("Err = %d, want OK", result.Err)
+		}
+		p := agg.Plots[0]
+		if p.WeedSince != 0 {
+			t.Fatalf("WeedSince = %d, want 0", p.WeedSince)
+		}
+		want := cfg.WeedWeight * elapsed
+		if p.AccruedWeighted != want {
+			t.Fatalf("AccruedWeighted = %d, want %d", p.AccruedWeighted, want)
+		}
+	})
+
+	t.Run("Pest", func(t *testing.T) {
+		agg := NewAggregate(1, "alice")
+		agg.Plots[0] = Plot{
+			State:          StateGrowing,
+			CropID:         1,
+			SeasonDuration: 60_000,
+			MatureAt:       actionNow + 60_000,
+			LastSettleAt:   actionNow,
+			LastWaterAt:    actionNow,
+			PestSince:      actionNow,
+		}
+
+		result := agg.ApplyPlotAction(PlotAction{Kind: Pest, PlotIndex: 0}, actionNow+elapsed)
+		if result.Err != pkgerr.OK {
+			t.Fatalf("Err = %d, want OK", result.Err)
+		}
+		p := agg.Plots[0]
+		if p.PestSince != 0 {
+			t.Fatalf("PestSince = %d, want 0", p.PestSince)
+		}
+		want := cfg.PestWeight * elapsed
+		if p.AccruedWeighted != want {
+			t.Fatalf("AccruedWeighted = %d, want %d", p.AccruedWeighted, want)
+		}
+	})
 }
 
 func TestApplyPlotActionMatureCareIsNoOp(t *testing.T) {
@@ -189,4 +262,3 @@ func TestApplyPlotActionClearFailureDeductsGrowingHealth(t *testing.T) {
 		t.Fatalf("AccruedWeighted = %d, want %d", got, want)
 	}
 }
-

@@ -101,6 +101,25 @@ func settleTo(p *Plot, to int64, cfg AdvanceConfig) {
 	if dryFrom < to {
 		p.AccruedWeighted += cfg.DryWeight * (to - dryFrom)
 	}
+	// 草/虫：窗口伪随机扫描仍后置；已出现的不良状态按持续时长计入。
+	if p.WeedSince != 0 {
+		weedFrom := p.WeedSince
+		if weedFrom < from {
+			weedFrom = from
+		}
+		if weedFrom < to {
+			p.AccruedWeighted += cfg.WeedWeight * (to - weedFrom)
+		}
+	}
+	if p.PestSince != 0 {
+		pestFrom := p.PestSince
+		if pestFrom < from {
+			pestFrom = from
+		}
+		if pestFrom < to {
+			p.AccruedWeighted += cfg.PestWeight * (to - pestFrom)
+		}
+	}
 	p.LastSettleAt = to
 }
 
