@@ -119,8 +119,8 @@ func TestSessionStorePutGetDelete(t *testing.T) {
 	if err := s.Delete(ctx, token); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, err := s.Get(ctx, token); !errors.Is(err, store.ErrAccountNotFound) {
-		t.Fatalf("want ErrAccountNotFound after delete, got %v", err)
+	if _, err := s.Get(ctx, token); !errors.Is(err, store.ErrSessionNotFound) {
+		t.Fatalf("want ErrSessionNotFound after delete, got %v", err)
 	}
 }
 

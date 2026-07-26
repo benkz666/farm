@@ -46,6 +46,7 @@ type FarmStore interface {
 var (
 	ErrUsernameTaken   = errors.New("store: username already taken")
 	ErrAccountNotFound = errors.New("store: account not found")
+	ErrSessionNotFound = errors.New("store: session not found")
 	ErrFarmNotFound    = errors.New("store: farm not found")
 )
 

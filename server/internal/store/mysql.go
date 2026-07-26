@@ -110,6 +110,8 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 	}
 	defer rows.Close()
 
+	var plotCount int
+	seen := make([]bool, gameconf.MaxPlots)
 	for rows.Next() {
 		var idx uint8
 		var blob []byte
@@ -117,16 +119,24 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 			return nil, fmt.Errorf("store: scan farm_plot: %w", err)
 		}
 		if int(idx) >= gameconf.MaxPlots {
-			continue
+			return nil, fmt.Errorf("store: farm_plot idx %d out of range [0,%d)", idx, gameconf.MaxPlots)
+		}
+		if seen[idx] {
+			return nil, fmt.Errorf("store: duplicate farm_plot idx %d for uid %d", idx, uid)
 		}
 		p, err := DecodePlot(blob)
 		if err != nil {
 			return nil, fmt.Errorf("store: decode farm_plot[%d]: %w", idx, err)
 		}
 		agg.Plots[idx] = p
+		seen[idx] = true
+		plotCount++
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate farm_plot: %w", err)
+	}
+	if plotCount != gameconf.MaxPlots {
+		return nil, fmt.Errorf("store: farm_plot count %d want %d for uid %d", plotCount, gameconf.MaxPlots, uid)
 	}
 
 	return agg, nil
@@ -141,15 +151,13 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 	defer tx.Rollback()
 
 	now := time.Now().UnixMilli()
-	res, err := tx.ExecContext(ctx,
+	// 不做 RowsAffected==0 → ErrFarmNotFound：MySQL 默认 RowsAffected 只计「实际改动的行」，
+	// 无脏写时会误判；注册路径已保证 player 行存在，缺行由后续业务/读路径暴露。
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
 		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, agg.FarmSeq, now, agg.UID,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("store: update player: %w", err)
-	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return ErrFarmNotFound
 	}
 
 	for i := 0; i < gameconf.MaxPlots; i++ {

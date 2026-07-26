@@ -77,5 +77,9 @@ func DecodePlot(blob []byte) (farm.Plot, error) {
 		}
 	}
 
+	if r.Len() != 0 {
+		return farm.Plot{}, fmt.Errorf("store: decode plot: %d trailing bytes", r.Len())
+	}
+
 	return p, nil
 }

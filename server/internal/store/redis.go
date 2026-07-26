@@ -24,11 +24,12 @@ func (s *Store) Put(ctx context.Context, token string, uid uint64, ttl time.Dura
 	return nil
 }
 
-// Get 读取 session:{token} 对应的 uid；不存在或已过期返回 ErrAccountNotFound。
+// Get 读取 session:{token} 对应的 uid；不存在或已过期返回 ErrSessionNotFound
+//（供 Auth 映射 1101/1102，勿与账号不存在的 ErrAccountNotFound 混用）。
 func (s *Store) Get(ctx context.Context, token string) (uint64, error) {
 	val, err := s.rdb.Get(ctx, sessionKey(token)).Result()
 	if errors.Is(err, redis.Nil) {
-		return 0, ErrAccountNotFound
+		return 0, ErrSessionNotFound
 	}
 	if err != nil {
 		return 0, fmt.Errorf("store: get session: %w", err)

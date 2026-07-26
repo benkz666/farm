@@ -91,3 +91,15 @@ func TestEncodeDecodePlot_NonZeroFields(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodePlot_TrailingBytes 确保 blob 末尾残留脏字节时 DecodePlot 失败，避免静默截断。
+func TestDecodePlot_TrailingBytes(t *testing.T) {
+	blob, err := store.EncodePlot(farm.NewWastelandPlot())
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	blob = append(blob, 0xDE, 0xAD)
+	if _, err := store.DecodePlot(blob); err == nil {
+		t.Fatal("want trailing-bytes error, got nil")
+	}
+}
