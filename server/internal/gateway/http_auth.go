@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"farm/server/internal/actor"
 	"farm/server/internal/pkgerr"
@@ -29,11 +30,26 @@ type Gateway struct {
 	auth     Authenticator
 	sessions store.SessionStore
 	runtime  FarmRuntime
+	now      func() int64
 }
 
 // New constructs the transport gateway from its application boundaries.
 func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime) *Gateway {
-	return &Gateway{auth: auth, sessions: sessions, runtime: runtime}
+	return &Gateway{
+		auth:     auth,
+		sessions: sessions,
+		runtime:  runtime,
+		now:      func() int64 { return time.Now().UnixMilli() },
+	}
+}
+
+// SetClock 注入可测时钟（毫秒）；测试用。nil 恢复为真实时间。
+func (g *Gateway) SetClock(now func() int64) {
+	if now == nil {
+		g.now = func() int64 { return time.Now().UnixMilli() }
+		return
+	}
+	g.now = now
 }
 
 // Handler returns the complete HTTP routing surface of the gateway.

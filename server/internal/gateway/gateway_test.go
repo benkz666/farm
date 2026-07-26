@@ -253,6 +253,60 @@ func TestWebSocketRateLimitResponsePreservesRequestHeader(t *testing.T) {
 	}
 }
 
+func TestWebSocketTillSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "alice")
+	gw := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	gw.SetClock(func() int64 { return 10_000 })
+
+	conn := openWebSocket(t, gw.Handler())
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   json.RawMessage(`{"token":"token-42","client_config_ver":1}`),
+	})
+	if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
+		t.Fatalf("handshake = %#v", got)
+	}
+
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandTill,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+	till := readEnvelope(t, conn)
+	if till.Err != pkgerr.OK {
+		t.Fatalf("Till = %#v", till)
+	}
+	if aggregate.Plots[0].State != farm.StateTilled {
+		t.Fatalf("plot state = %d, want tilled", aggregate.Plots[0].State)
+	}
+
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandTill,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+	again := readEnvelope(t, conn)
+	if again.Err != pkgerr.PlotNotWasteland {
+		t.Fatalf("second Till err = %d, want %d", again.Err, pkgerr.PlotNotWasteland)
+	}
+
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandBuy,
+		ClientSeq: 4,
+		Payload:   json.RawMessage(`{"item_id":1,"quantity":1}`),
+	})
+	buy := readEnvelope(t, conn)
+	if buy.Err != pkgerr.OK {
+		t.Fatalf("Buy = %#v", buy)
+	}
+	if aggregate.Coin != 875 || aggregate.Items[farm.SeedItem(1)] != 1 {
+		t.Fatalf("after buy coin=%d seeds=%d", aggregate.Coin, aggregate.Items[farm.SeedItem(1)])
+	}
+}
+
 func openWebSocket(t *testing.T, handler http.Handler) *websocket.Conn {
 	t.Helper()
 

@@ -182,7 +182,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		}
 		response.Payload = marshalPayload(pongResponse{
 			ClientTime: payload.ClientTime,
-			ServerTime: time.Now().UnixMilli(),
+			ServerTime: g.now(),
 		})
 	case CommandEnterFarm:
 		var payload enterFarmRequest
@@ -203,7 +203,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			enter = enterFarmResponse{
 				Snapshot:   farmActor.Aggregate.Snapshot(),
 				FarmSeq:    farmActor.Aggregate.FarmSeq,
-				ServerTime: time.Now().UnixMilli(),
+				ServerTime: g.now(),
 				Relation:   "SELF",
 			}
 			return nil
@@ -212,6 +212,10 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			return response
 		}
 		response.Payload = marshalPayload(enter)
+	case CommandTill, CommandClear, CommandPlant, CommandWater,
+		CommandRemoveWeed, CommandRemovePest, CommandHarvest,
+		CommandBuy, CommandSell:
+		return g.handlePlotOrShop(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest
 	}
