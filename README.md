@@ -70,4 +70,4 @@ make client-dev
 | `make run` | 前台启动 `farm-server`（默认 `FARM_ALLOW_DEBUG_TIME=1`，供 smoke 调时） |
 | `make client-dev` | 前台启动 Vite |
 | `make test` | `go test ./...` |
-| `make smoke` | 种植买卖冒烟（需服务端已开 debug 调时；默认打 `http://127.0.0.1:9002`） |
+| `make smoke` | 种植闭环冒烟（需服务已启动且 debug 调时可用） |

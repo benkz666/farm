@@ -12,7 +12,7 @@ migrate:
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/001_init.sql
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/002_items.sql
 
-# FARM_ALLOW_DEBUG_TIME=1：开放 /api/debug/advance，供 make smoke 种植闭环调时。
+# 本地联调默认打开 debug 调时，供 make smoke 的 /api/debug/advance 使用；生产切勿导出。
 run:
 	@set -a; \
 	if [ -f .env ]; then . ./.env; fi; \
@@ -26,7 +26,7 @@ client-dev:
 test:
 	cd server && go test ./...
 
-# 依赖已启动且开启 debug 调时的 farm-server（make run 默认开启）。
+# 需已 make run（或等价进程）且开启 FARM_ALLOW_DEBUG_TIME=1。
 smoke:
 	@set -a; \
 	if [ -f .env ]; then . ./.env; fi; \

@@ -113,12 +113,12 @@ Go module 路径固定为：`farm/server`（本地模块路径；若日后推远
 
 ```text
 make compose-up | compose-down
-make migrate
-make run              # 启动 farm-server（可同时 proxy 或分端口服务 client dist）
-make client-dev       # cd client && npm run dev
-make test             # go test ./...
-make proto            # 从 proto 生成代码（可后期接线）
-make smoke            # 注册 → 登录 → WS EnterFarm
+make migrate              # 001_init.sql + 002_items.sql
+make run                  # farm-server；本地默认 FARM_ALLOW_DEBUG_TIME=1
+make client-dev           # cd client && npm run dev
+make test                 # go test ./...
+make proto                # 从 proto 生成代码（可后期接线）
+make smoke                # 种植闭环（需服务已启动且 debug 调时可用）
 ```
 
 ---
@@ -131,6 +131,7 @@ make smoke            # 注册 → 登录 → WS EnterFarm
 | `FARM_REDIS_ADDR` | Redis 地址 |
 | `FARM_HTTP_ADDR` | HTTP/WS 监听（本地固定 `:9002`） |
 | `FARM_TOKEN_SECRET` | 会话签名密钥 |
+| `FARM_ALLOW_DEBUG_TIME` | 为 `1` 时开放 `POST /api/debug/advance`（仅本地/smoke；生产勿开） |
 
 禁止将生产密钥提交入库。`deploy/compose.yml` 可含**开发默认**账号口令，并在 README 标明仅限本地。
 
