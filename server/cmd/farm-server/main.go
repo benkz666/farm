@@ -49,6 +49,10 @@ func run() error {
 
 	runtime := actor.NewRuntime(storage, 0)
 	transport := gateway.New(auth.New(storage, storage), storage, runtime)
+	if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
+		transport.EnableDebugTime()
+		log.Printf("debug time advance enabled (FARM_ALLOW_DEBUG_TIME=1)")
+	}
 	server := &http.Server{
 		Addr:              config.httpAddr,
 		Handler:           transport.Handler(),

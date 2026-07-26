@@ -154,6 +154,7 @@ info "启动 farm-server → :${HTTP_PORT}"
   . "$ROOT/.env"
   set +a
   export FARM_HTTP_ADDR=":${HTTP_PORT}"
+  export FARM_ALLOW_DEBUG_TIME=1
   cd "$ROOT/server"
   exec go run ./cmd/farm-server
 ) >"$SERVER_LOG" 2>&1 &

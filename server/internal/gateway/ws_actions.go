@@ -63,7 +63,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				Kind:      kind,
 				PlotIndex: uint8(payload.PlotIndex),
 				Arg:       uint16(payload.Arg),
-			}, g.now())
+			}, g.Now())
 			farmSeq = farmActor.Aggregate.FarmSeq
 			if result.Err == pkgerr.OK || (kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
 				response.Payload = marshalPayload(actionResponse{

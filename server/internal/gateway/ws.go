@@ -182,7 +182,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		}
 		response.Payload = marshalPayload(pongResponse{
 			ClientTime: payload.ClientTime,
-			ServerTime: g.now(),
+			ServerTime: g.Now(),
 		})
 	case CommandEnterFarm:
 		var payload enterFarmRequest
@@ -203,7 +203,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			enter = enterFarmResponse{
 				Snapshot:   farmActor.Aggregate.Snapshot(),
 				FarmSeq:    farmActor.Aggregate.FarmSeq,
-				ServerTime: g.now(),
+				ServerTime: g.Now(),
 				Relation:   "SELF",
 			}
 			return nil

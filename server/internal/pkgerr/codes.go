@@ -39,34 +39,34 @@ const (
 
 // 4.3 地块与种植（1200—1299）
 const (
-	PlotNotFound      Code = 1201 // ERR_PLOT_NOT_FOUND 地块不存在
-	NotOwner          Code = 1202 // ERR_NOT_OWNER 只能在自己的农场进行此操作
-	PlotNotWasteland  Code = 1203 // ERR_PLOT_NOT_WASTELAND 这块地已经翻过了
-	PlotNotCleanable  Code = 1204 // ERR_PLOT_NOT_CLEANABLE 这块地没有需要清理的东西
-	PlotNotTilled     Code = 1205 // ERR_PLOT_NOT_TILLED 请先锄地
-	PlotNotGrowing    Code = 1206 // ERR_PLOT_NOT_GROWING 作物不在生长中
-	PlotNotMature     Code = 1207 // ERR_PLOT_NOT_MATURE 作物还没成熟
-	PlotEmpty         Code = 1208 // ERR_PLOT_EMPTY 这块地没有作物
-	SeedNotOwned      Code = 1209 // ERR_SEED_NOT_OWNED 背包里没有这种种子
-	CropLocked        Code = 1210 // ERR_CROP_LOCKED 等级不足，尚未解锁该作物
-	AlreadyWatered    Code = 1211 // ERR_ALREADY_WATERED 水分充足，不需要浇水
-	NoWeed            Code = 1212 // ERR_NO_WEED 这块地没有杂草
-	NoPest            Code = 1213 // ERR_NO_PEST 这块地没有害虫
-	FertilizerNotOwned Code = 1214 // ERR_FERTILIZER_NOT_OWNED 背包里没有这种化肥
+	PlotNotFound           Code = 1201 // ERR_PLOT_NOT_FOUND 地块不存在
+	NotOwner               Code = 1202 // ERR_NOT_OWNER 只能在自己的农场进行此操作
+	PlotNotWasteland       Code = 1203 // ERR_PLOT_NOT_WASTELAND 这块地已经翻过了
+	PlotNotCleanable       Code = 1204 // ERR_PLOT_NOT_CLEANABLE 这块地没有需要清理的东西
+	PlotNotTilled          Code = 1205 // ERR_PLOT_NOT_TILLED 请先锄地
+	PlotNotGrowing         Code = 1206 // ERR_PLOT_NOT_GROWING 作物不在生长中
+	PlotNotMature          Code = 1207 // ERR_PLOT_NOT_MATURE 作物还没成熟
+	PlotEmpty              Code = 1208 // ERR_PLOT_EMPTY 这块地没有作物
+	SeedNotOwned           Code = 1209 // ERR_SEED_NOT_OWNED 背包里没有这种种子
+	CropLocked             Code = 1210 // ERR_CROP_LOCKED 等级不足，尚未解锁该作物
+	AlreadyWatered         Code = 1211 // ERR_ALREADY_WATERED 水分充足，不需要浇水
+	NoWeed                 Code = 1212 // ERR_NO_WEED 这块地没有杂草
+	NoPest                 Code = 1213 // ERR_NO_PEST 这块地没有害虫
+	FertilizerNotOwned     Code = 1214 // ERR_FERTILIZER_NOT_OWNED 背包里没有这种化肥
 	StageAlreadyFertilized Code = 1215 // ERR_STAGE_ALREADY_FERTILIZED 当前生长阶段已经施过肥了
-	HarvestedByOwner  Code = 1216 // ERR_HARVESTED_BY_OWNER 作物已被主人收获
-	PlotWithered      Code = 1217 // ERR_PLOT_WITHERED 作物已经枯萎了
+	HarvestedByOwner       Code = 1216 // ERR_HARVESTED_BY_OWNER 作物已被主人收获
+	PlotWithered           Code = 1217 // ERR_PLOT_WITHERED 作物已经枯萎了
 )
 
 // 4.4 扩地与经济（1300—1399）。
 const (
-	LevelTooLow    Code = 1301 // ERR_LEVEL_TOO_LOW 等级不足
-	NotEnoughCoin  Code = 1302 // ERR_NOT_ENOUGH_COIN 金币不足
-	PlotLimit      Code = 1303 // ERR_PLOT_LIMIT 已达到地块上限
-	ItemNotFound   Code = 1304 // ERR_ITEM_NOT_FOUND 商品不存在
-	NotEnoughItem  Code = 1305 // ERR_NOT_ENOUGH_ITEM 数量不足
+	LevelTooLow     Code = 1301 // ERR_LEVEL_TOO_LOW 等级不足
+	NotEnoughCoin   Code = 1302 // ERR_NOT_ENOUGH_COIN 金币不足
+	PlotLimit       Code = 1303 // ERR_PLOT_LIMIT 已达到地块上限
+	ItemNotFound    Code = 1304 // ERR_ITEM_NOT_FOUND 商品不存在
+	NotEnoughItem   Code = 1305 // ERR_NOT_ENOUGH_ITEM 数量不足
 	ItemNotSellable Code = 1306 // ERR_ITEM_NOT_SELLABLE 该物品不可出售
-	BadQuantity    Code = 1307 // ERR_BAD_QUANTITY 数量不合法
+	BadQuantity     Code = 1307 // ERR_BAD_QUANTITY 数量不合法
 )
 
 // 4.5 社交与偷菜（1400—1499）——期 1 仅用到 NotFriend。

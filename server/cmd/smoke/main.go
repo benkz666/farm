@@ -1,4 +1,4 @@
-// Command smoke exercises the phase 1 HTTP and WebSocket happy path.
+// Command smoke exercises the phase 2 HTTP and WebSocket planting loop.
 package main
 
 import (
@@ -36,12 +36,17 @@ type enterFarmPayload struct {
 	Snapshot farm.FarmSnapshotJSON `json:"snapshot"`
 }
 
+type actionPayload struct {
+	FarmSeq uint64         `json:"farm_seq"`
+	Patch   farm.PatchJSON `json:"patch"`
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "smoke:", err)
 		os.Exit(1)
 	}
-	fmt.Println("smoke: register/login/handshake/enter-farm passed")
+	fmt.Println("smoke: planting buy/till/plant/advance/harvest/sell passed")
 }
 
 func run() error {
@@ -73,9 +78,10 @@ func run() error {
 		return fmt.Errorf("websocket subprotocol was not negotiated")
 	}
 
+	seq := uint32(1)
 	if err := exchange(conn, gateway.Envelope{
 		Cmd:       gateway.CommandHandshake,
-		ClientSeq: 1,
+		ClientSeq: seq,
 		Payload: mustJSON(map[string]any{
 			"token":             login.Token,
 			"client_config_ver": gameconf.ConfigVer,
@@ -83,24 +89,137 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("handshake: %w", err)
 	}
+	seq++
 
-	responseEnvelope, err := exchangeResponse(conn, gateway.Envelope{
+	enterEnv, err := exchangeResponse(conn, gateway.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
-		ClientSeq: 2,
+		ClientSeq: seq,
 		Payload:   json.RawMessage(`{"owner_uid":0}`),
 	})
 	if err != nil {
 		return fmt.Errorf("enter farm: %w", err)
 	}
-	var payload enterFarmPayload
-	if err := json.Unmarshal(responseEnvelope.Payload, &payload); err != nil {
+	seq++
+	var enter enterFarmPayload
+	if err := json.Unmarshal(enterEnv.Payload, &enter); err != nil {
 		return fmt.Errorf("decode EnterFarm payload: %w", err)
 	}
-	if payload.Snapshot.Coin != gameconf.InitialCoin {
-		return fmt.Errorf("coin = %d, want %d", payload.Snapshot.Coin, gameconf.InitialCoin)
+	if enter.Snapshot.Coin != gameconf.InitialCoin {
+		return fmt.Errorf("coin = %d, want %d", enter.Snapshot.Coin, gameconf.InitialCoin)
 	}
-	if payload.Snapshot.UnlockedPlots != gameconf.InitialUnlockedPlots {
-		return fmt.Errorf("unlocked_plots = %d, want %d", payload.Snapshot.UnlockedPlots, gameconf.InitialUnlockedPlots)
+
+	crop, ok := gameconf.CropByID(1)
+	if !ok {
+		return fmt.Errorf("missing white radish crop config")
+	}
+
+	if _, err := mustAction(conn, &seq, gateway.CommandBuy, map[string]any{
+		"item_id":  1,
+		"quantity": 1,
+	}); err != nil {
+		return fmt.Errorf("buy: %w", err)
+	}
+	if _, err := mustAction(conn, &seq, gateway.CommandTill, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 0,
+	}); err != nil {
+		return fmt.Errorf("till: %w", err)
+	}
+	if _, err := mustAction(conn, &seq, gateway.CommandPlant, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 1,
+	}); err != nil {
+		return fmt.Errorf("plant: %w", err)
+	}
+
+	// 水分窗边界各浇一次，保证满产；再推进到成熟。
+	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	waterSpan := seasonMS * 35 / 100
+	if err := debugAdvance(baseURL, waterSpan); err != nil {
+		return fmt.Errorf("advance to first water: %w", err)
+	}
+	if _, err := mustAction(conn, &seq, gateway.CommandWater, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 0,
+	}); err != nil {
+		return fmt.Errorf("water#1: %w", err)
+	}
+	if err := debugAdvance(baseURL, waterSpan); err != nil {
+		return fmt.Errorf("advance to second water: %w", err)
+	}
+	if _, err := mustAction(conn, &seq, gateway.CommandWater, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 0,
+	}); err != nil {
+		return fmt.Errorf("water#2: %w", err)
+	}
+	remain := seasonMS - 2*waterSpan
+	if remain < 0 {
+		remain = 0
+	}
+	if err := debugAdvance(baseURL, remain+1); err != nil {
+		return fmt.Errorf("advance to mature: %w", err)
+	}
+
+	harvest, err := mustAction(conn, &seq, gateway.CommandHarvest, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 0,
+	})
+	if err != nil {
+		return fmt.Errorf("harvest: %w", err)
+	}
+	fruitKey := string(farm.FruitItem(1))
+	yield := harvest.Patch.Warehouse[fruitKey]
+	if yield == 0 {
+		return fmt.Errorf("harvest yielded 0 fruit")
+	}
+	if yield != uint32(crop.Yield) {
+		return fmt.Errorf("harvest yield = %d, want %d", yield, crop.Yield)
+	}
+
+	sell, err := mustAction(conn, &seq, gateway.CommandSell, map[string]any{
+		"item_id":  1,
+		"quantity": yield,
+	})
+	if err != nil {
+		return fmt.Errorf("sell: %w", err)
+	}
+	wantCoin := gameconf.InitialCoin - int64(crop.SeedPrice) + int64(crop.FruitPrice)*int64(yield)
+	if sell.Patch.Coin != wantCoin {
+		return fmt.Errorf("coin after sell = %d, want %d", sell.Patch.Coin, wantCoin)
+	}
+	if sell.Patch.Warehouse[fruitKey] != 0 {
+		return fmt.Errorf("warehouse still has fruit after sell")
+	}
+	return nil
+}
+
+func mustAction(conn *websocket.Conn, seq *uint32, cmd uint32, payload map[string]any) (actionPayload, error) {
+	env, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       cmd,
+		ClientSeq: *seq,
+		Payload:   mustJSON(payload),
+	})
+	*seq++
+	if err != nil {
+		return actionPayload{}, err
+	}
+	var out actionPayload
+	if err := json.Unmarshal(env.Payload, &out); err != nil {
+		return actionPayload{}, fmt.Errorf("decode action payload: %w", err)
+	}
+	return out, nil
+}
+
+func debugAdvance(baseURL string, ms int64) error {
+	body, err := json.Marshal(map[string]int64{"ms": ms})
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(baseURL+"/api/debug/advance", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d: %s (is FARM_ALLOW_DEBUG_TIME=1 set?)", resp.StatusCode, strings.TrimSpace(string(data)))
 	}
 	return nil
 }

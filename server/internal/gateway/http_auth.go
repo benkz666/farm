@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"farm/server/internal/actor"
@@ -27,10 +28,12 @@ type FarmRuntime interface {
 
 // Gateway owns the HTTP and WebSocket transport adapters.
 type Gateway struct {
-	auth     Authenticator
-	sessions store.SessionStore
-	runtime  FarmRuntime
-	now      func() int64
+	auth       Authenticator
+	sessions   store.SessionStore
+	runtime    FarmRuntime
+	now        func() int64
+	offsetMs   atomic.Int64
+	allowDebug bool
 }
 
 // New constructs the transport gateway from its application boundaries.
@@ -43,6 +46,11 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime) *
 	}
 }
 
+// EnableDebugTime 打开 /api/debug/advance（仅非生产冒烟；由 FARM_ALLOW_DEBUG_TIME 门控）。
+func (g *Gateway) EnableDebugTime() {
+	g.allowDebug = true
+}
+
 // SetClock 注入可测时钟（毫秒）；测试用。nil 恢复为真实时间。
 func (g *Gateway) SetClock(now func() int64) {
 	if now == nil {
@@ -52,13 +60,44 @@ func (g *Gateway) SetClock(now func() int64) {
 	g.now = now
 }
 
+// Now 返回服务端逻辑时间（真实/注入时钟 + debug 偏移）。
+func (g *Gateway) Now() int64 {
+	return g.now() + g.offsetMs.Load()
+}
+
 // Handler returns the complete HTTP routing surface of the gateway.
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/register", g.register)
 	mux.HandleFunc("/api/login", g.login)
 	mux.HandleFunc("/ws", g.serveWS)
+	if g.allowDebug {
+		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
+	}
 	return mux
+}
+
+type debugAdvanceRequest struct {
+	MS int64 `json:"ms"`
+}
+
+func (g *Gateway) debugAdvance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeHTTPError(w, pkgerr.BadRequest, http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	if err != nil {
+		writeHTTPError(w, pkgerr.BadRequest, http.StatusBadRequest)
+		return
+	}
+	var req debugAdvanceRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.MS <= 0 {
+		writeHTTPError(w, pkgerr.BadRequest, http.StatusBadRequest)
+		return
+	}
+	g.offsetMs.Add(req.MS)
+	writeJSON(w, http.StatusOK, map[string]int64{"server_time": g.Now()})
 }
 
 type authRequest struct {
