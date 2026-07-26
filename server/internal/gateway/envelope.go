@@ -13,6 +13,8 @@ const (
 	CommandHandshake uint32 = 100
 	CommandPing      uint32 = 102
 	CommandEnterFarm uint32 = 200
+	CommandLeaveFarm uint32 = 202
+	CommandSyncFarm  uint32 = 204
 
 	CommandTill           uint32 = 206
 	CommandClear          uint32 = 208
@@ -29,6 +31,8 @@ const (
 	CommandAcceptInvite   uint32 = 404
 	CommandRemoveFriend   uint32 = 406
 	CommandAddFriendByUID uint32 = 408
+
+	CommandFarmDelta uint32 = 9000
 
 	JSONSubprotocol = "farm.v1.json"
 )

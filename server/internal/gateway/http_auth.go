@@ -35,6 +35,8 @@ type Gateway struct {
 	inviteSecret []byte
 	now          func() int64
 	offsetMs     atomic.Int64
+	rooms        *RoomHub
+	nextConnID   atomic.Uint64
 	allowDebug   bool
 }
 
@@ -62,6 +64,7 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, o
 		auth:     auth,
 		sessions: sessions,
 		runtime:  runtime,
+		rooms:    NewRoomHub(),
 		now:      func() int64 { return time.Now().UnixMilli() },
 	}
 	for _, option := range options {

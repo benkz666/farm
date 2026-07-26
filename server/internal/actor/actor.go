@@ -8,4 +8,5 @@ import "farm/server/internal/farm"
 // Aggregate 只能在 Runtime.Do 的回调中访问；Runtime 保证同一 uid 的回调不会并发执行。
 type FarmActor struct {
 	Aggregate *farm.Aggregate
+	Deltas    farm.DeltaRing
 }

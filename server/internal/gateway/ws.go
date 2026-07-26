@@ -7,11 +7,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"farm/server/internal/actor"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
@@ -30,9 +30,13 @@ const (
 
 type wsConnection struct {
 	conn    *websocket.Conn
+	id      uint64
 	uid     uint64
 	authed  bool
 	limiter *connectionLimiter
+	writeMu sync.Mutex
+	roomMu  sync.Mutex
+	roomUID uint64
 }
 
 type handshakeRequest struct {
@@ -85,8 +89,10 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 
 	connection := wsConnection{
 		conn:    conn,
+		id:      g.nextConnID.Add(1),
 		limiter: newConnectionLimiter(),
 	}
+	defer g.leaveFarm(&connection)
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
 			return
@@ -185,34 +191,15 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			ServerTime: g.Now(),
 		})
 	case CommandEnterFarm:
-		var payload enterFarmRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil {
+		return g.handleEnterFarm(connection, request)
+	case CommandLeaveFarm:
+		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
 			response.Err = pkgerr.BadRequest
 			return response
 		}
-		if payload.OwnerUID != 0 && payload.OwnerUID != connection.uid {
-			response.Err = pkgerr.NotFriend
-			return response
-		}
-
-		var enter enterFarmResponse
-		if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
-			if farmActor == nil || farmActor.Aggregate == nil {
-				return errors.New("gateway: actor aggregate is nil")
-			}
-			farmActor.Aggregate.AdvanceAll(g.Now())
-			enter = enterFarmResponse{
-				Snapshot:   farmActor.Aggregate.Snapshot(),
-				FarmSeq:    farmActor.Aggregate.FarmSeq,
-				ServerTime: g.Now(),
-				Relation:   "SELF",
-			}
-			return nil
-		}); err != nil {
-			response.Err = pkgerr.Internal
-			return response
-		}
-		response.Payload = marshalPayload(enter)
+		g.leaveFarm(connection)
+	case CommandSyncFarm:
+		return g.handleSyncFarm(connection, request)
 	case CommandTill, CommandClear, CommandPlant, CommandWater,
 		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest,
 		CommandBuy, CommandSell:
@@ -231,6 +218,8 @@ func (connection *wsConnection) respond(envelope Envelope) error {
 	if err != nil {
 		return err
 	}
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
 	return connection.conn.WriteMessage(websocket.TextMessage, data)
 }
 

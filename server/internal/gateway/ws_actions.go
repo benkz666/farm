@@ -40,7 +40,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		if payload.OwnerUID != 0 && payload.OwnerUID != connection.uid {
-			response.Err = pkgerr.NotFriend
+			response.Err = pkgerr.NotOwner
 			return response
 		}
 		kind, ok := plotActionKind(request.Cmd)
@@ -59,10 +59,12 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 
 		var result farm.ActionResult
 		var farmSeq uint64
+		var delta *farm.FarmDelta
 		if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
 			}
+			beforeFarmSeq := farmActor.Aggregate.FarmSeq
 			result = farmActor.Aggregate.ApplyPlotAction(farm.PlotAction{
 				Kind:      kind,
 				PlotIndex: uint8(payload.PlotIndex),
@@ -75,12 +77,29 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
 				})
 			}
+			if farmSeq != beforeFarmSeq {
+				emitted := farm.FarmDelta{
+					OwnerUID: connection.uid,
+					FarmSeq:  farmSeq,
+					Plots: []farm.PlotChange{plotChange(
+						uint8(payload.PlotIndex),
+						farmActor.Aggregate.Plots[payload.PlotIndex],
+					)},
+					ActorUID: connection.uid,
+					Action:   request.Cmd,
+				}
+				farmActor.Deltas.Append(emitted)
+				delta = &emitted
+			}
 			return nil
 		}); err != nil {
 			response.Err = pkgerr.Internal
 			return response
 		}
 		response.Err = result.Err
+		if delta != nil {
+			g.rooms.BroadcastExcept(*delta, connection.id)
+		}
 		return response
 
 	case CommandBuy, CommandSell:
@@ -95,10 +114,12 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 
 		var result farm.ActionResult
+		var delta *farm.FarmDelta
 		if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
 			}
+			beforeFarmSeq := farmActor.Aggregate.FarmSeq
 			if request.Cmd == CommandBuy {
 				result = farmActor.Aggregate.Buy(farm.BuyReq{
 					ItemID:   uint16(payload.ItemID),
@@ -116,17 +137,47 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
 				})
 			}
+			if farmActor.Aggregate.FarmSeq != beforeFarmSeq {
+				emitted := farm.FarmDelta{
+					OwnerUID: connection.uid,
+					FarmSeq:  farmActor.Aggregate.FarmSeq,
+					ActorUID: connection.uid,
+					Action:   request.Cmd,
+				}
+				farmActor.Deltas.Append(emitted)
+				delta = &emitted
+			}
 			return nil
 		}); err != nil {
 			response.Err = pkgerr.Internal
 			return response
 		}
 		response.Err = result.Err
+		if delta != nil {
+			g.rooms.BroadcastExcept(*delta, connection.id)
+		}
 		return response
 
 	default:
 		response.Err = pkgerr.BadRequest
 		return response
+	}
+}
+
+func plotChange(index uint8, plot farm.Plot) farm.PlotChange {
+	snapshot := farm.PlotSnapshotOf(index, plot)
+	return farm.PlotChange{
+		Index:          snapshot.Index,
+		State:          snapshot.State,
+		CropID:         snapshot.CropID,
+		SeasonIndex:    snapshot.SeasonIndex,
+		SeasonTotal:    snapshot.SeasonTotal,
+		MatureAt:       snapshot.MatureAt,
+		SeasonDuration: snapshot.SeasonDuration,
+		FinalYield:     snapshot.FinalYield,
+		LastWaterAt:    snapshot.LastWaterAt,
+		WeedSince:      snapshot.WeedSince,
+		PestSince:      snapshot.PestSince,
 	}
 }
 

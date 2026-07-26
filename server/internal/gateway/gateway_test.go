@@ -129,6 +129,142 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	}
 }
 
+func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ownerUID    = uint64(42)
+		friendUID   = uint64(7)
+		ownerToken  = "owner-token"
+		friendToken = "friend-token"
+	)
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, friendUID)
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		ownerUID:  {Aggregate: farm.NewAggregate(ownerUID, "owner")},
+		friendUID: {Aggregate: farm.NewAggregate(friendUID, "friend")},
+	}}
+	gateway := New(
+		authStub{},
+		sessionMapStub{ownerToken: ownerUID, friendToken: friendUID},
+		runtime,
+		WithFriendStore(friends),
+	)
+	gateway.SetClock(func() int64 { return 10_000 })
+
+	owner := openWebSocket(t, gateway.Handler())
+	friend := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, owner, ownerToken)
+	handshakeWebSocket(t, friend, friendToken)
+
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":42}`),
+	})
+	friendEnter := readEnvelope(t, friend)
+	var friendEnterPayload enterFarmResponse
+	if err := json.Unmarshal(friendEnter.Payload, &friendEnterPayload); err != nil {
+		t.Fatalf("decode friend EnterFarm: %v", err)
+	}
+	if friendEnter.Err != pkgerr.OK || friendEnterPayload.Relation != "FRIEND" {
+		t.Fatalf("friend EnterFarm = %#v, payload = %#v", friendEnter, friendEnterPayload)
+	}
+
+	writeEnvelope(t, owner, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":0}`),
+	})
+	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
+		t.Fatalf("owner EnterFarm = %#v", got)
+	}
+
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandTill,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":42,"plot_index":0,"arg":0}`),
+	})
+	if got := readEnvelope(t, friend); got.Err != pkgerr.NotOwner {
+		t.Fatalf("visitor Till error = %d, want %d", got.Err, pkgerr.NotOwner)
+	}
+
+	writeEnvelope(t, owner, Envelope{
+		Cmd:       CommandTill,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
+		t.Fatalf("owner Till response = %#v", got)
+	}
+	delta := readEnvelope(t, friend)
+	var deltaPayload farm.FarmDelta
+	if err := json.Unmarshal(delta.Payload, &deltaPayload); err != nil {
+		t.Fatalf("decode FarmDelta: %v", err)
+	}
+	if delta.Cmd != CommandFarmDelta || delta.ClientSeq != 0 || delta.Err != pkgerr.OK ||
+		deltaPayload.OwnerUID != ownerUID || deltaPayload.FarmSeq != 1 || len(deltaPayload.Plots) != 1 {
+		t.Fatalf("FarmDelta = %#v, payload = %#v", delta, deltaPayload)
+	}
+
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandSyncFarm,
+		ClientSeq: 4,
+		Payload:   json.RawMessage(`{"owner_uid":42,"from_seq":0}`),
+	})
+	sync := readEnvelope(t, friend)
+	var syncPayload syncFarmResponse
+	if err := json.Unmarshal(sync.Payload, &syncPayload); err != nil {
+		t.Fatalf("decode SyncFarm: %v", err)
+	}
+	if sync.Err != pkgerr.OK || syncPayload.FarmSeq != 1 || len(syncPayload.Deltas) != 1 || syncPayload.Snapshot != nil {
+		t.Fatalf("SyncFarm = %#v, payload = %#v", sync, syncPayload)
+	}
+
+	ownerActor := runtime.actors[ownerUID]
+	for seq := uint64(2); seq <= farm.DeltaRingCapacity+1; seq++ {
+		ownerActor.Deltas.Append(farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: seq})
+	}
+	ownerActor.Aggregate.FarmSeq = farm.DeltaRingCapacity + 1
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandSyncFarm,
+		ClientSeq: 5,
+		Payload:   json.RawMessage(`{"owner_uid":42,"from_seq":0}`),
+	})
+	expiredSync := readEnvelope(t, friend)
+	var expiredSyncPayload syncFarmResponse
+	if err := json.Unmarshal(expiredSync.Payload, &expiredSyncPayload); err != nil {
+		t.Fatalf("decode expired SyncFarm: %v", err)
+	}
+	if expiredSync.Err != pkgerr.OK || expiredSyncPayload.Snapshot == nil || len(expiredSyncPayload.Deltas) != 0 {
+		t.Fatalf("expired SyncFarm = %#v, payload = %#v", expiredSync, expiredSyncPayload)
+	}
+
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandLeaveFarm,
+		ClientSeq: 6,
+		Payload:   emptyPayload,
+	})
+	if got := readEnvelope(t, friend); got.Err != pkgerr.OK {
+		t.Fatalf("LeaveFarm = %#v", got)
+	}
+
+	writeEnvelope(t, owner, Envelope{
+		Cmd:       CommandTill,
+		ClientSeq: 4,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":1,"arg":0}`),
+	})
+	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
+		t.Fatalf("second owner Till response = %#v", got)
+	}
+	if err := friend.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatalf("set friend read deadline: %v", err)
+	}
+	if _, _, err := friend.ReadMessage(); err == nil {
+		t.Fatal("received FarmDelta after LeaveFarm")
+	}
+}
+
 func TestEnterFarmAdvancesExpiredGrowingPlotBeforeSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -759,6 +895,18 @@ func readEnvelope(t *testing.T, conn *websocket.Conn) Envelope {
 	return envelope
 }
 
+func handshakeWebSocket(t *testing.T, conn *websocket.Conn, token string) {
+	t.Helper()
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   marshalPayload(handshakeRequest{Token: token, ClientConfigVer: 1}),
+	})
+	if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
+		t.Fatalf("handshake = %#v", got)
+	}
+}
+
 type authStub struct {
 	register func(context.Context, string, string) (uint64, string, error)
 	login    func(context.Context, string, string) (uint64, string, error)
@@ -794,6 +942,20 @@ func (s sessionStub) Get(_ context.Context, token string) (uint64, error) {
 
 func (s sessionStub) Delete(context.Context, string) error { return nil }
 
+type sessionMapStub map[string]uint64
+
+func (sessionMapStub) Put(context.Context, string, uint64, time.Duration) error { return nil }
+
+func (s sessionMapStub) Get(_ context.Context, token string) (uint64, error) {
+	uid, ok := s[token]
+	if !ok {
+		return 0, store.ErrSessionNotFound
+	}
+	return uid, nil
+}
+
+func (sessionMapStub) Delete(context.Context, string) error { return nil }
+
 type runtimeStub struct {
 	aggregate *farm.Aggregate
 	err       error
@@ -804,6 +966,18 @@ func (s runtimeStub) Do(_ uint64, fn func(*actor.FarmActor) error) error {
 		return s.err
 	}
 	return fn(&actor.FarmActor{Aggregate: s.aggregate})
+}
+
+type multiRuntimeStub struct {
+	actors map[uint64]*actor.FarmActor
+}
+
+func (s multiRuntimeStub) Do(uid uint64, fn func(*actor.FarmActor) error) error {
+	farmActor := s.actors[uid]
+	if farmActor == nil {
+		return errors.New("unexpected farm uid")
+	}
+	return fn(farmActor)
 }
 
 type friendStoreStub struct {

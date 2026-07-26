@@ -58,6 +58,12 @@ func (h *RoomHub) Unsubscribe(ownerUID, connectionID uint64) {
 
 // Broadcast 向 delta.OwnerUID 房间中当前的全部订阅者推送增量。
 func (h *RoomHub) Broadcast(delta farm.FarmDelta) {
+	h.BroadcastExcept(delta, 0)
+}
+
+// BroadcastExcept 向房间内除 excludedConnectionID 外的订阅者推送增量。
+// 写请求的发起方已获得同步 Rsp，跳过它可避免 Delta 抢在该 Rsp 前抵达。
+func (h *RoomHub) BroadcastExcept(delta farm.FarmDelta, excludedConnectionID uint64) {
 	if h == nil {
 		return
 	}
@@ -65,7 +71,10 @@ func (h *RoomHub) Broadcast(delta farm.FarmDelta) {
 	h.mu.RLock()
 	subscribers := h.rooms[delta.OwnerUID]
 	pushes := make([]func(farm.FarmDelta), 0, len(subscribers))
-	for _, push := range subscribers {
+	for connectionID, push := range subscribers {
+		if connectionID == excludedConnectionID {
+			continue
+		}
 		pushes = append(pushes, push)
 	}
 	h.mu.RUnlock()
