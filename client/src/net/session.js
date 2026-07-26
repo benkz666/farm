@@ -9,6 +9,7 @@
  *   token: string|null,
  *   viewingOwnerUid: number|null,
  *   lastFarmSeq: number,
+ *   farmViewGeneration: number,
  *   relation: 'SELF'|'FRIEND'|null,
  * }} */
 export const session = {
@@ -17,6 +18,7 @@ export const session = {
   token: null,
   viewingOwnerUid: null,
   lastFarmSeq: 0,
+  farmViewGeneration: 0,
   relation: null,
 }
 
@@ -38,6 +40,7 @@ export function leaveOnline() {
   session.isOnline = false
   session.viewingOwnerUid = null
   session.lastFarmSeq = 0
+  session.farmViewGeneration++
   session.relation = null
 }
 
@@ -46,6 +49,7 @@ export function leaveOnline() {
  * @param {{ ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND' }} view
  */
 export function setFarmView({ ownerUid, farmSeq, relation }) {
+  session.farmViewGeneration++
   session.viewingOwnerUid = ownerUid
   session.lastFarmSeq = farmSeq
   session.relation = relation
