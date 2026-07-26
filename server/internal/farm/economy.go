@@ -1,0 +1,72 @@
+package farm
+
+import (
+	"farm/server/internal/gameconf"
+	"farm/server/internal/pkgerr"
+)
+
+// BuyReq 购买商店商品。期 2 仅支持买种子：ItemID=crop_id。
+type BuyReq struct {
+	ItemID   uint16
+	Quantity uint32
+}
+
+// SellReq 出售仓库果实。期 2 仅支持卖果实：ItemID=crop_id。
+type SellReq struct {
+	ItemID   uint16
+	Quantity uint32
+}
+
+// Buy 从商店购买种子：扣金币、校验解锁、加入背包。
+func (a *Aggregate) Buy(req BuyReq) ActionResult {
+	if a == nil {
+		return ActionResult{Err: pkgerr.Internal}
+	}
+	if req.Quantity == 0 {
+		return ActionResult{Err: pkgerr.BadQuantity}
+	}
+	crop, ok := gameconf.CropByID(req.ItemID)
+	if !ok {
+		return ActionResult{Err: pkgerr.ItemNotFound}
+	}
+	if a.Level < uint16(crop.UnlockLevel) {
+		return ActionResult{Err: pkgerr.CropLocked}
+	}
+	cost := int64(crop.SeedPrice) * int64(req.Quantity)
+	if a.Coin < cost {
+		return ActionResult{Err: pkgerr.NotEnoughCoin}
+	}
+
+	a.Coin -= cost
+	key := SeedItem(req.ItemID)
+	a.Items[key] += req.Quantity
+	a.FarmSeq++
+	return a.okPatch(0)
+}
+
+// Sell 出售仓库果实换金币。不可卖种子/其他道具。
+func (a *Aggregate) Sell(req SellReq) ActionResult {
+	if a == nil {
+		return ActionResult{Err: pkgerr.Internal}
+	}
+	if req.Quantity == 0 {
+		return ActionResult{Err: pkgerr.BadQuantity}
+	}
+	crop, ok := gameconf.CropByID(req.ItemID)
+	if !ok {
+		return ActionResult{Err: pkgerr.ItemNotFound}
+	}
+	key := FruitItem(req.ItemID)
+	have := a.Items[key]
+	if have < req.Quantity {
+		return ActionResult{Err: pkgerr.NotEnoughItem}
+	}
+
+	a.Items[key] -= req.Quantity
+	if a.Items[key] == 0 {
+		delete(a.Items, key)
+	}
+	a.Coin += int64(crop.FruitPrice) * int64(req.Quantity)
+	a.FarmSeq++
+	return a.okPatch(0)
+}
