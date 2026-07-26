@@ -17,7 +17,7 @@
 - 初始态：金币 1000、解锁 6 块荒地、共 18 块地；`client_config_ver` 常量 `1`
 - 进他人农场：`ERR_NOT_FRIEND`（1401）；期 1 不做种植动作/Delta/压测
 - 前端根目录必须是 `client/`；仓库根不得保留散落的 `js/`/`css/`/`index.html`/`vendor/`
-- 提交信息使用 `feat:`/`fix:`/`docs:`/`chore:`；每 Task 结束提交一次
+- 提交信息：约定式前缀（`feat:`/`fix:`/`docs:`/`chore:` 等）+ **中文**说明；每 Task 结束提交一次
 
 ---
 
@@ -178,7 +178,7 @@ Expected: 浏览器打开 `http://127.0.0.1:5173` 可看到 3D 农场且可本�
 ```bash
 git add client .gitignore
 git add -u
-git commit -m "chore: move frontend into Vite + Vue 3 client/"
+git commit -m "chore: 将前端迁入 Vite + Vue 3 的 client 目录"
 ```
 
 ---
@@ -250,7 +250,7 @@ Expected: mysql/redis healthy 或至少 running。
 
 ```bash
 git add deploy Makefile README.md .env.example config proto
-git commit -m "chore: add compose, Makefile, and README for local deps"
+git commit -m "chore: 添加 compose、Makefile 与本地依赖说明"
 ```
 
 ---
@@ -333,7 +333,7 @@ Expected: PASS
 
 ```bash
 git add server
-git commit -m "feat: add Go module, protocol error codes, and MySQL migration"
+git commit -m "feat: 添加 Go 模块、协议错误码与 MySQL 迁移"
 ```
 
 ---
@@ -382,7 +382,7 @@ Expected: PASS（DSN 从环境变量读，缺省用 `.env.example`）
 
 ```bash
 git add server/internal/store server/internal/farm
-git commit -m "feat: add FarmStore/SessionStore with MySQL and Redis"
+git commit -m "feat: 实现基于 MySQL 与 Redis 的 FarmStore/SessionStore"
 ```
 
 ---
@@ -408,7 +408,7 @@ git commit -m "feat: add FarmStore/SessionStore with MySQL and Redis"
 - [ ] **Step 3: Commit**
 
 ```bash
-git commit -am "feat: add register/login with bcrypt and session tokens"
+git commit -am "feat: 实现注册登录与会话 token"
 ```
 
 ---
@@ -431,7 +431,7 @@ git commit -am "feat: add register/login with bcrypt and session tokens"
 - [ ] **Step 3: Commit**
 
 ```bash
-git commit -am "feat: add per-uid actor runtime with serial mailbox"
+git commit -am "feat: 实现按 uid 串行的 Actor 运行时"
 ```
 
 ---
@@ -454,7 +454,7 @@ git commit -am "feat: add per-uid actor runtime with serial mailbox"
 - [ ] **Step 3: Commit**
 
 ```bash
-git commit -am "feat: build FarmSnapshot for EnterFarm"
+git commit -am "feat: 实现 EnterFarm 所需的 FarmSnapshot"
 ```
 
 ---
@@ -493,7 +493,7 @@ curl -s localhost:8080/api/register -H 'content-type: application/json' -d '{"us
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -am "feat: add HTTP auth and WebSocket gateway"
+git commit -am "feat: 实现 HTTP 鉴权与 WebSocket 网关"
 ```
 
 ---
@@ -529,7 +529,7 @@ Expected: exit 0
 - [ ] **Step 4: Commit**
 
 ```bash
-git commit -am "feat: wire migrate and smoke for phase-1 path"
+git commit -am "feat: 接通 migrate 与期 1 主路径 smoke"
 ```
 
 ---
@@ -556,7 +556,7 @@ Envelope 发送与 `client_seq` 自增；按 cmd 匹配响应。
 
 ```bash
 git add client
-git commit -m "feat: add Vue net panel for login and EnterFarm snapshot"
+git commit -m "feat: 添加登录与 EnterFarm 快照联调面板"
 ```
 
 ---
