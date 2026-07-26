@@ -105,7 +105,7 @@ Go module 路径固定为：`farm/server`（本地模块路径；若日后推远
 - 协议命令号、错误码：**照抄** `docs/design/protocol.md`，禁止自创同义名。
 - 领域术语：遵循策划名词表（农场、地块、缩放小时、逻辑日等）。
 - Go：包名短小；导出接口如 `FarmStore`、`SessionStore`；错误与协议名对应。
-- Git 提交：约定式前缀（`feat`/`fix`/`docs`/`chore`/`refactor`/`test` 等）+ **中文**主题，例如 `feat: 实现注册登录与会话 token`；一次提交一个主题。
+- Git 提交：约定式前缀（`feat`/`fix`/`docs`/`chore`/`refactor`/`test` 等）+ **中文**主题，例如 `feat: 实现注册登录与会话 token`；一次提交一个主题。完整 Agent 派工与风格协议见 `AGENTS.md` 与 `.cursor/rules/agent-protocol.mdc`。
 
 ---
 

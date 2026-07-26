@@ -1,0 +1,82 @@
+---
+description: 经典农场项目 Agent 开发与派工协议（模型、风格、浏览器、提交）
+alwaysApply: true
+---
+
+# Agent 协议
+
+本仓库所有 Agent / 子代理工作必须遵守本协议。与 `docs/superpowers/specs/` 冲突时，以规格为准；本协议管「怎么干活」。
+
+## 1. 子代理模型选择
+
+派发 `Task` 子代理时必须显式指定 `model`，禁止省略（省略会继承昂贵默认模型）。
+
+| 场景 | 使用模型（slug） | 说明 |
+| --- | --- | --- |
+| 一般实现任务 | `cursor-grok-4.5-high` | 默认实现用 |
+| 较复杂实现（多模块集成、并发、存储、协议网关等） | `gpt-5.6-terra-high` | 判断与接线更重时 |
+| 特别难 / 大量界面前端 | **先询问用户**再用哪款模型 | 不要自行拍板 |
+| 简单 Code Review（非前端或极简） | `glm-5.2-high` | 任务级审查默认 |
+| 前端相关且任务不复杂的 Review | `gpt-5.6-luna-high` | |
+| 很复杂代码的审查或实现 | `gpt-5.6-sol-xhigh` | 慎用，仅真正高难度 |
+
+控制器（当前会话）指派任务时：**任务说明用中文**（brief 路径、约束、验收、报告路径都可用中文表述）。
+
+## 2. 浏览器测试
+
+需要打开页面、点选、截图、联调 UI 时，**默认使用 ego-lite（ego-browser）**，优先于内置 browser MCP / 裸 fetch。
+
+- 遵循 `ego-browser` skill：`ego-browser nodejs <<'EOF' ... EOF`
+- 为任务创建/复用 task space，避免与用户主浏览器抢焦点
+
+## 3. Git 提交
+
+- 使用[约定式提交](https://www.conventionalcommits.org/)前缀：`feat` / `fix` / `docs` / `chore` / `refactor` / `test` / `perf` 等
+- **主题（subject）使用中文**，简洁说明「为什么 / 做了什么」
+- 示例：`feat: 实现注册登录与会话 token`
+- 一次提交一个主题；禁止 `--no-verify`（除非用户明确要求）
+- 仅在用户要求或计划 Task 明确要求时提交；密钥与 `.env` 永不入库
+
+## 4. 代码风格
+
+### 通用
+
+- 只改任务需要的代码；禁止顺手大重构、禁止无关文件
+- 命名与 `docs/design/game-design-full.md` 名词表、`protocol.md` 命令/错误码一致，禁止同义异名
+- 注释写「为什么」和约束，不写复述代码的废话；公开 API / 非显然不变量可留短注释
+- 错误码与协议数字必须一致，禁止魔法数裸奔（集中到 `pkgerr` 等）
+
+### Go（`server/`）
+
+- Go 1.22+；module path `farm/server`
+- 包短小；接口在消费方或 `store` 等边界包定义；业务不直持 `sql.DB` / `redis.Client`（由装配注入）
+- 测试：表驱动优先；集成测试用 build tag（如 `integration`）；断言行为而非实现细节
+- `gofmt`；提交前相关包 `go test` 通过
+
+### 前端（`client/`）
+
+- Vite + Vue 3；three.js 场景模块与 UI 分层
+- 期 1：本地权威玩法可保留；`src/net/` 只做联调，不擅自反转权威
+- 组件/模块单一职责；避免无必要的抽象
+- 需浏览器验证时用 ego-lite
+
+## 5. 测试风格
+
+- 先测行为：给定输入 / 协议场景 → 期望错误码或状态
+- 单测不依赖真实外部服务；Redis/MySQL 集成测试打 tag，文档写清依赖
+- 禁止无断言测试、禁止只为刷覆盖率的空测
+- 测试名说明场景（如 `TestRegisterDuplicateUsername`）
+- 实现者报告需包含命令与关键输出；审查者默认不重跑全量，有具体疑点再聚焦跑
+
+## 6. 文档与规格
+
+- 玩法/架构真相源：`docs/design/*`
+- 工程规范与分期：`docs/superpowers/specs/*`
+- 实现计划：`docs/superpowers/plans/*`
+- SDD 进度账本：`.superpowers/sdd/progress.md`（勿提交若已 gitignore）
+
+## 7. Subagent-Driven 执行备忘
+
+- 每个 Task：中文指派 → 实现子代理 → `review-package` → 审查子代理 → 账本打点
+- 按上表选模型；前端大改或难题先问用户
+- 浏览器冒烟默认 ego-lite
