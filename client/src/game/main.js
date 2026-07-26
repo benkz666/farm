@@ -591,19 +591,30 @@ async function onlineSellAll() {
   if (!entries.length) return;
   onlineBusy = true;
   try {
+    let sold = 0;
+    let lastErrMsg = null;
     for (const [id, n] of entries) {
       const itemId = cropKeyToId(id);
       if (!itemId) continue;
       const rsp = await netClient.sell(itemId, n);
       if (rsp.err !== 0) {
-        fail(errText(rsp.err));
+        lastErrMsg = errText(rsp.err);
         break;
       }
       applyPatch(state, rsp.payload || {});
+      sold++;
     }
-    sfx.gold();
-    ui.toast('出售完成', 'gold');
-    ui.updateHUD(state);
+    if (sold > 0) {
+      sfx.gold();
+      if (lastErrMsg) {
+        ui.toast(`部分出售成功（${sold} 项），其余失败：${lastErrMsg}`, 'err');
+      } else {
+        ui.toast('出售完成', 'gold');
+      }
+      ui.updateHUD(state);
+    } else if (lastErrMsg) {
+      fail(lastErrMsg);
+    }
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
   } finally {
@@ -842,6 +853,8 @@ const ui = new UI({
   },
 
   onBuyFert(id) {
+    // 期 2 服务端仅 Buy 种子；化肥走 Task 10，online 禁止本地扣款
+    if (isOnline()) return fail('线上暂不支持');
     const f = FERTILIZERS.find(f => f.id === id);
     if (state.gold < f.price) return fail('金币不足');
     addGold(-f.price);
@@ -851,6 +864,8 @@ const ui = new UI({
   },
 
   onBuyFood(g) {
+    // 狗粮属更后期；online 禁止本地改 gold/dogBowl
+    if (isOnline()) return fail('线上暂不支持');
     const grams = g === -1 ? DOG_BOWL_CAP - Math.floor(state.dogBowl) : g;
     if (grams <= 0) return fail('狗盆已经是满的');
     const cost = grams * DOG_FOOD_PRICE;
@@ -862,6 +877,8 @@ const ui = new UI({
   },
 
   onBuyDog(id) {
+    // 买狗属更后期；online 禁止本地改 gold/dog
+    if (isOnline()) return fail('线上暂不支持');
     const d = DOGS.find(d => d.id === id);
     if (myLevel() < d.unlock) return fail(`需要 Lv.${d.unlock}`);
     if (state.gold < d.price) return fail('金币不足');
