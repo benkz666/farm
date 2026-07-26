@@ -116,6 +116,19 @@ func advancePlot(p *Plot, now int64) {
 	Advance(p, now, AdvanceConfig{})
 }
 
+// AdvanceAll 将所有已种植地块惰性推进到 now，供 EnterFarm 等读路径生成最新快照。
+func (a *Aggregate) AdvanceAll(now int64) {
+	if a == nil {
+		return
+	}
+	for i := range a.Plots {
+		p := &a.Plots[i]
+		if p.State == StateGrowing || p.State == StateMature {
+			advancePlot(p, now)
+		}
+	}
+}
+
 func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {
 	if work.State != StateWasteland {
 		return ActionResult{Err: pkgerr.PlotNotWasteland}

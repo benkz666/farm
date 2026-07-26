@@ -5,7 +5,7 @@ import (
 	"farm/server/internal/pkgerr"
 )
 
-// BuyReq 购买商店商品。期 2 仅支持买种子：ItemID=crop_id。
+// BuyReq 购买商店商品。种子使用 crop_id；化肥使用其 ShopItemID。
 type BuyReq struct {
 	ItemID   uint16
 	Quantity uint32
@@ -17,7 +17,7 @@ type SellReq struct {
 	Quantity uint32
 }
 
-// Buy 从商店购买种子：扣金币、校验解锁、加入背包。
+// Buy 从商店购买种子或化肥：扣金币、校验解锁、加入背包。
 func (a *Aggregate) Buy(req BuyReq) ActionResult {
 	if a == nil {
 		return ActionResult{Err: pkgerr.Internal}
@@ -26,20 +26,32 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 		return ActionResult{Err: pkgerr.BadQuantity}
 	}
 	crop, ok := gameconf.CropByID(req.ItemID)
+	if ok {
+		if a.Level < uint16(crop.UnlockLevel) {
+			return ActionResult{Err: pkgerr.CropLocked}
+		}
+		cost := int64(crop.SeedPrice) * int64(req.Quantity)
+		if a.Coin < cost {
+			return ActionResult{Err: pkgerr.NotEnoughCoin}
+		}
+
+		a.Coin -= cost
+		key := SeedItem(req.ItemID)
+		a.Items[key] += req.Quantity
+		a.FarmSeq++
+		return a.okPatch(0)
+	}
+	fertilizer, ok := gameconf.FertilizerByShopItemID(req.ItemID)
 	if !ok {
 		return ActionResult{Err: pkgerr.ItemNotFound}
 	}
-	if a.Level < uint16(crop.UnlockLevel) {
-		return ActionResult{Err: pkgerr.CropLocked}
-	}
-	cost := int64(crop.SeedPrice) * int64(req.Quantity)
+	cost := int64(fertilizer.Price) * int64(req.Quantity)
 	if a.Coin < cost {
 		return ActionResult{Err: pkgerr.NotEnoughCoin}
 	}
 
 	a.Coin -= cost
-	key := SeedItem(req.ItemID)
-	a.Items[key] += req.Quantity
+	a.Items[FertilizerItem(fertilizer.ID)] += req.Quantity
 	a.FarmSeq++
 	return a.okPatch(0)
 }

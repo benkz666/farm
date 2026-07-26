@@ -21,6 +21,22 @@ func TestBuyWhiteRadishSeed(t *testing.T) {
 	}
 }
 
+func TestBuyFertilizerAddsFertilizerItem(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+
+	result := agg.Buy(BuyReq{ItemID: 1_001, Quantity: 1})
+
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	if agg.Coin != 950 {
+		t.Fatalf("Coin = %d, want 950", agg.Coin)
+	}
+	if got := agg.Items[FertilizerItem(1)]; got != 1 {
+		t.Fatalf("fertilizer count = %d, want 1", got)
+	}
+}
+
 func TestBuyNotEnoughCoin(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Coin = 100

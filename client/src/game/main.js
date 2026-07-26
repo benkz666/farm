@@ -20,6 +20,7 @@ import { CMD_FERTILIZE, CMD_PLANT } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
 import { plotCmdForTool } from './onlineActions.js';
+import { shouldApplyPatchFromError } from './onlineResponse.js';
 
 // ---------------- 初始化 ----------------
 let state = loadGame() || defaultState();
@@ -526,6 +527,12 @@ async function onPlotClickOnline(plotId) {
   try {
     const rsp = await netClient.plotAction(cmd, plotId, arg);
     if (rsp.err !== 0) {
+      if (shouldApplyPatchFromError(rsp.err, rsp.payload)) {
+        applyPatch(state, rsp.payload);
+        ui.updateHUD(state);
+        syncAllPlots();
+        refreshSubBar();
+      }
       fail(errText(rsp.err));
       return;
     }
@@ -558,6 +565,29 @@ async function onlineBuySeed(id) {
     const c = CROP_MAP[id];
     ui.toast(`购买 ${c?.name || id} 种子 ×1`, 'ok');
     ui.updateHUD(state);
+  } catch (e) {
+    fail(e instanceof Error ? e.message : String(e));
+  } finally {
+    onlineBusy = false;
+  }
+}
+
+async function onlineBuyFertilizer(id) {
+  if (onlineBusy || !netClient) return;
+  const fertilizer = FERTILIZERS.find(item => item.id === id);
+  if (!fertilizer?.shopItemId) return fail('商品不存在');
+  onlineBusy = true;
+  try {
+    const rsp = await netClient.buy(fertilizer.shopItemId, 1);
+    if (rsp.err !== 0) {
+      fail(errText(rsp.err));
+      return;
+    }
+    applyPatch(state, rsp.payload || {});
+    sfx.gold();
+    ui.toast(`购买 ${fertilizer.name} ×1`, 'ok');
+    ui.updateHUD(state);
+    refreshSubBar();
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
   } finally {
@@ -633,6 +663,10 @@ function onPlotClick(plotId) {
   // online 自家农场：发 WS 意图，等 Rsp 再 patch
   if (isOnline() && viewing === 'me') {
     void onPlotClickOnline(plotId);
+    return;
+  }
+  if (isOnline()) {
+    fail('线上暂不支持');
     return;
   }
 
@@ -858,9 +892,8 @@ const ui = new UI({
     ui.toast(`购买 ${c.name} 种子 ×1`, 'ok');
   },
 
-  onBuyFert(id) {
-    // 期 2 服务端仅 Buy 种子；化肥走 Task 10，online 禁止本地扣款
-    if (isOnline()) return fail('线上暂不支持');
+  async onBuyFert(id) {
+    if (isOnline()) return onlineBuyFertilizer(id);
     const f = FERTILIZERS.find(f => f.id === id);
     if (state.gold < f.price) return fail('金币不足');
     addGold(-f.price);
@@ -938,6 +971,7 @@ const ui = new UI({
   },
 
   onVisit(friendId) {
+    if (isOnline()) return fail('线上暂不支持');
     viewing = friendId;
     activeTool = null;
     const f = state.friends.find(f => f.id === friendId);
@@ -1001,16 +1035,16 @@ function tick() {
 
   checkLogicDay(now);
 
-  // online：自家地块以服务端为准，不做本地权威推进；NPC 假数据仍可本地运转
+  // online：自家地块以服务端为准，不做本地权威推进。
   if (!isOnline()) {
     tickPlots({ plots: state.plots, isMe: true }, now);
-  }
-  // NPC 农场
-  for (const f of state.friends) {
-    tickPlots({ plots: f.plots, isMe: false }, now);
-    npcAction(f, now);
-    // NPC 狗粮消耗与补充（简化：保持有粮）
-    if (f.dog && f.dogBowl <= 0) f.dogBowl = DOG_BOWL_CAP;
+    // NPC 好友仅属本地模式；online 禁止其改写本地镜像。
+    for (const f of state.friends) {
+      tickPlots({ plots: f.plots, isMe: false }, now);
+      npcAction(f, now);
+      // NPC 狗粮消耗与补充（简化：保持有粮）
+      if (f.dog && f.dogBowl <= 0) f.dogBowl = DOG_BOWL_CAP;
+    }
   }
 
   // 玩家狗粮消耗（12.2 节）；online 暂保留本地狗粮动画

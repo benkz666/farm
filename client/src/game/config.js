@@ -57,9 +57,9 @@ export const DOGS = [
 
 // ---- 化肥（18.5）----
 export const FERTILIZERS = [
-  { id: 'normal', name: '普通化肥', reduceH: 1.0, price: 50,  icon: '🧂' },
-  { id: 'fast',   name: '高速化肥', reduceH: 2.5, price: 200, icon: '⚡' },
-  { id: 'super',  name: '急速化肥', reduceH: 5.5, price: 500, icon: '🚀' },
+  { id: 'normal', name: '普通化肥', shopItemId: 1001, reduceH: 1.0, price: 50,  icon: '🧂' },
+  { id: 'fast',   name: '高速化肥', shopItemId: 1002, reduceH: 2.5, price: 200, icon: '⚡' },
+  { id: 'super',  name: '急速化肥', shopItemId: 1003, reduceH: 5.5, price: 500, icon: '🚀' },
 ];
 
 // ---- 隐藏种子（6.5 / 18.6）----

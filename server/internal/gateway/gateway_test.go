@@ -128,6 +128,54 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	}
 }
 
+func TestEnterFarmAdvancesExpiredGrowingPlotBeforeSnapshot(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		SeasonDuration: 1_000,
+		MatureAt:       20_000,
+		LastSettleAt:   19_000,
+		LastWaterAt:    19_000,
+	}
+	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	gateway.SetClock(func() int64 { return 20_000 })
+
+	conn := openWebSocket(t, gateway.Handler())
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   json.RawMessage(`{"token":"token-42","client_config_ver":1}`),
+	})
+	if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
+		t.Fatalf("handshake = %#v", got)
+	}
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":0}`),
+	})
+
+	got := readEnvelope(t, conn)
+	if got.Err != pkgerr.OK {
+		t.Fatalf("EnterFarm = %#v", got)
+	}
+	var payload struct {
+		Snapshot farm.FarmSnapshotJSON `json:"snapshot"`
+	}
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatalf("decode EnterFarm payload: %v", err)
+	}
+	if payload.Snapshot.Plots[0].State != farm.StateMature {
+		t.Fatalf("snapshot plot state = %d, want mature", payload.Snapshot.Plots[0].State)
+	}
+	if aggregate.Plots[0].State != farm.StateMature {
+		t.Fatalf("aggregate plot state = %d, want mature", aggregate.Plots[0].State)
+	}
+}
+
 func TestConnectionLimiterRejectsOverCapacity(t *testing.T) {
 	t.Parallel()
 

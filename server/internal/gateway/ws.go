@@ -200,6 +200,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
 			}
+			farmActor.Aggregate.AdvanceAll(g.Now())
 			enter = enterFarmResponse{
 				Snapshot:   farmActor.Aggregate.Snapshot(),
 				FarmSeq:    farmActor.Aggregate.FarmSeq,
