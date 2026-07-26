@@ -1,8 +1,21 @@
-/** 期 1 联调：HTTP auth + WS Envelope。不写入本地 game/state。 */
+/** 期 1/2 联调：HTTP auth + WS Envelope。不写入本地 game/state（由 applyPatch 负责）。 */
 
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
 export const CMD_ENTER_FARM = 200
+
+/** 地块动作（protocol 5.3）；Fertilize=218 留待 2c。 */
+export const CMD_TILL = 206
+export const CMD_CLEAR = 208
+export const CMD_PLANT = 210
+export const CMD_WATER = 212
+export const CMD_REMOVE_WEED = 214
+export const CMD_REMOVE_PEST = 216
+export const CMD_HARVEST = 220
+
+/** 商店 */
+export const CMD_BUY = 302
+export const CMD_SELL = 304
 
 export const WS_SUBPROTOCOL = 'farm.v1.json'
 export const CLIENT_CONFIG_VER = 1
@@ -116,6 +129,42 @@ export class NetClient {
    */
   enterFarm(ownerUid = 0) {
     return this.request(CMD_ENTER_FARM, { owner_uid: ownerUid })
+  }
+
+  /**
+   * 地块动作（Till/Clear/Plant/…）。返回完整 Envelope；err≠0 由调用方处理。
+   * @param {number} cmd CMD_TILL 等
+   * @param {number} plotIndex
+   * @param {number} [arg=0] 播种时为 crop_id，其余为 0
+   * @param {number} [ownerUid=0]
+   * @returns {Promise<Envelope>}
+   */
+  plotAction(cmd, plotIndex, arg = 0, ownerUid = 0) {
+    return this.request(cmd, {
+      owner_uid: ownerUid,
+      plot_index: plotIndex,
+      arg,
+    })
+  }
+
+  /**
+   * Buy（cmd 302）。item_id 为作物数字 ID；err≠0 由调用方处理。
+   * @param {number} itemId
+   * @param {number} [quantity=1]
+   * @returns {Promise<Envelope>}
+   */
+  buy(itemId, quantity = 1) {
+    return this.request(CMD_BUY, { item_id: itemId, quantity })
+  }
+
+  /**
+   * Sell（cmd 304）。卖仓库果实；err≠0 由调用方处理。
+   * @param {number} itemId
+   * @param {number} [quantity=1]
+   * @returns {Promise<Envelope>}
+   */
+  sell(itemId, quantity = 1) {
+    return this.request(CMD_SELL, { item_id: itemId, quantity })
   }
 
   /**
