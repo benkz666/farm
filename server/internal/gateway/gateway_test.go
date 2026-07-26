@@ -265,6 +265,102 @@ func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 	}
 }
 
+func TestClearOnGrowingPlotBroadcastsFarmDeltaDespitePlotNotCleanable(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ownerUID    = uint64(42)
+		friendUID   = uint64(7)
+		ownerToken  = "owner-token"
+		friendToken = "friend-token"
+	)
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, friendUID)
+	ownerAggregate := farm.NewAggregate(ownerUID, "owner")
+	ownerAggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		SeasonDuration: 60_000,
+		MatureAt:       70_000,
+		LastSettleAt:   10_000,
+		LastWaterAt:    10_000,
+	}
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		ownerUID:  {Aggregate: ownerAggregate},
+		friendUID: {Aggregate: farm.NewAggregate(friendUID, "friend")},
+	}}
+	gateway := New(
+		authStub{},
+		sessionMapStub{ownerToken: ownerUID, friendToken: friendUID},
+		runtime,
+		WithFriendStore(friends),
+	)
+	gateway.SetClock(func() int64 { return 11_000 })
+
+	owner := openWebSocket(t, gateway.Handler())
+	friend := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, owner, ownerToken)
+	handshakeWebSocket(t, friend, friendToken)
+
+	writeEnvelope(t, friend, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":42}`),
+	})
+	friendEnter := readEnvelope(t, friend)
+	if friendEnter.Err != pkgerr.OK {
+		t.Fatalf("friend EnterFarm = %#v", friendEnter)
+	}
+
+	writeEnvelope(t, owner, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":0}`),
+	})
+	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
+		t.Fatalf("owner EnterFarm = %#v", got)
+	}
+
+	writeEnvelope(t, owner, Envelope{
+		Cmd:       CommandClear,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+	clear := readEnvelope(t, owner)
+	if clear.Err != pkgerr.PlotNotCleanable {
+		t.Fatalf("Clear err = %d, want %d", clear.Err, pkgerr.PlotNotCleanable)
+	}
+	var clearPayload actionResponse
+	if err := json.Unmarshal(clear.Payload, &clearPayload); err != nil {
+		t.Fatalf("decode Clear payload: %v", err)
+	}
+	if clearPayload.FarmSeq != 1 {
+		t.Fatalf("Clear FarmSeq = %d, want 1", clearPayload.FarmSeq)
+	}
+	if ownerAggregate.FarmSeq != 1 {
+		t.Fatalf("aggregate FarmSeq = %d, want 1", ownerAggregate.FarmSeq)
+	}
+
+	delta := readEnvelope(t, friend)
+	var deltaPayload farm.FarmDelta
+	if err := json.Unmarshal(delta.Payload, &deltaPayload); err != nil {
+		t.Fatalf("decode FarmDelta: %v", err)
+	}
+	if delta.Cmd != CommandFarmDelta || delta.ClientSeq != 0 || delta.Err != pkgerr.OK {
+		t.Fatalf("FarmDelta envelope = %#v", delta)
+	}
+	if deltaPayload.OwnerUID != ownerUID || deltaPayload.FarmSeq != 1 || deltaPayload.ActorUID != ownerUID {
+		t.Fatalf("FarmDelta payload = %#v", deltaPayload)
+	}
+	if deltaPayload.Action != CommandClear {
+		t.Fatalf("FarmDelta action = %d, want %d", deltaPayload.Action, CommandClear)
+	}
+	if len(deltaPayload.Plots) != 1 || deltaPayload.Plots[0].Index != 0 {
+		t.Fatalf("FarmDelta plots = %#v", deltaPayload.Plots)
+	}
+}
+
 func TestEnterFarmAdvancesExpiredGrowingPlotBeforeSnapshot(t *testing.T) {
 	t.Parallel()
 
