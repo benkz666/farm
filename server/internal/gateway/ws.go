@@ -217,6 +217,9 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest,
 		CommandBuy, CommandSell:
 		return g.handlePlotOrShop(connection, request)
+	case CommandFriendList, CommandGenShareLink, CommandAcceptInvite,
+		CommandRemoveFriend, CommandAddFriendByUID:
+		return g.handleFriendRequest(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest
 	}

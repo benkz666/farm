@@ -17,6 +17,7 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/social"
 	"farm/server/internal/store"
 )
 
@@ -440,6 +441,173 @@ func TestPlotActionRejectsArgOutsideUint16(t *testing.T) {
 	}
 }
 
+func TestFriendCommandsRejectSelfAndDuplicate(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID      = uint64(42)
+		peerUID      = uint64(7)
+		inviteSecret = "gateway-invite-secret"
+		now          = int64(1_000)
+	)
+	selfInvite, err := social.IssueInvite(selfUID, now, []byte(inviteSecret))
+	if err != nil {
+		t.Fatalf("issue self invite: %v", err)
+	}
+
+	for _, test := range []struct {
+		name    string
+		request Envelope
+		prepare func(*friendStoreStub)
+		wantErr pkgerr.Code
+	}{
+		{
+			name: "accept self invite",
+			request: Envelope{
+				Cmd:     CommandAcceptInvite,
+				Payload: marshalPayload(acceptInviteRequest{Token: selfInvite}),
+			},
+			wantErr: pkgerr.CannotFriendSelf,
+		},
+		{
+			name: "add existing friend",
+			request: Envelope{
+				Cmd:     CommandAddFriendByUID,
+				Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+			},
+			prepare: func(friends *friendStoreStub) {
+				friends.add(selfUID, peerUID)
+			},
+			wantErr: pkgerr.AlreadyFriend,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			friends := newFriendStoreStub()
+			if test.prepare != nil {
+				test.prepare(friends)
+			}
+			gateway := New(
+				authStub{},
+				sessionStub{uid: selfUID},
+				runtimeStub{},
+				WithFriendStore(friends),
+				WithInviteSecret([]byte(inviteSecret)),
+			)
+			gateway.SetClock(func() int64 { return now })
+
+			response := gateway.handleWSRequest(&wsConnection{uid: selfUID, authed: true}, test.request)
+			if response.Err != test.wantErr {
+				t.Fatalf("response.Err = %d, want %d", response.Err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID      = uint64(42)
+		existingUID  = uint64(7)
+		inviterUID   = uint64(8)
+		newFriendUID = uint64(9)
+		inviteSecret = "gateway-invite-secret"
+		now          = int64(1_000)
+	)
+	friends := newFriendStoreStub()
+	friends.add(selfUID, existingUID)
+	friends.nicknames[existingUID] = "existing"
+	invite, err := social.IssueInvite(inviterUID, now, []byte(inviteSecret))
+	if err != nil {
+		t.Fatalf("issue invite: %v", err)
+	}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friends),
+		WithInviteSecret([]byte(inviteSecret)),
+	)
+	gateway.SetClock(func() int64 { return now })
+	connection := &wsConnection{uid: selfUID, authed: true}
+
+	list := gateway.handleWSRequest(connection, Envelope{Cmd: CommandFriendList, Payload: emptyPayload})
+	if list.Err != pkgerr.OK {
+		t.Fatalf("FriendList error = %d", list.Err)
+	}
+	var listPayload friendListResponse
+	if err := json.Unmarshal(list.Payload, &listPayload); err != nil {
+		t.Fatalf("decode FriendList response: %v", err)
+	}
+	if len(listPayload.Friends) != 1 || listPayload.Friends[0].UID != existingUID || listPayload.Friends[0].Nickname != "existing" {
+		t.Fatalf("FriendList payload = %#v", listPayload)
+	}
+
+	share := gateway.handleWSRequest(connection, Envelope{Cmd: CommandGenShareLink, Payload: emptyPayload})
+	if share.Err != pkgerr.OK {
+		t.Fatalf("GenShareLink error = %d", share.Err)
+	}
+	var sharePayload genShareLinkResponse
+	if err := json.Unmarshal(share.Payload, &sharePayload); err != nil {
+		t.Fatalf("decode GenShareLink response: %v", err)
+	}
+	if !strings.HasPrefix(sharePayload.Path, "/i/") {
+		t.Fatalf("share path = %q, want /i/ prefix", sharePayload.Path)
+	}
+	if inviter, code := social.ParseInvite(strings.TrimPrefix(sharePayload.Path, "/i/"), []byte(inviteSecret), now); code != pkgerr.OK || inviter != selfUID {
+		t.Fatalf("parse generated invite = (%d, %d), want (%d, %d)", inviter, code, selfUID, pkgerr.OK)
+	}
+
+	accept := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandAcceptInvite,
+		Payload: marshalPayload(acceptInviteRequest{Token: invite}),
+	})
+	if accept.Err != pkgerr.OK || !friends.has(selfUID, inviterUID) {
+		t.Fatalf("AcceptInvite response = %#v, friendship=%t", accept, friends.has(selfUID, inviterUID))
+	}
+
+	remove := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandRemoveFriend,
+		Payload: marshalPayload(friendPeerRequest{PeerUID: existingUID}),
+	})
+	if remove.Err != pkgerr.OK || friends.has(selfUID, existingUID) {
+		t.Fatalf("RemoveFriend response = %#v, friendship=%t", remove, friends.has(selfUID, existingUID))
+	}
+
+	add := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandAddFriendByUID,
+		Payload: marshalPayload(friendPeerRequest{PeerUID: newFriendUID}),
+	})
+	if add.Err != pkgerr.OK || !friends.has(selfUID, newFriendUID) {
+		t.Fatalf("AddFriendByUID response = %#v, friendship=%t", add, friends.has(selfUID, newFriendUID))
+	}
+}
+
+func TestInviteLandingReturnsLoginGuidance(t *testing.T) {
+	t.Parallel()
+
+	handler := New(authStub{}, sessionStub{}, runtimeStub{}).Handler()
+	request := httptest.NewRequest(http.MethodGet, "/i/payload.signature", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var response struct {
+		OK        bool   `json:"ok"`
+		NeedLogin bool   `json:"need_login"`
+		Token     string `json:"token"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.OK || !response.NeedLogin || response.Token != "payload.signature" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func openWebSocket(t *testing.T, handler http.Handler) *websocket.Conn {
 	t.Helper()
 
@@ -530,4 +698,72 @@ func (s runtimeStub) Do(_ uint64, fn func(*actor.FarmActor) error) error {
 		return s.err
 	}
 	return fn(&actor.FarmActor{Aggregate: s.aggregate})
+}
+
+type friendStoreStub struct {
+	pairs     map[[2]uint64]bool
+	nicknames map[uint64]string
+}
+
+func newFriendStoreStub() *friendStoreStub {
+	return &friendStoreStub{
+		pairs:     make(map[[2]uint64]bool),
+		nicknames: make(map[uint64]string),
+	}
+}
+
+func (s *friendStoreStub) AreFriends(_ context.Context, a, b uint64) (bool, error) {
+	return s.has(a, b), nil
+}
+
+func (s *friendStoreStub) AddFriends(_ context.Context, a, b uint64) error {
+	if s.has(a, b) {
+		return store.ErrAlreadyFriend
+	}
+	s.add(a, b)
+	return nil
+}
+
+func (s *friendStoreStub) RemoveFriends(_ context.Context, a, b uint64) error {
+	delete(s.pairs, friendPair(a, b))
+	return nil
+}
+
+func (s *friendStoreStub) ListFriends(_ context.Context, uid uint64) ([]store.FriendRow, error) {
+	var friends []store.FriendRow
+	for pair := range s.pairs {
+		peerUID := pair[0]
+		if peerUID == uid {
+			peerUID = pair[1]
+		}
+		if pair[0] == uid || pair[1] == uid {
+			friends = append(friends, store.FriendRow{UID: peerUID, Nickname: s.nicknames[peerUID]})
+		}
+	}
+	return friends, nil
+}
+
+func (s *friendStoreStub) CountFriends(_ context.Context, uid uint64) (int, error) {
+	count := 0
+	for pair := range s.pairs {
+		if pair[0] == uid || pair[1] == uid {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *friendStoreStub) add(a, b uint64) {
+	s.pairs[friendPair(a, b)] = true
+}
+
+func (s *friendStoreStub) has(a, b uint64) bool {
+	return s.pairs[friendPair(a, b)]
+}
+
+func friendPair(a, b uint64) [2]uint64 {
+	if a < b {
+		return [2]uint64{a, b}
+	}
+	return [2]uint64{b, a}
 }

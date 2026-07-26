@@ -14,16 +14,21 @@ const (
 	CommandPing      uint32 = 102
 	CommandEnterFarm uint32 = 200
 
-	CommandTill       uint32 = 206
-	CommandClear      uint32 = 208
-	CommandPlant      uint32 = 210
-	CommandWater      uint32 = 212
-	CommandRemoveWeed uint32 = 214
-	CommandRemovePest uint32 = 216
-	CommandFertilize  uint32 = 218
-	CommandHarvest    uint32 = 220
-	CommandBuy        uint32 = 302
-	CommandSell       uint32 = 304
+	CommandTill           uint32 = 206
+	CommandClear          uint32 = 208
+	CommandPlant          uint32 = 210
+	CommandWater          uint32 = 212
+	CommandRemoveWeed     uint32 = 214
+	CommandRemovePest     uint32 = 216
+	CommandFertilize      uint32 = 218
+	CommandHarvest        uint32 = 220
+	CommandBuy            uint32 = 302
+	CommandSell           uint32 = 304
+	CommandFriendList     uint32 = 400
+	CommandGenShareLink   uint32 = 402
+	CommandAcceptInvite   uint32 = 404
+	CommandRemoveFriend   uint32 = 406
+	CommandAddFriendByUID uint32 = 408
 
 	JSONSubprotocol = "farm.v1.json"
 )

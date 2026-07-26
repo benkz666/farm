@@ -18,10 +18,11 @@ import (
 )
 
 type config struct {
-	httpAddr    string
-	mysqlDSN    string
-	redisAddr   string
-	tokenSecret string
+	httpAddr     string
+	mysqlDSN     string
+	redisAddr    string
+	tokenSecret  string
+	inviteSecret string
 }
 
 func main() {
@@ -48,7 +49,13 @@ func run() error {
 	}()
 
 	runtime := actor.NewRuntime(storage, 0)
-	transport := gateway.New(auth.New(storage, storage), storage, runtime)
+	transport := gateway.New(
+		auth.New(storage, storage),
+		storage,
+		runtime,
+		gateway.WithFriendStore(storage),
+		gateway.WithInviteSecret([]byte(config.inviteSecret)),
+	)
 	if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
 		transport.EnableDebugTime()
 		log.Printf("debug time advance enabled (FARM_ALLOW_DEBUG_TIME=1)")
@@ -85,11 +92,13 @@ func run() error {
 }
 
 func loadConfig() config {
+	tokenSecret := getenv("FARM_TOKEN_SECRET", "dev-only-change-me")
 	return config{
-		httpAddr:    getenv("FARM_HTTP_ADDR", ":9002"),
-		mysqlDSN:    getenv("FARM_MYSQL_DSN", "farm:farm@tcp(127.0.0.1:3306)/farm?parseTime=true&loc=Local"),
-		redisAddr:   getenv("FARM_REDIS_ADDR", "127.0.0.1:6379"),
-		tokenSecret: getenv("FARM_TOKEN_SECRET", "dev-only-change-me"),
+		httpAddr:     getenv("FARM_HTTP_ADDR", ":9002"),
+		mysqlDSN:     getenv("FARM_MYSQL_DSN", "farm:farm@tcp(127.0.0.1:3306)/farm?parseTime=true&loc=Local"),
+		redisAddr:    getenv("FARM_REDIS_ADDR", "127.0.0.1:6379"),
+		tokenSecret:  tokenSecret,
+		inviteSecret: getenv("FARM_INVITE_SECRET", tokenSecret),
 	}
 }
 

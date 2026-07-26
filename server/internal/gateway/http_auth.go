@@ -28,22 +28,48 @@ type FarmRuntime interface {
 
 // Gateway owns the HTTP and WebSocket transport adapters.
 type Gateway struct {
-	auth       Authenticator
-	sessions   store.SessionStore
-	runtime    FarmRuntime
-	now        func() int64
-	offsetMs   atomic.Int64
-	allowDebug bool
+	auth         Authenticator
+	sessions     store.SessionStore
+	runtime      FarmRuntime
+	friends      store.FriendStore
+	inviteSecret []byte
+	now          func() int64
+	offsetMs     atomic.Int64
+	allowDebug   bool
+}
+
+// Option configures optional Gateway boundaries.
+type Option func(*Gateway)
+
+// WithFriendStore configures the friendship persistence boundary.
+func WithFriendStore(friends store.FriendStore) Option {
+	return func(gateway *Gateway) {
+		gateway.friends = friends
+	}
+}
+
+// WithInviteSecret configures the HMAC secret used for sharing invitations.
+func WithInviteSecret(secret []byte) Option {
+	secret = append([]byte(nil), secret...)
+	return func(gateway *Gateway) {
+		gateway.inviteSecret = secret
+	}
 }
 
 // New constructs the transport gateway from its application boundaries.
-func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime) *Gateway {
-	return &Gateway{
+func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, options ...Option) *Gateway {
+	gateway := &Gateway{
 		auth:     auth,
 		sessions: sessions,
 		runtime:  runtime,
 		now:      func() int64 { return time.Now().UnixMilli() },
 	}
+	for _, option := range options {
+		if option != nil {
+			option(gateway)
+		}
+	}
+	return gateway
 }
 
 // EnableDebugTime 打开 /api/debug/advance（仅非生产冒烟；由 FARM_ALLOW_DEBUG_TIME 门控）。
@@ -70,6 +96,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/register", g.register)
 	mux.HandleFunc("/api/login", g.login)
+	mux.HandleFunc("/i/", g.inviteLanding)
 	mux.HandleFunc("/ws", g.serveWS)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
