@@ -6,8 +6,15 @@
 //   - 不允许返回未在 protocol.md 登记的错误码
 package pkgerr
 
+import "strconv"
+
 // Code 为协议错误码类型，与 protocol.md 中的数字码一一对应。
 type Code int
+
+// Error 让协议错误码可直接作为服务层 error 返回，并可由 errors.Is 判定。
+func (c Code) Error() string {
+	return strconv.Itoa(int(c))
+}
 
 const (
 	// OK 表示成功。
