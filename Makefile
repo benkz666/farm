@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down migrate run client-dev test smoke smoke-friends smoke-all run-all stop-all
+.PHONY: compose-up compose-down migrate run client-dev test smoke smoke-friends smoke-room smoke-all run-all stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -41,7 +41,14 @@ smoke-friends:
 	set +a; \
 	cd server && go run ./cmd/smoke friends
 
-# 种植 + 加好友全链路冒烟。
+# 期 3 房间同步冒烟：A、B 好友 → B Enter A → A Till → B 收 FarmDelta(9000) 与 SyncFarm 状态一致。
+smoke-room:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke room
+
+# 种植 + 加好友 + 房间同步全链路冒烟。
 smoke-all:
 	@set -a; \
 	if [ -f .env ]; then . ./.env; fi; \
