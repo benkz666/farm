@@ -66,8 +66,8 @@ make client-dev
 | `make stop-all` | 停止前后端（`./scripts/stop.sh`） |
 | `make compose-up` | 启动 MySQL + Redis |
 | `make compose-down` | 停止 compose 容器 |
-| `make migrate` | 执行数据库迁移 |
-| `make run` | 前台启动 `farm-server` |
+| `make migrate` | 执行迁移（`001_init.sql` + `002_items.sql`） |
+| `make run` | 前台启动 `farm-server`（默认 `FARM_ALLOW_DEBUG_TIME=1`，供 smoke 调时） |
 | `make client-dev` | 前台启动 Vite |
 | `make test` | `go test ./...` |
-| `make smoke` | 冒烟（默认打 `http://127.0.0.1:9002`） |
+| `make smoke` | 种植买卖冒烟（需服务端已开 debug 调时；默认打 `http://127.0.0.1:9002`） |
