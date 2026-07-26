@@ -583,28 +583,134 @@ func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
 	}
 }
 
-func TestInviteLandingReturnsLoginGuidance(t *testing.T) {
+func TestInviteLandingRedirectsToLoginWhenNoSession(t *testing.T) {
 	t.Parallel()
 
-	handler := New(authStub{}, sessionStub{}, runtimeStub{}).Handler()
+	handler := New(authStub{}, sessionStub{uid: 42}, runtimeStub{}).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/i/payload.signature", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	if got, want := recorder.Code, http.StatusFound; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
 	}
-	var response struct {
-		OK        bool   `json:"ok"`
-		NeedLogin bool   `json:"need_login"`
-		Token     string `json:"token"`
+	if got := recorder.Header().Get("Location"); got != "/login?invite=payload.signature" {
+		t.Fatalf("Location = %q, want %q", got, "/login?invite=payload.signature")
 	}
+}
+
+func TestInviteLandingRedirectsToLoginWhenSessionMissingOrInvalid(t *testing.T) {
+	t.Parallel()
+
+	handler := New(authStub{}, sessionStub{uid: 42}, runtimeStub{}).Handler()
+
+	for _, test := range []struct {
+		name   string
+		header string
+	}{
+		{name: "no auth header", header: ""},
+		{name: "invalid session token", header: "Bearer not-a-known-token"},
+		{name: "malformed bearer scheme", header: "Token token-42"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/i/payload.signature", nil)
+			if test.header != "" {
+				request.Header.Set("Authorization", test.header)
+			}
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			if got, want := recorder.Code, http.StatusFound; got != want {
+				t.Fatalf("status = %d, want %d", got, want)
+			}
+			if got := recorder.Header().Get("Location"); got != "/login?invite=payload.signature" {
+				t.Fatalf("Location = %q, want %q", got, "/login?invite=payload.signature")
+			}
+		})
+	}
+}
+
+func TestInviteLandingAcceptsInviteWhenSessionValid(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID      = uint64(42)
+		inviterUID   = uint64(8)
+		inviteSecret = "gateway-invite-secret"
+		now          = int64(1_000)
+	)
+	friends := newFriendStoreStub()
+	invite, err := social.IssueInvite(inviterUID, now, []byte(inviteSecret))
+	if err != nil {
+		t.Fatalf("issue invite: %v", err)
+	}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friends),
+		WithInviteSecret([]byte(inviteSecret)),
+	)
+	gateway.SetClock(func() int64 { return now })
+	handler := gateway.Handler()
+
+	request := httptest.NewRequest(http.MethodGet, "/i/"+invite, nil)
+	request.Header.Set("Authorization", "Bearer token-42")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	var response inviteLandingResponse
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !response.OK || !response.NeedLogin || response.Token != "payload.signature" {
-		t.Fatalf("response = %#v", response)
+	if !response.OK || response.Err != pkgerr.OK {
+		t.Fatalf("response = %#v, want ok=true err=0", response)
+	}
+	if !friends.has(selfUID, inviterUID) {
+		t.Fatalf("friendship not created: pairs=%v", friends.pairs)
+	}
+}
+
+func TestInviteLandingReturnsErrorCodeWhenInviteInvalid(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID      = uint64(42)
+		inviteSecret = "gateway-invite-secret"
+		now          = int64(1_000)
+	)
+	friends := newFriendStoreStub()
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friends),
+		WithInviteSecret([]byte(inviteSecret)),
+	)
+	gateway.SetClock(func() int64 { return now })
+	handler := gateway.Handler()
+
+	request := httptest.NewRequest(http.MethodGet, "/i/garbage.sig", nil)
+	request.Header.Set("Authorization", "Bearer token-42")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	var response inviteLandingResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.OK || response.Err != pkgerr.InviteInvalid {
+		t.Fatalf("response = %#v, want ok=false err=%d", response, pkgerr.InviteInvalid)
 	}
 }
 
