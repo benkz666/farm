@@ -19,8 +19,14 @@ import (
 
 var wsUpgrader = websocket.Upgrader{
 	Subprotocols: []string{JSONSubprotocol},
-	CheckOrigin:  func(*http.Request) bool { return true },
+	// Development accepts any origin; production must restrict this to trusted origins.
+	CheckOrigin: func(*http.Request) bool { return true },
 }
+
+const (
+	maxWSMessageSize = 64 << 10
+	wsReadTimeout    = 90 * time.Second
+)
 
 type wsConnection struct {
 	conn    *websocket.Conn
@@ -31,6 +37,8 @@ type wsConnection struct {
 
 type handshakeRequest struct {
 	Token           string `json:"token"`
+	ResumeFarmUID   uint64 `json:"resume_farm_uid"`
+	ResumeFarmSeq   uint64 `json:"resume_farm_seq"`
 	ClientConfigVer uint32 `json:"client_config_ver"`
 }
 
@@ -73,12 +81,16 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxWSMessageSize)
 
 	connection := wsConnection{
 		conn:    conn,
 		limiter: newConnectionLimiter(),
 	}
 	for {
+		if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
+			return
+		}
 		messageType, data, err := conn.ReadMessage()
 		if err != nil {
 			return
@@ -87,16 +99,26 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			_ = connection.respond(Envelope{Err: pkgerr.BadRequest, Payload: emptyPayload})
 			continue
 		}
-		if !connection.limiter.Allow() {
-			_ = connection.respond(Envelope{Err: pkgerr.RateLimited, Payload: emptyPayload})
-			continue
-		}
-
 		request, err := DecodeEnvelope(data)
 		if err != nil {
 			_ = connection.respond(Envelope{Err: pkgerr.BadRequest, Payload: emptyPayload})
 			continue
 		}
+		if !connection.limiter.Allow() {
+			if err := connection.respond(Envelope{
+				Cmd:       request.Cmd,
+				ClientSeq: request.ClientSeq,
+				Err:       pkgerr.RateLimited,
+				Payload:   emptyPayload,
+			}); err != nil {
+				return
+			}
+			if connection.limiter.ShouldDisconnect() {
+				return
+			}
+			continue
+		}
+
 		response := g.handleWSRequest(&connection, request)
 		if err := connection.respond(response); err != nil {
 			return
