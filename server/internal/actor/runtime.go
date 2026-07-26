@@ -125,7 +125,12 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				actor.Aggregate = aggregate
 			}
 
-			req.result <- req.fn(&actor)
+			err, panicked := invokeCallback(req.fn, &actor)
+			req.result <- err
+			if panicked {
+				// 回调 panic 后内存聚合可能不一致：卸载而不落盘，下次 Do 可重新加载。
+				return
+			}
 			resetTimer(timer, r.idleTTL)
 
 		case <-timer.C:
@@ -140,6 +145,16 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			return
 		}
 	}
+}
+
+func invokeCallback(fn func(*FarmActor) error, actor *FarmActor) (err error, panicked bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panicked = true
+			err = fmt.Errorf("actor: callback panic: %v", recovered)
+		}
+	}()
+	return fn(actor), false
 }
 
 func resetTimer(timer *time.Timer, ttl time.Duration) {

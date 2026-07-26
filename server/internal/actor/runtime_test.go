@@ -3,6 +3,7 @@ package actor
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -83,6 +84,43 @@ func TestRuntimeFlushesAndUnloadsIdleActor(t *testing.T) {
 	}
 	if got, want := store.loadCalls(), 2; got != want {
 		t.Fatalf("LoadFarm calls after idle unload = %d, want %d", got, want)
+	}
+}
+
+func TestRuntimeRecoversCallbackPanicAndUnblocksCaller(t *testing.T) {
+	store := newMemoryFarmStore(farm.NewAggregate(11, "dave"))
+	runtime := NewRuntime(store, time.Hour)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runtime.Do(11, func(*FarmActor) error {
+			panic("boom")
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("Runtime.Do returned nil after callback panic")
+		}
+		if got := err.Error(); !strings.Contains(got, "callback panic") || !strings.Contains(got, "boom") {
+			t.Fatalf("Runtime.Do error = %v, want wrapped panic", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller blocked after callback panic")
+	}
+
+	if err := runtime.Do(11, func(actor *FarmActor) error {
+		actor.Aggregate.Coin++
+		return nil
+	}); err != nil {
+		t.Fatalf("Runtime.Do after panic unload: %v", err)
+	}
+	if got, want := store.loadCalls(), 2; got != want {
+		t.Fatalf("LoadFarm calls after panic unload = %d, want %d", got, want)
+	}
+	if got, want := store.aggregate.Coin, int64(1001); got != want {
+		t.Fatalf("coin after rebuild = %d, want %d", got, want)
 	}
 }
 
