@@ -26,3 +26,20 @@ func TestProtocolCodes(t *testing.T) {
 		t.Fatalf("want 1007")
 	}
 }
+
+// TestFriendCodes 校验 protocol 4.5 期 3 新增的好友错误码 1402–1407。
+func TestFriendCodes(t *testing.T) {
+	cases := map[pkgerr.Code]int{
+		pkgerr.AlreadyFriend:    1402,
+		pkgerr.CannotFriendSelf: 1403,
+		pkgerr.FriendLimitSelf:  1404,
+		pkgerr.FriendLimitPeer:  1405,
+		pkgerr.InviteInvalid:    1406,
+		pkgerr.InviteExpired:    1407,
+	}
+	for code, want := range cases {
+		if int(code) != want {
+			t.Errorf("want %d got %d", want, code)
+		}
+	}
+}

@@ -69,7 +69,13 @@ const (
 	BadQuantity     Code = 1307 // ERR_BAD_QUANTITY 数量不合法
 )
 
-// 4.5 社交与偷菜（1400—1499）——期 1 仅用到 NotFriend。
+// 4.5 社交与偷菜（1400—1499）。
 const (
-	NotFriend Code = 1401 // ERR_NOT_FRIEND 你们还不是好友
+	NotFriend       Code = 1401 // ERR_NOT_FRIEND 你们还不是好友
+	AlreadyFriend   Code = 1402 // ERR_ALREADY_FRIEND 你们已经是好友了
+	CannotFriendSelf Code = 1403 // ERR_CANNOT_FRIEND_SELF 不能添加自己为好友
+	FriendLimitSelf Code = 1404 // ERR_FRIEND_LIMIT_SELF 你的好友数已达 200 上限
+	FriendLimitPeer Code = 1405 // ERR_FRIEND_LIMIT_PEER 对方好友数已达上限
+	InviteInvalid   Code = 1406 // ERR_INVITE_INVALID 邀请链接无效
+	InviteExpired   Code = 1407 // ERR_INVITE_EXPIRED 邀请链接已过期
 )
