@@ -42,15 +42,42 @@ type actionPayload struct {
 }
 
 func main() {
-	if err := run(); err != nil {
+	mode := "planting"
+	if env := os.Getenv("FARM_SMOKE_MODE"); env != "" {
+		mode = env
+	} else if len(os.Args) > 1 {
+		mode = os.Args[1]
+	}
+	if err := run(mode); err != nil {
 		fmt.Fprintln(os.Stderr, "smoke:", err)
 		os.Exit(1)
 	}
-	fmt.Println("smoke: planting buy/till/plant/advance/harvest/sell passed")
+	switch mode {
+	case "friends":
+		fmt.Println("smoke: friends gen/accept/list/duplicate-add passed")
+	case "all":
+		fmt.Println("smoke: planting + friends passed")
+	default:
+		fmt.Println("smoke: planting buy/till/plant/advance/harvest/sell passed")
+	}
 }
 
-func run() error {
+func run(mode string) error {
 	baseURL := strings.TrimRight(getenv("FARM_SMOKE_BASE_URL", defaultBaseURL), "/")
+	switch mode {
+	case "friends":
+		return runFriends(baseURL)
+	case "all":
+		if err := runPlanting(baseURL); err != nil {
+			return err
+		}
+		return runFriends(baseURL)
+	default:
+		return runPlanting(baseURL)
+	}
+}
+
+func runPlanting(baseURL string) error {
 	username, err := smokeUsername()
 	if err != nil {
 		return err
@@ -307,3 +334,184 @@ func getenv(name, fallback string) string {
 	}
 	return fallback
 }
+
+// runFriends 覆盖期 3 加好友主路径：A GenShareLink → B AcceptInvite → A FriendList 含 B
+// → B 再 AddFriendByUID(A) 应得 AlreadyFriend(1402)。
+func runFriends(baseURL string) error {
+	userA, err := smokeUsername()
+	if err != nil {
+		return fmt.Errorf("generate username A: %w", err)
+	}
+	userB, err := smokeUsername()
+	if err != nil {
+		return fmt.Errorf("generate username B: %w", err)
+	}
+
+	if _, err := authenticate(baseURL+"/api/register", userA, smokePassword); err != nil {
+		return fmt.Errorf("register A: %w", err)
+	}
+	if _, err := authenticate(baseURL+"/api/register", userB, smokePassword); err != nil {
+		return fmt.Errorf("register B: %w", err)
+	}
+	loginA, err := authenticate(baseURL+"/api/login", userA, smokePassword)
+	if err != nil {
+		return fmt.Errorf("login A: %w", err)
+	}
+	loginB, err := authenticate(baseURL+"/api/login", userB, smokePassword)
+	if err != nil {
+		return fmt.Errorf("login B: %w", err)
+	}
+	if loginA.UID == 0 || loginB.UID == 0 || loginA.UID == loginB.UID {
+		return fmt.Errorf("login uids invalid: A=%d B=%d", loginA.UID, loginB.UID)
+	}
+
+	connA, err := dialAndHandshake(loginA)
+	if err != nil {
+		return fmt.Errorf("connect A: %w", err)
+	}
+	defer connA.Close()
+	connB, err := dialAndHandshake(loginB)
+	if err != nil {
+		return fmt.Errorf("connect B: %w", err)
+	}
+	defer connB.Close()
+
+	seqA := uint32(2) // handshake 消耗 seq 1
+	seqB := uint32(2)
+
+	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandGenShareLink,
+		ClientSeq: seqA,
+		Payload:   emptyJSONObject,
+	})
+	if err != nil {
+		return fmt.Errorf("GenShareLink: %w", err)
+	}
+	seqA++
+	var share genShareLinkResponse
+	if err := json.Unmarshal(shareEnv.Payload, &share); err != nil {
+		return fmt.Errorf("decode GenShareLink payload: %w", err)
+	}
+	if !strings.HasPrefix(share.Path, "/i/") {
+		return fmt.Errorf("share path = %q, want /i/ prefix", share.Path)
+	}
+	token := strings.TrimPrefix(share.Path, "/i/")
+	if token == "" {
+		return fmt.Errorf("share token is empty")
+	}
+
+	if _, err := exchangeResponse(connB, gateway.Envelope{
+		Cmd:       gateway.CommandAcceptInvite,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"token": token}),
+	}); err != nil {
+		return fmt.Errorf("AcceptInvite: %w", err)
+	}
+	seqB++
+
+	listEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandFriendList,
+		ClientSeq: seqA,
+		Payload:   emptyJSONObject,
+	})
+	if err != nil {
+		return fmt.Errorf("FriendList: %w", err)
+	}
+	seqA++
+	var list friendListResponse
+	if err := json.Unmarshal(listEnv.Payload, &list); err != nil {
+		return fmt.Errorf("decode FriendList payload: %w", err)
+	}
+	if !friendListContains(list.Friends, loginB.UID) {
+		return fmt.Errorf("FriendList does not contain B (uid=%d): %#v", loginB.UID, list)
+	}
+
+	dupEnv, err := exchangeEnvelope(connB, gateway.Envelope{
+		Cmd:       gateway.CommandAddFriendByUID,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"peer_uid": loginA.UID}),
+	})
+	if err != nil {
+		return fmt.Errorf("AddFriendByUID: %w", err)
+	}
+	seqB++
+	if dupEnv.Err != pkgerr.AlreadyFriend {
+		return fmt.Errorf("duplicate Add err = %d, want %d", dupEnv.Err, pkgerr.AlreadyFriend)
+	}
+	return nil
+}
+
+func dialAndHandshake(login authResponse) (*websocket.Conn, error) {
+	conn, response, err := websocket.DefaultDialer.Dial(login.WSURL, http.Header{
+		"Sec-WebSocket-Protocol": []string{gateway.JSONSubprotocol},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dial websocket: %w", err)
+	}
+	if response.Header.Get("Sec-WebSocket-Protocol") != gateway.JSONSubprotocol {
+		_ = conn.Close()
+		return nil, fmt.Errorf("websocket subprotocol was not negotiated")
+	}
+	if err := exchange(conn, gateway.Envelope{
+		Cmd:       gateway.CommandHandshake,
+		ClientSeq: 1,
+		Payload: mustJSON(map[string]any{
+			"token":             login.Token,
+			"client_config_ver": gameconf.ConfigVer,
+		}),
+	}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("handshake: %w", err)
+	}
+	return conn, nil
+}
+
+// exchangeEnvelope 与 exchangeResponse 类似，但不校验 Err 字段，便于断言错误码。
+func exchangeEnvelope(conn *websocket.Conn, request gateway.Envelope) (gateway.Envelope, error) {
+	data, err := gateway.EncodeEnvelope(request)
+	if err != nil {
+		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+	}
+	messageType, data, err := conn.ReadMessage()
+	if err != nil {
+		return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+	}
+	if messageType != websocket.TextMessage {
+		return gateway.Envelope{}, fmt.Errorf("response message type = %d, want text", messageType)
+	}
+	response, err := gateway.DecodeEnvelope(data)
+	if err != nil {
+		return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+	}
+	if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
+		return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
+	}
+	return response, nil
+}
+
+type genShareLinkResponse struct {
+	Path string `json:"path"`
+}
+
+type friendListResponse struct {
+	Friends []friendEntry `json:"friends"`
+}
+
+type friendEntry struct {
+	UID      uint64 `json:"uid"`
+	Nickname string `json:"nickname"`
+}
+
+func friendListContains(friends []friendEntry, uid uint64) bool {
+	for _, friend := range friends {
+		if friend.UID == uid {
+			return true
+		}
+	}
+	return false
+}
+
+var emptyJSONObject = json.RawMessage(`{}`)

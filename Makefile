@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down migrate run client-dev test smoke run-all stop-all
+.PHONY: compose-up compose-down migrate run client-dev test smoke smoke-friends smoke-all run-all stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -33,6 +33,20 @@ smoke:
 	if [ -f .env ]; then . ./.env; fi; \
 	set +a; \
 	cd server && go run ./cmd/smoke
+
+# 期 3 加好友冒烟：注册 A/B → GenShareLink → AcceptInvite → FriendList → 重复 Add 得 1402。
+smoke-friends:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke friends
+
+# 种植 + 加好友全链路冒烟。
+smoke-all:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke all
 
 run-all:
 	./scripts/run.sh
