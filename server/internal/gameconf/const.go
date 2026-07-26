@@ -22,3 +22,6 @@ const (
 	// 与客户端 EXP_PER_LEVEL、策划 4.3 节一致（累计门槛 = N × 200）。
 	ExpPerLevel = 200
 )
+
+// FriendLimit 是单个玩家可建立的好友关系上限。用变量便于存储层测试注入较小阈值。
+var FriendLimit = 200

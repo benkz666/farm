@@ -42,12 +42,24 @@ type FarmStore interface {
 	SaveFarm(ctx context.Context, agg *farm.Aggregate) error
 }
 
+// FriendStore 管理以 friendship 表为准的双向好友关系。
+type FriendStore interface {
+	AreFriends(ctx context.Context, a, b uint64) (bool, error)
+	AddFriends(ctx context.Context, a, b uint64) error
+	RemoveFriends(ctx context.Context, a, b uint64) error
+	ListFriends(ctx context.Context, uid uint64) ([]FriendRow, error)
+	CountFriends(ctx context.Context, uid uint64) (int, error)
+}
+
 // 哨兵错误，供上层用 errors.Is 判定并映射到 pkgerr 协议码。
 var (
 	ErrUsernameTaken   = errors.New("store: username already taken")
 	ErrAccountNotFound = errors.New("store: account not found")
 	ErrSessionNotFound = errors.New("store: session not found")
 	ErrFarmNotFound    = errors.New("store: farm not found")
+	ErrAlreadyFriend   = errors.New("store: already friends")
+	ErrFriendLimitSelf = errors.New("store: friend limit reached for self")
+	ErrFriendLimitPeer = errors.New("store: friend limit reached for peer")
 )
 
 const (
@@ -101,4 +113,5 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 var (
 	_ SessionStore = (*Store)(nil)
 	_ FarmStore    = (*Store)(nil)
+	_ FriendStore  = (*Store)(nil)
 )
