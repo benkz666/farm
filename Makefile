@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-help smoke-all run-all run-shards stop-all
+.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-help smoke-steal smoke-all run-all run-shards stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -16,6 +16,7 @@ migrate:
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/001_init.sql
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/002_items.sql
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/003_friendship.sql
+	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/004_pet.sql
 
 # 本地联调默认打开 debug 调时，供 make smoke 的 /api/debug/advance 使用；生产切勿导出。
 run:
@@ -91,6 +92,14 @@ smoke-help:
 	if [ -f .env ]; then . ./.env; fi; \
 	set +a; \
 	cd server && go run ./cmd/smoke help
+
+# 期 4c 偷菜冒烟：额度竞争 / 收获竞争 1216 / 余额不足 1412 / 狗拦截 1411。
+# 需先 make run（all 模式，:9002）且 FARM_ALLOW_DEBUG_TIME=1。
+smoke-steal:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke steal
 
 run-all:
 	./scripts/run.sh

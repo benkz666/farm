@@ -77,8 +77,10 @@ func main() {
 		fmt.Println("smoke: cross-shard friend EnterFarm passed")
 	case "help":
 		fmt.Println("smoke: cross-farm mutual aid water passed")
+	case "steal":
+		fmt.Println("smoke: steal quota/harvest-race/no-afford/dog-intercept passed")
 	case "all":
-		fmt.Println("smoke: planting + friends + room + help passed")
+		fmt.Println("smoke: planting + friends + room + help + steal passed")
 	default:
 		fmt.Println("smoke: planting buy/till/plant/advance/harvest/sell passed")
 	}
@@ -97,6 +99,8 @@ func run(mode string) error {
 		return runShards(gw0, gw1)
 	case "help":
 		return runHelp(baseURL)
+	case "steal":
+		return runSteal(baseURL)
 	case "all":
 		if err := runPlanting(baseURL); err != nil {
 			return err
@@ -107,7 +111,10 @@ func run(mode string) error {
 		if err := runRoom(baseURL); err != nil {
 			return err
 		}
-		return runHelp(baseURL)
+		if err := runHelp(baseURL); err != nil {
+			return err
+		}
+		return runSteal(baseURL)
 	default:
 		return runPlanting(baseURL)
 	}
