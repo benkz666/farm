@@ -57,6 +57,7 @@ var (
 	ErrAccountNotFound = errors.New("store: account not found")
 	ErrSessionNotFound = errors.New("store: session not found")
 	ErrFarmNotFound    = errors.New("store: farm not found")
+	ErrPlayerNotFound  = errors.New("store: player not found")
 	ErrAlreadyFriend   = errors.New("store: already friends")
 	ErrFriendLimitSelf = errors.New("store: friend limit reached for self")
 	ErrFriendLimitPeer = errors.New("store: friend limit reached for peer")

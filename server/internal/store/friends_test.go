@@ -88,6 +88,16 @@ func TestFriendStoreEnforcesFriendLimit(t *testing.T) {
 	}
 }
 
+func TestFriendStoreRejectsMissingPlayer(t *testing.T) {
+	s := newTestStore(t)
+	ownerUID := createFriendTestAccount(t, s)
+
+	err := s.AddFriends(context.Background(), ownerUID, testUID(t))
+	if !errors.Is(err, store.ErrPlayerNotFound) {
+		t.Fatalf("AddFriends missing player error = %v, want ErrPlayerNotFound", err)
+	}
+}
+
 func createFriendTestAccount(t *testing.T, s *store.Store) uint64 {
 	t.Helper()
 

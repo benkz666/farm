@@ -471,6 +471,69 @@ func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
 	}
 }
 
+func TestEnterFarmBuffersDeltaUntilSnapshotResponse(t *testing.T) {
+	const (
+		ownerUID  = uint64(42)
+		friendUID = uint64(7)
+	)
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, friendUID)
+	var gateway *Gateway
+	runtime := runtimeHookStub{
+		actor: &actor.FarmActor{Aggregate: farm.NewAggregate(ownerUID, "owner")},
+		after: func() {
+			gateway.rooms.Broadcast(farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: 1})
+		},
+	}
+	gateway = New(
+		authStub{},
+		sessionStub{uid: friendUID},
+		runtime,
+		WithFriendStore(friends),
+	)
+	connection := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, connection, "token-42")
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+	})
+	if response := readEnvelope(t, connection); response.Cmd != CommandEnterFarm || response.Err != pkgerr.OK {
+		t.Fatalf("first response = %#v, want successful EnterFarm", response)
+	}
+	if delta := readEnvelope(t, connection); delta.Cmd != CommandFarmDelta || delta.Err != pkgerr.OK {
+		t.Fatalf("second response = %#v, want FarmDelta after EnterFarm", delta)
+	}
+}
+
+func TestEnterFarmRechecksFriendshipAfterSubscription(t *testing.T) {
+	const (
+		ownerUID  = uint64(42)
+		friendUID = uint64(7)
+	)
+	friends := &revokeOnSecondReadFriendStore{friendStoreStub: newFriendStoreStub()}
+	friends.add(ownerUID, friendUID)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: friendUID},
+		runtimeStub{aggregate: farm.NewAggregate(ownerUID, "owner")},
+		WithFriendStore(friends),
+	)
+	connection := &wsConnection{id: 1, uid: friendUID}
+
+	response := gateway.handleEnterFarm(connection, Envelope{
+		Cmd:     CommandEnterFarm,
+		Payload: marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+	})
+	if response.Err != pkgerr.NotFriend {
+		t.Fatalf("EnterFarm error = %d, want %d", response.Err, pkgerr.NotFriend)
+	}
+	if connection.roomUID != 0 {
+		t.Fatalf("room UID = %d, want no subscription after friendship revocation", connection.roomUID)
+	}
+}
+
 func TestConnectionLimiterRejectsOverCapacity(t *testing.T) {
 	t.Parallel()
 
@@ -845,6 +908,27 @@ func TestFriendCommandsRejectSelfAndDuplicate(t *testing.T) {
 				t.Fatalf("response.Err = %d, want %d", response.Err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestAddFriendByUIDMapsMissingPlayerToBadRequest(t *testing.T) {
+	const (
+		selfUID = uint64(42)
+		peerUID = uint64(7)
+	)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friendStoreErrorStub{err: store.ErrPlayerNotFound}),
+	)
+
+	response := gateway.handleFriendRequest(&wsConnection{uid: selfUID}, Envelope{
+		Cmd:     CommandAddFriendByUID,
+		Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+	})
+	if response.Err != pkgerr.BadRequest {
+		t.Fatalf("AddFriendByUID error = %d, want %d", response.Err, pkgerr.BadRequest)
 	}
 }
 
@@ -1226,6 +1310,21 @@ func (s multiRuntimeStub) Do(uid uint64, fn func(*actor.FarmActor) error) error 
 	return fn(farmActor)
 }
 
+type runtimeHookStub struct {
+	actor *actor.FarmActor
+	after func()
+}
+
+func (s runtimeHookStub) Do(_ uint64, fn func(*actor.FarmActor) error) error {
+	if err := fn(s.actor); err != nil {
+		return err
+	}
+	if s.after != nil {
+		s.after()
+	}
+	return nil
+}
+
 type friendStoreStub struct {
 	pairs     map[[2]uint64]bool
 	nicknames map[uint64]string
@@ -1285,6 +1384,40 @@ func (s *friendStoreStub) add(a, b uint64) {
 
 func (s *friendStoreStub) has(a, b uint64) bool {
 	return s.pairs[friendPair(a, b)]
+}
+
+type revokeOnSecondReadFriendStore struct {
+	*friendStoreStub
+	reads int
+}
+
+func (s *revokeOnSecondReadFriendStore) AreFriends(context.Context, uint64, uint64) (bool, error) {
+	s.reads++
+	return s.reads == 1, nil
+}
+
+type friendStoreErrorStub struct {
+	err error
+}
+
+func (s friendStoreErrorStub) AreFriends(context.Context, uint64, uint64) (bool, error) {
+	return false, s.err
+}
+
+func (s friendStoreErrorStub) AddFriends(context.Context, uint64, uint64) error {
+	return s.err
+}
+
+func (s friendStoreErrorStub) RemoveFriends(context.Context, uint64, uint64) error {
+	return s.err
+}
+
+func (s friendStoreErrorStub) ListFriends(context.Context, uint64) ([]store.FriendRow, error) {
+	return nil, s.err
+}
+
+func (s friendStoreErrorStub) CountFriends(context.Context, uint64) (int, error) {
+	return 0, s.err
 }
 
 func friendPair(a, b uint64) [2]uint64 {

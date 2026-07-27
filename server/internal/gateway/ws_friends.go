@@ -143,6 +143,8 @@ func (g *Gateway) addFriends(uid, peerUID uint64) pkgerr.Code {
 			return pkgerr.FriendLimitSelf
 		case errors.Is(err, store.ErrFriendLimitPeer):
 			return pkgerr.FriendLimitPeer
+		case errors.Is(err, store.ErrPlayerNotFound):
+			return pkgerr.BadRequest
 		default:
 			return pkgerr.Internal
 		}

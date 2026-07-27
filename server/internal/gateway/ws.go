@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
@@ -37,6 +38,10 @@ type wsConnection struct {
 	writeMu sync.Mutex
 	roomMu  sync.Mutex
 	roomUID uint64
+	// holdFarmDeltas keeps a newly-entered client from observing a delta before
+	// its EnterFarm snapshot has reached the wire.
+	holdFarmDeltas bool
+	heldFarmDeltas []farm.FarmDelta
 }
 
 type handshakeRequest struct {
@@ -126,7 +131,13 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		response := g.handleWSRequest(&connection, request)
-		if err := connection.respond(response); err != nil {
+		var respondErr error
+		if request.Cmd == CommandEnterFarm && response.Err == pkgerr.OK {
+			respondErr = connection.respondEnterFarm(response)
+		} else {
+			respondErr = connection.respond(response)
+		}
+		if respondErr != nil {
 			return
 		}
 	}
@@ -214,13 +225,66 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 }
 
 func (connection *wsConnection) respond(envelope Envelope) error {
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
+	return connection.respondLocked(envelope)
+}
+
+// respondEnterFarm writes the snapshot response before releasing deltas that
+// arrived after entering the room. writeMu makes the response and its flush an
+// indivisible wire-order operation with concurrent room broadcasts.
+func (connection *wsConnection) respondEnterFarm(envelope Envelope) error {
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
+	if err := connection.respondLocked(envelope); err != nil {
+		return err
+	}
+
+	connection.roomMu.Lock()
+	held := connection.heldFarmDeltas
+	connection.heldFarmDeltas = nil
+	connection.holdFarmDeltas = false
+	connection.roomMu.Unlock()
+
+	for _, delta := range held {
+		if err := connection.respondLocked(Envelope{
+			Cmd:       CommandFarmDelta,
+			ClientSeq: 0,
+			Payload:   marshalPayload(delta),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (connection *wsConnection) respondLocked(envelope Envelope) error {
 	data, err := EncodeEnvelope(envelope)
 	if err != nil {
 		return err
 	}
+	return connection.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDelta) {
 	connection.writeMu.Lock()
 	defer connection.writeMu.Unlock()
-	return connection.conn.WriteMessage(websocket.TextMessage, data)
+
+	connection.roomMu.Lock()
+	receiving := connection.roomUID == ownerUID
+	holding := connection.holdFarmDeltas
+	if receiving && holding {
+		connection.heldFarmDeltas = append(connection.heldFarmDeltas, copyFarmDelta(delta))
+	}
+	connection.roomMu.Unlock()
+	if !receiving || holding {
+		return
+	}
+	_ = connection.respondLocked(Envelope{
+		Cmd:       CommandFarmDelta,
+		ClientSeq: 0,
+		Payload:   marshalPayload(delta),
+	})
 }
 
 func unmarshalPayload(payload json.RawMessage, target any) error {

@@ -43,6 +43,19 @@ func (s *Store) AddFriends(ctx context.Context, a, b uint64) error {
 	}
 	defer tx.Rollback()
 
+	for _, uid := range []uint64{a, b} {
+		var exists bool
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM player WHERE uid = ?)`,
+			uid,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("store: query player: %w", err)
+		}
+		if !exists {
+			return ErrPlayerNotFound
+		}
+	}
+
 	var exists bool
 	if err := tx.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM friendship WHERE uid_lo = ? AND uid_hi = ?)`,

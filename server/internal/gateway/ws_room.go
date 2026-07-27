@@ -9,6 +9,8 @@ import (
 	"farm/server/internal/pkgerr"
 )
 
+var errFriendAccessRevoked = errors.New("gateway: friend access revoked during enter")
+
 type syncFarmRequest struct {
 	OwnerUID uint64 `json:"owner_uid"`
 	FromSeq  uint64 `json:"from_seq"`
@@ -51,6 +53,16 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			Relation:   relation,
 		}
 		g.enterRoom(connection, ownerUID)
+		if relation == "FRIEND" {
+			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+			if err != nil || !stillFriends {
+				g.leaveFarm(connection)
+				if err != nil {
+					return err
+				}
+				return errFriendAccessRevoked
+			}
+		}
 		if len(changes) > 0 {
 			delta := farm.FarmDelta{
 				OwnerUID: ownerUID,
@@ -62,6 +74,10 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		}
 		return nil
 	}); err != nil {
+		if errors.Is(err, errFriendAccessRevoked) {
+			response.Err = pkgerr.NotFriend
+			return response
+		}
 		response.Err = pkgerr.Internal
 		return response
 	}
@@ -146,10 +162,14 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) {
 		return
 	}
 
+	connection.writeMu.Lock()
 	connection.roomMu.Lock()
 	previousOwnerUID := connection.roomUID
 	connection.roomUID = ownerUID
+	connection.holdFarmDeltas = true
+	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()
+	connection.writeMu.Unlock()
 	if previousOwnerUID == ownerUID {
 		return
 	}
@@ -157,29 +177,26 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) {
 		g.rooms.Unsubscribe(previousOwnerUID, connection.id)
 	}
 	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta) {
-		connection.roomMu.Lock()
-		receiving := connection.roomUID == ownerUID
-		connection.roomMu.Unlock()
-		if !receiving {
-			return
-		}
-		_ = connection.respond(Envelope{
-			Cmd:       CommandFarmDelta,
-			ClientSeq: 0,
-			Payload:   marshalPayload(delta),
-		})
+		connection.pushFarmDelta(ownerUID, delta)
 	})
 }
 
 func (g *Gateway) leaveFarm(connection *wsConnection) {
-	if connection == nil || connection.id == 0 || g.rooms == nil {
+	if connection == nil {
 		return
 	}
 
+	connection.writeMu.Lock()
 	connection.roomMu.Lock()
 	ownerUID := connection.roomUID
 	connection.roomUID = 0
+	connection.holdFarmDeltas = false
+	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()
+	connection.writeMu.Unlock()
+	if connection.id == 0 || g.rooms == nil {
+		return
+	}
 	if ownerUID != 0 {
 		g.rooms.Unsubscribe(ownerUID, connection.id)
 	}
