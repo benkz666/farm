@@ -58,27 +58,59 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
     return true
   }
 
-  async function requestSync() {
+  function bufferDelta(sync, delta) {
+    if (!sync.buffer.some((item) => Number(item.farm_seq) === Number(delta.farm_seq))) {
+      sync.buffer.push(delta)
+    }
+  }
+
+  function applyBufferedDeltas(sync, view) {
+    sync.buffer.sort((left, right) => Number(left.farm_seq) - Number(right.farm_seq))
+    while (sync.buffer.length > 0) {
+      sync.buffer = sync.buffer.filter((delta) => Number(delta.farm_seq) > session.lastFarmSeq)
+      const next = sync.buffer.find((delta) => Number(delta.farm_seq) === session.lastFarmSeq + 1)
+      if (!next) return sync.buffer.length === 0
+      sync.buffer = sync.buffer.filter((delta) => delta !== next)
+      if (!isCurrentView(view) || !applyDelta(next)) return false
+    }
+    return true
+  }
+
+  async function requestSync(delta) {
     const view = currentView()
     if (syncing && syncing.view.ownerUid === view.ownerUid && syncing.view.generation === view.generation) {
+      if (delta) bufferDelta(syncing, delta)
       return syncing.promise
     }
-    const fromSeq = session.lastFarmSeq
-    const promise = Promise.resolve(syncFarm(view.ownerUid, fromSeq))
-      .then((result) => applySync(result, view))
+    const sync = { view, buffer: [] }
+    if (delta) bufferDelta(sync, delta)
+    const promise = (async () => {
+      let retried = false
+      while (isCurrentView(view)) {
+        const result = await syncFarm(view.ownerUid, session.lastFarmSeq)
+        if (!await applySync(result, view)) return false
+        if (applyBufferedDeltas(sync, view)) return true
+        if (retried) return false
+        retried = true
+      }
+      return false
+    })()
       .finally(() => {
         if (syncing?.promise === promise) syncing = null
       })
-    syncing = { view, promise }
+    sync.promise = promise
+    syncing = sync
     return promise
   }
 
   return {
     async onDelta(delta) {
       if (Number(delta?.owner_uid) !== Number(session.viewingOwnerUid)) return false
+      if (syncing && syncing.view.ownerUid === Number(session.viewingOwnerUid)) {
+        return requestSync(delta)
+      }
       if (applyDelta(delta)) return true
-      await requestSync()
-      return false
+      return requestSync(delta)
     },
     applySync,
   }

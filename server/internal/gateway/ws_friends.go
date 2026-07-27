@@ -110,7 +110,10 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 		}
 		if err := g.friends.RemoveFriends(context.Background(), connection.uid, payload.PeerUID); err != nil {
 			response.Err = pkgerr.Internal
+			return response
 		}
+		g.rooms.RevokeViewer(payload.PeerUID, connection.uid)
+		g.rooms.RevokeViewer(connection.uid, payload.PeerUID)
 		return response
 
 	case CommandAddFriendByUID:

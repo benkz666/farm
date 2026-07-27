@@ -30,6 +30,13 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		ClientSeq: request.ClientSeq,
 		Payload:   emptyPayload,
 	}
+	connection.roomMu.Lock()
+	visiting := connection.roomUID != 0 && connection.roomUID != connection.uid
+	connection.roomMu.Unlock()
+	if visiting {
+		response.Err = pkgerr.NotOwner
+		return response
+	}
 
 	switch request.Cmd {
 	case CommandTill, CommandClear, CommandPlant, CommandWater,

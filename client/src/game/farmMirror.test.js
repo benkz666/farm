@@ -60,3 +60,29 @@ test('切换房间后丢弃旧房间在途 SyncFarm 快照', async () => {
   assert.equal(state.gold, 99)
   assert.equal(session.lastFarmSeq, 8)
 })
+
+test('同步期间到达的 Delta 在同步完成后依序应用', async () => {
+  const state = { plots: [{ state: 1 }] }
+  const session = { viewingOwnerUid: 42, lastFarmSeq: 3 }
+  let resolveSync
+  const mirror = createFarmMirror({
+    state,
+    session,
+    syncFarm: () => new Promise((resolve) => {
+      resolveSync = resolve
+    }),
+  })
+
+  const syncing = mirror.onDelta({ owner_uid: 42, farm_seq: 5, plots: [] })
+  const receivedDuringSync = mirror.onDelta({
+    owner_uid: 42,
+    farm_seq: 4,
+    plots: [{ index: 0, state: 2 }],
+  })
+  resolveSync({ payload: { farm_seq: 3, deltas: [] } })
+
+  await Promise.all([syncing, receivedDuringSync])
+
+  assert.equal(session.lastFarmSeq, 5)
+  assert.equal(state.plots[0].state, 'growing')
+})

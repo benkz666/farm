@@ -56,3 +56,24 @@ func TestRoomHubReplacesExistingConnectionSubscription(t *testing.T) {
 		t.Fatalf("deliveries = original:%d replacement:%d, want 0:1", original, replacement)
 	}
 }
+
+func TestRoomHubRevokesAllViewerSubscriptions(t *testing.T) {
+	hub := NewRoomHub()
+	var revoked, retained int
+	hub.SubscribeViewer(11, 1, 7, func(farm.FarmDelta) {
+		revoked++
+	})
+	hub.SubscribeViewer(11, 2, 7, func(farm.FarmDelta) {
+		revoked++
+	})
+	hub.SubscribeViewer(11, 3, 8, func(farm.FarmDelta) {
+		retained++
+	})
+
+	hub.RevokeViewer(11, 7)
+	hub.Broadcast(farm.FarmDelta{OwnerUID: 11, FarmSeq: 1})
+
+	if revoked != 0 || retained != 1 {
+		t.Fatalf("deliveries = revoked:%d retained:%d, want 0:1", revoked, retained)
+	}
+}

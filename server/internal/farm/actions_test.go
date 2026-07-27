@@ -321,6 +321,27 @@ func TestApplyPlotActionFertilizeRejectsSameStageWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestAdvanceAllVisibleChangeIncrementsFarmSeqAndReturnsPlotChange(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		SeasonDuration: 1_000,
+		MatureAt:       actionNow,
+		LastSettleAt:   actionNow - 1_000,
+		LastWaterAt:    actionNow - 1_000,
+	}
+
+	changes := agg.AdvanceAll(actionNow)
+
+	if agg.FarmSeq != 1 {
+		t.Fatalf("FarmSeq = %d, want 1", agg.FarmSeq)
+	}
+	if len(changes) != 1 || changes[0].Index != 0 || changes[0].State != StateMature {
+		t.Fatalf("changes = %#v, want mature plot 0", changes)
+	}
+}
+
 func TestApplyPlotActionHarvestMovesMultiSeasonCropToNextGrowingSeason(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Plots[0] = Plot{

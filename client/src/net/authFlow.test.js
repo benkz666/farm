@@ -93,3 +93,35 @@ test('已登录邀请落地复用 404 并返回响应', async () => {
   assert.deepEqual(response, { err: 0, payload: {} })
   assert.deepEqual(events, [['acceptInvite', 'invite-token']])
 })
+
+test('已是好友的邀请不阻断登录进入农场', async () => {
+  const events = []
+  const client = createClient(events)
+  client.acceptInvite = async (token) => {
+    events.push(['acceptInvite', token])
+    return { err: 1402, payload: {} }
+  }
+  const farm = {
+    enterOnlineFromNet() {
+      events.push(['enterOnlineFromNet'])
+    },
+  }
+
+  await authenticateAndEnter({
+    client,
+    mode: 'login',
+    username: 'alice',
+    password: 'secret12',
+    inviteToken: 'invite-token',
+    getFarmBridge: async () => farm,
+  })
+
+  assert.deepEqual(events.slice(0, 6), [
+    ['login', 'alice', 'secret12'],
+    ['connect'],
+    ['handshake'],
+    ['acceptInvite', 'invite-token'],
+    ['enterFarm', 0],
+    ['enterOnlineFromNet'],
+  ])
+})

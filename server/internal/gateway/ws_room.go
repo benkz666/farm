@@ -43,12 +43,22 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("gateway: actor aggregate is nil")
 		}
-		farmActor.Aggregate.AdvanceAll(g.Now())
+		changes := farmActor.Aggregate.AdvanceAll(g.Now())
 		enter = enterFarmResponse{
 			Snapshot:   farmActor.Aggregate.Snapshot(),
 			FarmSeq:    farmActor.Aggregate.FarmSeq,
 			ServerTime: g.Now(),
 			Relation:   relation,
+		}
+		g.enterRoom(connection, ownerUID)
+		if len(changes) > 0 {
+			delta := farm.FarmDelta{
+				OwnerUID: ownerUID,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    changes,
+			}
+			farmActor.Deltas.Append(delta)
+			g.rooms.BroadcastExcept(delta, connection.id)
 		}
 		return nil
 	}); err != nil {
@@ -56,7 +66,6 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		return response
 	}
 
-	g.enterRoom(connection, ownerUID)
 	response.Payload = marshalPayload(enter)
 	return response
 }
@@ -86,7 +95,12 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		}
 
 		sync.FarmSeq = farmActor.Aggregate.FarmSeq
-		if payload.FromSeq == ^uint64(0) || payload.FromSeq >= sync.FarmSeq {
+		if payload.FromSeq == sync.FarmSeq {
+			return nil
+		}
+		if payload.FromSeq > sync.FarmSeq {
+			snapshot := farmActor.Aggregate.Snapshot()
+			sync.Snapshot = &snapshot
 			return nil
 		}
 		deltas, ok := farmActor.Deltas.Since(payload.FromSeq + 1)
@@ -142,7 +156,7 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) {
 	if previousOwnerUID != 0 {
 		g.rooms.Unsubscribe(previousOwnerUID, connection.id)
 	}
-	g.rooms.Subscribe(ownerUID, connection.id, func(delta farm.FarmDelta) {
+	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta) {
 		connection.roomMu.Lock()
 		receiving := connection.roomUID == ownerUID
 		connection.roomMu.Unlock()

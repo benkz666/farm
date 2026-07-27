@@ -409,6 +409,68 @@ func TestEnterFarmAdvancesExpiredGrowingPlotBeforeSnapshot(t *testing.T) {
 	}
 }
 
+func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ownerUID  = uint64(42)
+		friendUID = uint64(7)
+	)
+	aggregate := farm.NewAggregate(ownerUID, "owner")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		SeasonDuration: 1_000,
+		MatureAt:       20_000,
+		LastSettleAt:   19_000,
+		LastWaterAt:    19_000,
+	}
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, friendUID)
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		ownerUID:  {Aggregate: aggregate},
+		friendUID: {Aggregate: farm.NewAggregate(friendUID, "friend")},
+	}}
+	gateway := New(
+		authStub{},
+		sessionMapStub{"owner-token": ownerUID, "friend-token": friendUID},
+		runtime,
+		WithFriendStore(friends),
+	)
+	now := int64(19_999)
+	gateway.SetClock(func() int64 { return now })
+	owner := openWebSocket(t, gateway.Handler())
+	friend := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, owner, "owner-token")
+	handshakeWebSocket(t, friend, "friend-token")
+
+	writeEnvelope(t, owner, Envelope{Cmd: CommandEnterFarm, ClientSeq: 2, Payload: json.RawMessage(`{"owner_uid":0}`)})
+	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
+		t.Fatalf("owner EnterFarm = %#v", got)
+	}
+	now = 20_000
+	writeEnvelope(t, friend, Envelope{Cmd: CommandEnterFarm, ClientSeq: 2, Payload: json.RawMessage(`{"owner_uid":42}`)})
+	enter := readEnvelope(t, friend)
+	var enterPayload enterFarmResponse
+	if err := json.Unmarshal(enter.Payload, &enterPayload); err != nil {
+		t.Fatalf("decode friend EnterFarm: %v", err)
+	}
+	if enter.Err != pkgerr.OK || enterPayload.FarmSeq != 1 {
+		t.Fatalf("friend EnterFarm = %#v, payload = %#v", enter, enterPayload)
+	}
+	delta := readEnvelope(t, owner)
+	var deltaPayload farm.FarmDelta
+	if err := json.Unmarshal(delta.Payload, &deltaPayload); err != nil {
+		t.Fatalf("decode FarmDelta: %v", err)
+	}
+	if delta.Cmd != CommandFarmDelta || deltaPayload.FarmSeq != 1 || len(deltaPayload.Plots) != 1 {
+		t.Fatalf("advance delta = %#v, payload = %#v", delta, deltaPayload)
+	}
+	if deltas, ok := runtime.actors[ownerUID].Deltas.Since(1); !ok || len(deltas) != 1 {
+		t.Fatalf("ring deltas = %#v, ok=%t, want one delta", deltas, ok)
+	}
+}
+
 func TestConnectionLimiterRejectsOverCapacity(t *testing.T) {
 	t.Parallel()
 
@@ -673,6 +735,57 @@ func TestPlotActionRejectsArgOutsideUint16(t *testing.T) {
 	}
 }
 
+func TestVisitorCannotWriteOwnFarmUsingZeroOwnerUID(t *testing.T) {
+	t.Parallel()
+
+	visitorUID := uint64(7)
+	aggregate := farm.NewAggregate(visitorUID, "visitor")
+	gateway := New(authStub{}, sessionStub{uid: visitorUID}, runtimeStub{aggregate: aggregate})
+	connection := &wsConnection{uid: visitorUID, roomUID: 42}
+
+	for _, command := range []uint32{CommandTill, CommandBuy} {
+		t.Run(fmt.Sprintf("cmd_%d", command), func(t *testing.T) {
+			payload := emptyPayload
+			if command == CommandTill {
+				payload = marshalPayload(plotActionRequest{OwnerUID: 0, PlotIndex: 0})
+			} else {
+				payload = marshalPayload(shopRequest{ItemID: 1, Quantity: 1})
+			}
+
+			response := gateway.handlePlotOrShop(connection, Envelope{Cmd: command, Payload: payload})
+			if response.Err != pkgerr.NotOwner {
+				t.Fatalf("response.Err = %d, want %d", response.Err, pkgerr.NotOwner)
+			}
+		})
+	}
+	if aggregate.Plots[0].State != farm.StateWasteland || aggregate.Coin != 1_000 {
+		t.Fatalf("visitor aggregate mutated: %#v", aggregate)
+	}
+}
+
+func TestSyncFarmAheadSequenceReturnsSnapshot(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "owner")
+	aggregate.FarmSeq = 3
+	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	response := gateway.handleSyncFarm(&wsConnection{uid: 42}, Envelope{
+		Cmd:     CommandSyncFarm,
+		Payload: marshalPayload(syncFarmRequest{OwnerUID: 0, FromSeq: 4}),
+	})
+
+	if response.Err != pkgerr.OK {
+		t.Fatalf("SyncFarm err = %d, want OK", response.Err)
+	}
+	var payload syncFarmResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode SyncFarm: %v", err)
+	}
+	if payload.Snapshot == nil || payload.FarmSeq != 3 || len(payload.Deltas) != 0 {
+		t.Fatalf("SyncFarm payload = %#v, want snapshot at seq 3", payload)
+	}
+}
+
 func TestFriendCommandsRejectSelfAndDuplicate(t *testing.T) {
 	t.Parallel()
 
@@ -812,6 +925,43 @@ func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
 	})
 	if add.Err != pkgerr.OK || !friends.has(selfUID, newFriendUID) {
 		t.Fatalf("AddFriendByUID response = %#v, friendship=%t", add, friends.has(selfUID, newFriendUID))
+	}
+}
+
+func TestRemoveFriendRevokesBothRoomDirections(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID = uint64(42)
+		peerUID = uint64(7)
+	)
+	friends := newFriendStoreStub()
+	friends.add(selfUID, peerUID)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friends),
+	)
+	var selfReceives, peerReceives int
+	gateway.rooms.SubscribeViewer(peerUID, 1, selfUID, func(farm.FarmDelta) {
+		selfReceives++
+	})
+	gateway.rooms.SubscribeViewer(selfUID, 2, peerUID, func(farm.FarmDelta) {
+		peerReceives++
+	})
+
+	response := gateway.handleFriendRequest(&wsConnection{uid: selfUID}, Envelope{
+		Cmd:     CommandRemoveFriend,
+		Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("RemoveFriend err = %d, want OK", response.Err)
+	}
+	gateway.rooms.Broadcast(farm.FarmDelta{OwnerUID: peerUID, FarmSeq: 1})
+	gateway.rooms.Broadcast(farm.FarmDelta{OwnerUID: selfUID, FarmSeq: 1})
+	if selfReceives != 0 || peerReceives != 0 {
+		t.Fatalf("room deliveries = self:%d peer:%d, want 0:0", selfReceives, peerReceives)
 	}
 }
 

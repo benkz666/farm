@@ -116,17 +116,39 @@ func advancePlot(p *Plot, now int64) {
 	Advance(p, now, AdvanceConfig{})
 }
 
-// AdvanceAll 将所有已种植地块惰性推进到 now，供 EnterFarm 等读路径生成最新快照。
-func (a *Aggregate) AdvanceAll(now int64) {
+// AdvanceAll 将所有已种植地块惰性推进到 now，并返回发生可见变化的地块。
+func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
 	if a == nil {
-		return
+		return nil
 	}
+	changes := make([]PlotChange, 0)
 	for i := range a.Plots {
 		p := &a.Plots[i]
 		if p.State == StateGrowing || p.State == StateMature {
+			before := PlotSnapshotOf(uint8(i), *p)
 			advancePlot(p, now)
+			after := PlotSnapshotOf(uint8(i), *p)
+			if before != after {
+				changes = append(changes, PlotChange{
+					Index:          after.Index,
+					State:          after.State,
+					CropID:         after.CropID,
+					SeasonIndex:    after.SeasonIndex,
+					SeasonTotal:    after.SeasonTotal,
+					MatureAt:       after.MatureAt,
+					SeasonDuration: after.SeasonDuration,
+					FinalYield:     after.FinalYield,
+					LastWaterAt:    after.LastWaterAt,
+					WeedSince:      after.WeedSince,
+					PestSince:      after.PestSince,
+				})
+			}
 		}
 	}
+	if len(changes) > 0 {
+		a.FarmSeq++
+	}
+	return changes
 }
 
 func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {

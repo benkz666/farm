@@ -42,5 +42,7 @@ export async function authenticateAndEnter({
 }
 
 export async function acceptInviteForSession(client, token) {
-  return requireOK(await client.acceptInvite(token))
+  const response = await client.acceptInvite(token)
+  if (response?.err === 1402) return response
+  return requireOK(response)
 }
