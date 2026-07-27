@@ -8,6 +8,9 @@ import (
 	"farm/server/internal/farm"
 )
 
+// MaxFarmPlotBlobBytes matches migrations/007_farm_plot_blob.sql.
+const MaxFarmPlotBlobBytes = 512
+
 // EncodePlot 与 DecodePlot 是 farm_plot.blob 列的唯一编解码入口（规格 5.2 节：
 // 「在 store 包内单一函数编解码，禁止两处各写一套互不兼容的格式」）。
 //
@@ -42,6 +45,9 @@ func EncodePlot(p farm.Plot) ([]byte, error) {
 		if err := binary.Write(buf, binary.LittleEndian, uid); err != nil {
 			return nil, fmt.Errorf("store: encode plot stealer uid: %w", err)
 		}
+	}
+	if buf.Len() > MaxFarmPlotBlobBytes {
+		return nil, fmt.Errorf("store: encode plot exceeds %d bytes", MaxFarmPlotBlobBytes)
 	}
 
 	return buf.Bytes(), nil

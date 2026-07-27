@@ -151,7 +151,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			g.writeStealHint(connection.uid, stealable)
 		}
 		if result.Err == pkgerr.OK {
-			g.advanceGameplayTask(connection.uid, kind)
+			if err := g.advanceGameplayTask(connection.uid, kind); err != nil {
+				response.Err = pkgerr.Internal
+			}
 		}
 		return response
 
@@ -242,10 +244,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 	}
 }
 
-func (g *Gateway) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) {
-	if g.taskMail == nil {
-		return
-	}
+func (g *Gateway) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) error {
 	var taskID uint32
 	switch kind {
 	case farm.Plant:
@@ -253,10 +252,21 @@ func (g *Gateway) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) {
 	case farm.Harvest:
 		taskID = store.TaskHarvestID
 	default:
-		return
+		return nil
+	}
+	return g.advanceTask(uid, taskID)
+}
+
+func (g *Gateway) advanceVisitTask(uid uint64) error {
+	return g.advanceTask(uid, store.TaskVisitID)
+}
+
+func (g *Gateway) advanceTask(uid uint64, taskID uint32) error {
+	if g.taskMail == nil {
+		return nil
 	}
 	logicDay := g.Now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
-	_ = g.taskMail.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
+	return g.taskMail.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

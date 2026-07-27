@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"farm/server/internal/farm"
@@ -165,11 +166,68 @@ func TestSuccessfulPlantAdvancesDailyTaskProgress(t *testing.T) {
 	}
 }
 
+func TestFriendEnterAdvancesDailyVisitTask(t *testing.T) {
+	const (
+		ownerUID   = uint64(42)
+		visitorUID = uint64(7)
+	)
+	storage := newTaskMailStoreStub()
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, visitorUID)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: visitorUID},
+		runtimeStub{aggregate: farm.NewAggregate(ownerUID, "owner")},
+		WithFriendStore(friends),
+		WithTaskMailStore(storage),
+	)
+	gateway.SetClock(func() int64 {
+		return 7 * gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+	})
+
+	response := gateway.handleWSRequest(&wsConnection{uid: visitorUID, authed: true}, Envelope{
+		Cmd:     CommandEnterFarm,
+		Payload: marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+	})
+
+	if response.Err != pkgerr.OK {
+		t.Fatalf("EnterFarm err = %d, want OK", response.Err)
+	}
+	want := taskProgressCall{uid: visitorUID, logicDay: 7, taskID: store.TaskVisitID, amount: 1}
+	if len(storage.progressCalls) != 1 || storage.progressCalls[0] != want {
+		t.Fatalf("progress calls = %#v, want %#v", storage.progressCalls, want)
+	}
+}
+
+func TestSuccessfulPlantReportsTaskProgressFailure(t *testing.T) {
+	storage := newTaskMailStoreStub()
+	storage.advanceErr = errors.New("task storage unavailable")
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0].State = farm.StateTilled
+	aggregate.Items[farm.SeedItem(1)] = 1
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+		WithTaskMailStore(storage),
+	)
+
+	response := gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
+		Cmd:     CommandPlant,
+		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
+	})
+
+	if response.Err != pkgerr.Internal {
+		t.Fatalf("Plant err = %d, want %d when task progress fails", response.Err, pkgerr.Internal)
+	}
+}
+
 type taskMailStoreStub struct {
 	daily         map[int64]bool
 	mails         map[uint64]store.Mail
 	tasks         map[uint32]bool
 	progressCalls []taskProgressCall
+	advanceErr    error
 	next          uint64
 }
 
@@ -240,7 +298,7 @@ func (s *taskMailStoreStub) AdvanceTask(_ context.Context, uid uint64, logicDay 
 	s.progressCalls = append(s.progressCalls, taskProgressCall{
 		uid: uid, logicDay: logicDay, taskID: taskID, amount: amount,
 	})
-	return nil
+	return s.advanceErr
 }
 
 func (s *taskMailStoreStub) addMail(title string, coin int64) store.Mail {

@@ -85,6 +85,11 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			ServerTime: remote.ServerTime,
 			Relation:   relation,
 		})
+		if relation == "FRIEND" {
+			if err := g.advanceVisitTask(connection.uid); err != nil {
+				response.Err = pkgerr.Internal
+			}
+		}
 		return response
 	}
 
@@ -140,6 +145,11 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	}
 
 	response.Payload = marshalPayload(enter)
+	if relation == "FRIEND" {
+		if err := g.advanceVisitTask(connection.uid); err != nil {
+			response.Err = pkgerr.Internal
+		}
+	}
 	return response
 }
 

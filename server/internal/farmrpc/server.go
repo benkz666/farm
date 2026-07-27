@@ -426,7 +426,9 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
 	if result.Err == pkgerr.OK {
-		h.advanceGameplayTask(command.FarmUID, request.Kind)
+		if err := h.advanceGameplayTask(command.FarmUID, request.Kind); err != nil {
+			return CommandResponse{Err: pkgerr.Internal}
+		}
 	}
 	return CommandResponse{Err: result.Err, Payload: marshalPayload(response)}
 }
@@ -622,9 +624,9 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(mail)}
 }
 
-func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) {
+func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) error {
 	if h.taskProgress == nil {
-		return
+		return nil
 	}
 	var taskID uint32
 	switch kind {
@@ -633,10 +635,10 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) {
 	case farm.Harvest:
 		taskID = store.TaskHarvestID
 	default:
-		return
+		return nil
 	}
 	logicDay := h.now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
-	_ = h.taskProgress.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
+	return h.taskProgress.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
 }
 
 func (h *Handler) publishPlayerDelta(uid uint64, delta farm.PlayerDelta) {

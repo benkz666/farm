@@ -66,15 +66,24 @@ func TestEncodeDecodePlot_NonZeroFields(t *testing.T) {
 		WeedSince:       1_700_020_000_000,
 		PestSince:       0,
 		AccruedWeighted: 42,
-		Stealers:        []uint64{7, 42, 1<<40 | 100},
+		Stealers: func() []uint64 {
+			stealers := make([]uint64, 24)
+			for i := range stealers {
+				stealers[i] = uint64(1<<40) + uint64(i)
+			}
+			return stealers
+		}(),
 	}
 
 	blob, err := store.EncodePlot(want)
 	if err != nil {
 		t.Fatalf("encode error: %v", err)
 	}
-	if len(blob) > 256 {
-		t.Fatalf("blob exceeds farm_plot.blob VARBINARY(256) capacity: %d bytes", len(blob))
+	if len(blob) <= 256 {
+		t.Fatalf("blob = %d bytes, want a payload that exceeds the legacy 256-byte column", len(blob))
+	}
+	if len(blob) > store.MaxFarmPlotBlobBytes {
+		t.Fatalf("blob exceeds farm_plot.blob capacity: %d bytes", len(blob))
 	}
 
 	got, err := store.DecodePlot(blob)
