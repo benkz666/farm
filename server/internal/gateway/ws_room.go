@@ -42,23 +42,31 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	}
 
 	if g.farmRPC != nil {
+		// Subscribe before the Farm executes so a concurrent callback is held
+		// until the EnterFarm snapshot response has reached this client.
+		if err := g.enterRoom(connection, ownerUID); err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
 			Operation: farmrpc.OperationEnterFarm,
 		})
 		if err != nil {
+			g.leaveFarm(connection)
 			response.Err = pkgerr.Internal
 			return response
 		}
 		if result.Err != pkgerr.OK {
+			g.leaveFarm(connection)
 			response.Err = result.Err
 			return response
 		}
 		var remote farmrpc.EnterFarmResponse
 		if err := unmarshalPayload(result.Payload, &remote); err != nil {
+			g.leaveFarm(connection)
 			response.Err = pkgerr.Internal
 			return response
 		}
-		g.enterRoom(connection, ownerUID)
 		if relation == "FRIEND" {
 			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
 			if err != nil || !stillFriends {
@@ -91,7 +99,9 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			ServerTime: g.Now(),
 			Relation:   relation,
 		}
-		g.enterRoom(connection, ownerUID)
+		if err := g.enterRoom(connection, ownerUID); err != nil {
+			return err
+		}
 		if relation == "FRIEND" {
 			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
 			if err != nil || !stillFriends {
@@ -196,9 +206,14 @@ func (g *Gateway) farmAccess(viewerUID, requestedOwnerUID uint64) (ownerUID uint
 	return ownerUID, "FRIEND", pkgerr.OK
 }
 
-func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) {
+func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 	if connection == nil || connection.id == 0 || g.rooms == nil {
-		return
+		return nil
+	}
+	if g.connRegistry != nil {
+		if err := g.connRegistry.Subscribe(context.Background(), ownerUID, connection.id, g.gatewayID); err != nil {
+			return err
+		}
 	}
 
 	connection.writeMu.Lock()
@@ -210,14 +225,18 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) {
 	connection.roomMu.Unlock()
 	connection.writeMu.Unlock()
 	if previousOwnerUID == ownerUID {
-		return
+		return nil
 	}
 	if previousOwnerUID != 0 {
 		g.rooms.Unsubscribe(previousOwnerUID, connection.id)
+		if g.connRegistry != nil {
+			_ = g.connRegistry.Unsubscribe(context.Background(), previousOwnerUID, connection.id)
+		}
 	}
 	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta) {
 		connection.pushFarmDelta(ownerUID, delta)
 	})
+	return nil
 }
 
 func (g *Gateway) leaveFarm(connection *wsConnection) {
@@ -238,5 +257,8 @@ func (g *Gateway) leaveFarm(connection *wsConnection) {
 	}
 	if ownerUID != 0 {
 		g.rooms.Unsubscribe(ownerUID, connection.id)
+		if g.connRegistry != nil {
+			_ = g.connRegistry.Unsubscribe(context.Background(), ownerUID, connection.id)
+		}
 	}
 }

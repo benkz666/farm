@@ -97,7 +97,12 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		id:      g.nextConnID.Add(1),
 		limiter: newConnectionLimiter(),
 	}
-	defer g.leaveFarm(&connection)
+	defer func() {
+		g.leaveFarm(&connection)
+		if connection.authed {
+			g.unregisterConnection(context.Background(), &connection)
+		}
+	}()
 	for {
 		if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
 			return
@@ -185,6 +190,11 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			return response
 		}
 		connection.uid = uid
+		if err := g.registerConnection(context.Background(), connection); err != nil {
+			connection.uid = 0
+			response.Err = pkgerr.Internal
+			return response
+		}
 		connection.authed = true
 		response.Payload = marshalPayload(handshakeResponse{UID: uid})
 		return response

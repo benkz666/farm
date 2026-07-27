@@ -2,6 +2,7 @@ package farmrpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -86,8 +87,53 @@ func TestHTTPClientSendsTokenAndDecodesFarmResponse(t *testing.T) {
 	}
 }
 
+func TestHandlerPublishesDeltaAfterRoutedTill(t *testing.T) {
+	runtime := runtimeStub{actor: &actor.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
+	publisher := &deltaPublisherStub{}
+	handler := NewHandler(
+		runtime,
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithDeltaPublisher(publisher),
+	)
+	body, err := json.Marshal(CommandRequest{
+		Operation: OperationTill,
+		FarmUID:   42,
+		Payload:   json.RawMessage(`{"plot_index":0,"arg":0}`),
+	})
+	if err != nil {
+		t.Fatalf("marshal command: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/cmd", bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer internal-token")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if len(publisher.deltas) != 1 {
+		t.Fatalf("published Delta count = %d, want 1", len(publisher.deltas))
+	}
+	delta := publisher.deltas[0]
+	if delta.OwnerUID != 42 || delta.FarmSeq != 1 || len(delta.Plots) != 1 {
+		t.Fatalf("published Delta = %#v", delta)
+	}
+}
+
 type runtimeStub struct {
 	actor *actor.FarmActor
+}
+
+type deltaPublisherStub struct {
+	deltas []farm.FarmDelta
+}
+
+func (p *deltaPublisherStub) Publish(_ context.Context, delta farm.FarmDelta) error {
+	p.deltas = append(p.deltas, delta)
+	return nil
 }
 
 func (s runtimeStub) Do(_ uint64, fn func(*actor.FarmActor) error) error {

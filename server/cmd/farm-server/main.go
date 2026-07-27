@@ -39,6 +39,7 @@ type config struct {
 	routeTable    string
 	internalToken string
 	farmURLs      map[string]string
+	gatewayURLs   map[string]string
 }
 
 func main() {
@@ -101,7 +102,10 @@ func run() error {
 		handler = farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uid uint64) bool {
 			farmID, err := routes.FarmID(uid)
 			return err == nil && farmID == config.instanceID
-		}, nil)
+		}, nil, farmrpc.WithDeltaPublisher(farmrpc.NewFanoutPublisher(
+			storage.ConnectionRegistry(),
+			farmrpc.NewHTTPDeltaPusher(config.gatewayURLs, config.internalToken),
+		)))
 	default:
 		return fmt.Errorf("unsupported FARM_ROLE %q", config.role)
 	}
@@ -140,6 +144,8 @@ func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime
 	baseOptions := []gateway.Option{
 		gateway.WithFriendStore(storage),
 		gateway.WithInviteSecret([]byte(config.inviteSecret)),
+		gateway.WithConnectionRegistry(storage.ConnectionRegistry(), config.instanceID),
+		gateway.WithInternalPushToken(config.internalToken),
 	}
 	return gateway.New(auth.New(storage, storage), storage, runtime, append(baseOptions, options...)...)
 }
@@ -168,9 +174,18 @@ func loadRouteTable(path string) (*routing.RouteTable, error) {
 
 func loadConfig() (config, error) {
 	tokenSecret := getenv("FARM_TOKEN_SECRET", "dev-only-change-me")
+	role := strings.ToLower(getenv("FARM_ROLE", roleAll))
 	farmURLs, err := parseFarmURLs(os.Getenv("FARM_FARM_URLS"))
 	if err != nil {
 		return config{}, err
+	}
+	gatewayURLs, err := parseFarmURLs(os.Getenv("FARM_GATEWAY_URLS"))
+	if err != nil {
+		return config{}, fmt.Errorf("parse FARM_GATEWAY_URLS: %w", err)
+	}
+	defaultInstanceID := "farm-0"
+	if role == roleGateway {
+		defaultInstanceID = "gateway-0"
 	}
 	cfg := config{
 		httpAddr:      getenv("FARM_HTTP_ADDR", ":9002"),
@@ -178,11 +193,12 @@ func loadConfig() (config, error) {
 		redisAddr:     getenv("FARM_REDIS_ADDR", "127.0.0.1:6379"),
 		tokenSecret:   tokenSecret,
 		inviteSecret:  getenv("FARM_INVITE_SECRET", tokenSecret),
-		role:          strings.ToLower(getenv("FARM_ROLE", roleAll)),
-		instanceID:    getenv("FARM_INSTANCE_ID", "farm-0"),
+		role:          role,
+		instanceID:    getenv("FARM_INSTANCE_ID", defaultInstanceID),
 		routeTable:    getenv("FARM_ROUTE_TABLE", "deploy/route-table.example.json"),
 		internalToken: strings.TrimSpace(os.Getenv("FARM_INTERNAL_TOKEN")),
 		farmURLs:      farmURLs,
+		gatewayURLs:   gatewayURLs,
 	}
 	switch cfg.role {
 	case roleAll:
@@ -192,8 +208,8 @@ func loadConfig() (config, error) {
 			return config{}, errors.New("FARM_ROLE=gateway requires FARM_INTERNAL_TOKEN and FARM_FARM_URLS")
 		}
 	case roleFarm:
-		if cfg.internalToken == "" || cfg.instanceID == "" {
-			return config{}, errors.New("FARM_ROLE=farm requires FARM_INTERNAL_TOKEN and FARM_INSTANCE_ID")
+		if cfg.internalToken == "" || cfg.instanceID == "" || len(cfg.gatewayURLs) == 0 {
+			return config{}, errors.New("FARM_ROLE=farm requires FARM_INTERNAL_TOKEN, FARM_INSTANCE_ID, and FARM_GATEWAY_URLS")
 		}
 	default:
 		return config{}, fmt.Errorf("unsupported FARM_ROLE %q (want all, gateway, or farm)", cfg.role)

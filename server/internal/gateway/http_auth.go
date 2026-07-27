@@ -2,15 +2,18 @@ package gateway
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/connreg"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/routing"
@@ -41,6 +44,10 @@ type Gateway struct {
 	offsetMs     atomic.Int64
 	rooms        *RoomHub
 	nextConnID   atomic.Uint64
+	connRegistry *connreg.Registry
+	gatewayID    string
+	connections  sync.Map
+	pushToken    []byte
 	allowDebug   bool
 }
 
@@ -69,6 +76,23 @@ func WithFarmRPC(client farmrpc.Client, routes *routing.RouteTable) Option {
 	return func(gateway *Gateway) {
 		gateway.farmRPC = client
 		gateway.routes = routes
+	}
+}
+
+// WithConnectionRegistry enables distributed WebSocket registration for this
+// Gateway instance. gatewayID must match the ID used by Farm push routing.
+func WithConnectionRegistry(registry *connreg.Registry, gatewayID string) Option {
+	return func(gateway *Gateway) {
+		gateway.connRegistry = registry
+		gateway.gatewayID = strings.TrimSpace(gatewayID)
+	}
+}
+
+// WithInternalPushToken configures authentication for Farm-to-Gateway Delta
+// callbacks. An empty token keeps the push endpoint disabled.
+func WithInternalPushToken(token string) Option {
+	return func(gateway *Gateway) {
+		gateway.pushToken = []byte(strings.TrimSpace(token))
 	}
 }
 
@@ -115,6 +139,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/api/login", g.login)
 	mux.HandleFunc("/i/", g.inviteLanding)
 	mux.HandleFunc("/ws", g.serveWS)
+	mux.HandleFunc("/internal/v1/push/farm-delta", g.receiveFarmDelta)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 	}
@@ -131,6 +156,67 @@ func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrp
 	}
 	command.FarmUID = uid
 	return g.farmRPC.Execute(ctx, farmID, command)
+}
+
+func (g *Gateway) registerConnection(ctx context.Context, connection *wsConnection) error {
+	if connection == nil || connection.id == 0 || connection.uid == 0 {
+		return errors.New("gateway: invalid websocket connection")
+	}
+	if g.connRegistry == nil {
+		return nil
+	}
+	if g.gatewayID == "" {
+		return errors.New("gateway: connection registry requires a gateway ID")
+	}
+	g.connections.Store(connection.id, connection)
+	if err := g.connRegistry.Register(ctx, connection.uid, connection.id, g.gatewayID); err != nil {
+		g.connections.Delete(connection.id)
+		return err
+	}
+	return nil
+}
+
+func (g *Gateway) unregisterConnection(ctx context.Context, connection *wsConnection) {
+	if connection == nil || connection.id == 0 {
+		return
+	}
+	g.connections.Delete(connection.id)
+	if g.connRegistry != nil && connection.uid != 0 {
+		_ = g.connRegistry.Unregister(ctx, connection.uid, connection.id)
+	}
+}
+
+func (g *Gateway) receiveFarmDelta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !g.authorizedPush(r.Header.Get("Authorization")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var request farmrpc.DeltaPushRequest
+	if err := decodeJSON(io.LimitReader(r.Body, 64<<10), &request); err != nil ||
+		request.ConnectionID == 0 || request.Delta.OwnerUID == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	connection, ok := g.connections.Load(request.ConnectionID)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	connection.(*wsConnection).pushFarmDelta(request.Delta.OwnerUID, request.Delta)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) authorizedPush(header string) bool {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(header, prefix) || len(g.pushToken) == 0 {
+		return false
+	}
+	value := []byte(strings.TrimSpace(strings.TrimPrefix(header, prefix)))
+	return len(value) == len(g.pushToken) && subtle.ConstantTimeCompare(value, g.pushToken) == 1
 }
 
 type debugAdvanceRequest struct {

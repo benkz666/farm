@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,12 +10,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
@@ -128,6 +131,125 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	})
 	if got := readEnvelope(t, conn); got.Err != pkgerr.NotFriend {
 		t.Fatalf("foreign EnterFarm error = %d, want %d", got.Err, pkgerr.NotFriend)
+	}
+}
+
+func TestWebSocketRegistersAndUnregistersConnection(t *testing.T) {
+	t.Parallel()
+
+	backend := newConnectionRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithConnectionRegistry(registry, "gateway-0"),
+	)
+	connection := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, connection, "token-42")
+
+	refs, err := registry.Lookup(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Lookup after handshake: %v", err)
+	}
+	if len(refs) != 1 || refs[0].GatewayID != "gateway-0" {
+		t.Fatalf("Lookup after handshake = %#v", refs)
+	}
+
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close websocket: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		refs, err = registry.Lookup(context.Background(), 42)
+		if err != nil {
+			t.Fatalf("Lookup after close: %v", err)
+		}
+		if len(refs) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Lookup after close = %#v, want empty", refs)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestGatewayPushEndpointDeliversDeltaToRemoteRoomSubscriber(t *testing.T) {
+	t.Parallel()
+
+	const (
+		ownerUID    = uint64(42)
+		viewerUID   = uint64(7)
+		viewerToken = "viewer-token"
+		pushToken   = "push-token"
+	)
+	backend := newConnectionRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, viewerUID)
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		ownerUID: {Aggregate: farm.NewAggregate(ownerUID, "owner")},
+	}}
+	gateway := New(
+		authStub{},
+		sessionMapStub{viewerToken: viewerUID},
+		runtime,
+		WithFriendStore(friends),
+		WithConnectionRegistry(registry, "gateway-1"),
+		WithInternalPushToken(pushToken),
+	)
+	server := httptest.NewServer(gateway.Handler())
+	t.Cleanup(server.Close)
+	viewer := openWebSocketAt(t, server.URL)
+	handshakeWebSocket(t, viewer, viewerToken)
+	writeEnvelope(t, viewer, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":42}`),
+	})
+	if got := readEnvelope(t, viewer); got.Err != pkgerr.OK {
+		t.Fatalf("EnterFarm = %#v", got)
+	}
+
+	refs, err := registry.LookupSubscribers(context.Background(), ownerUID)
+	if err != nil {
+		t.Fatalf("LookupSubscribers: %v", err)
+	}
+	if len(refs) != 1 || refs[0].GatewayID != "gateway-1" {
+		t.Fatalf("LookupSubscribers = %#v", refs)
+	}
+	body, err := json.Marshal(farmrpc.DeltaPushRequest{
+		ConnectionID: refs[0].ConnID,
+		Delta:        farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: 3},
+	})
+	if err != nil {
+		t.Fatalf("marshal push request: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/internal/v1/push/farm-delta", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("new push request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+pushToken)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("push request: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("push status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+
+	delta := readEnvelope(t, viewer)
+	if delta.Cmd != CommandFarmDelta || delta.ClientSeq != 0 || delta.Err != pkgerr.OK {
+		t.Fatalf("pushed Delta envelope = %#v", delta)
+	}
+	var payload farm.FarmDelta
+	if err := json.Unmarshal(delta.Payload, &payload); err != nil {
+		t.Fatalf("decode pushed Delta: %v", err)
+	}
+	if payload.OwnerUID != ownerUID || payload.FarmSeq != 3 {
+		t.Fatalf("pushed Delta = %#v", payload)
 	}
 }
 
@@ -1244,7 +1366,13 @@ func openWebSocket(t *testing.T, handler http.Handler) *websocket.Conn {
 
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	endpoint, err := url.Parse(server.URL)
+	return openWebSocketAt(t, server.URL)
+}
+
+func openWebSocketAt(t *testing.T, serverURL string) *websocket.Conn {
+	t.Helper()
+
+	endpoint, err := url.Parse(serverURL)
 	if err != nil {
 		t.Fatalf("parse server URL: %v", err)
 	}
@@ -1294,6 +1422,42 @@ func handshakeWebSocket(t *testing.T, conn *websocket.Conn, token string) {
 	if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
 		t.Fatalf("handshake = %#v", got)
 	}
+}
+
+type connectionRegistryBackend struct {
+	mu     sync.Mutex
+	hashes map[string]map[string]string
+}
+
+func newConnectionRegistryBackend() *connectionRegistryBackend {
+	return &connectionRegistryBackend{hashes: make(map[string]map[string]string)}
+}
+
+func (b *connectionRegistryBackend) Set(_ context.Context, key, field, value string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.hashes[key] == nil {
+		b.hashes[key] = make(map[string]string)
+	}
+	b.hashes[key][field] = value
+	return nil
+}
+
+func (b *connectionRegistryBackend) Delete(_ context.Context, key, field string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.hashes[key], field)
+	return nil
+}
+
+func (b *connectionRegistryBackend) Values(_ context.Context, key string) (map[string]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	values := make(map[string]string, len(b.hashes[key]))
+	for field, value := range b.hashes[key] {
+		values[field] = value
+	}
+	return values, nil
 }
 
 type authStub struct {

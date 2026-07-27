@@ -3,6 +3,7 @@ package farmrpc
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -68,27 +69,44 @@ type Runtime interface {
 
 // Handler serves authenticated Farm commands for a single physical Farm.
 type Handler struct {
-	runtime Runtime
-	token   []byte
-	owns    func(uint64) bool
-	now     func() int64
+	runtime        Runtime
+	token          []byte
+	owns           func(uint64) bool
+	now            func() int64
+	deltaPublisher DeltaPublisher
+}
+
+// Option configures optional Farm RPC behavior.
+type Option func(*Handler)
+
+// WithDeltaPublisher emits FarmDelta callbacks after authoritative mutations.
+func WithDeltaPublisher(publisher DeltaPublisher) Option {
+	return func(handler *Handler) {
+		handler.deltaPublisher = publisher
+	}
 }
 
 // NewHandler creates the /internal/v1/cmd handler. owns must only return true
 // for uids assigned to this Farm instance by the loaded route table.
-func NewHandler(runtime Runtime, token []byte, owns func(uint64) bool, now func() int64) *Handler {
+func NewHandler(runtime Runtime, token []byte, owns func(uint64) bool, now func() int64, options ...Option) *Handler {
 	if now == nil {
 		now = func() int64 { return time.Now().UnixMilli() }
 	}
 	if owns == nil {
 		owns = func(uint64) bool { return false }
 	}
-	return &Handler{
+	handler := &Handler{
 		runtime: runtime,
 		token:   append([]byte(nil), token...),
 		owns:    owns,
 		now:     now,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
+	return handler
 }
 
 // ServeHTTP accepts only HTTP JSON POST requests from trusted Gateways.
@@ -142,20 +160,31 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 
 func (h *Handler) enterFarm(uid uint64) CommandResponse {
 	var response EnterFarmResponse
+	var delta *farm.FarmDelta
 	if err := h.runtime.Do(uid, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		farmActor.Aggregate.AdvanceAll(h.now())
+		changes := farmActor.Aggregate.AdvanceAll(h.now())
 		response = EnterFarmResponse{
 			Snapshot:   farmActor.Aggregate.Snapshot(),
 			FarmSeq:    farmActor.Aggregate.FarmSeq,
 			ServerTime: h.now(),
 		}
+		if len(changes) > 0 {
+			emitted := farm.FarmDelta{
+				OwnerUID: uid,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    changes,
+			}
+			farmActor.Deltas.Append(emitted)
+			delta = &emitted
+		}
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
 	}
+	h.publishDelta(delta)
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
@@ -169,6 +198,7 @@ func (h *Handler) till(command CommandRequest) CommandResponse {
 
 	var result farm.ActionResult
 	var response ActionResponse
+	var delta *farm.FarmDelta
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
@@ -183,6 +213,13 @@ func (h *Handler) till(command CommandRequest) CommandResponse {
 				FarmSeq: farmActor.Aggregate.FarmSeq,
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
 			}
+			emitted := farm.FarmDelta{
+				OwnerUID: command.FarmUID,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    []farm.PlotChange{plotChange(uint8(request.PlotIndex), farmActor.Aggregate.Plots[request.PlotIndex])},
+			}
+			farmActor.Deltas.Append(emitted)
+			delta = &emitted
 		}
 		return nil
 	}); err != nil {
@@ -191,7 +228,33 @@ func (h *Handler) till(command CommandRequest) CommandResponse {
 	if result.Err != pkgerr.OK {
 		return CommandResponse{Err: result.Err}
 	}
+	h.publishDelta(delta)
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
+}
+
+func (h *Handler) publishDelta(delta *farm.FarmDelta) {
+	if delta == nil || h.deltaPublisher == nil {
+		return
+	}
+	// Delta delivery is best effort; SyncFarm recovers a missed callback.
+	_ = h.deltaPublisher.Publish(context.Background(), *delta)
+}
+
+func plotChange(index uint8, plot farm.Plot) farm.PlotChange {
+	snapshot := farm.PlotSnapshotOf(index, plot)
+	return farm.PlotChange{
+		Index:          snapshot.Index,
+		State:          snapshot.State,
+		CropID:         snapshot.CropID,
+		SeasonIndex:    snapshot.SeasonIndex,
+		SeasonTotal:    snapshot.SeasonTotal,
+		MatureAt:       snapshot.MatureAt,
+		SeasonDuration: snapshot.SeasonDuration,
+		FinalYield:     snapshot.FinalYield,
+		LastWaterAt:    snapshot.LastWaterAt,
+		WeedSince:      snapshot.WeedSince,
+		PestSince:      snapshot.PestSince,
+	}
 }
 
 func decodeJSON(reader io.Reader, target any) error {
