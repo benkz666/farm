@@ -14,6 +14,7 @@ type StealAction struct {
 	VisitorUID uint64
 	PlotIndex  uint8
 	Roll       uint16
+	Intercept  bool
 }
 
 // StealResult reports the fruit transferred from an owner's mature plot.
@@ -68,8 +69,18 @@ func (a *Aggregate) ApplySteal(action StealAction, now int64) StealResult {
 		amount = remaining
 	}
 
-	work.StolenCount += uint16(amount)
 	work.Stealers = append(work.Stealers, uint32(action.VisitorUID))
+	if action.Intercept {
+		a.Plots[action.PlotIndex] = work
+		a.FarmSeq++
+		return StealResult{
+			Err:    pkgerr.StealIntercepted,
+			CropID: work.CropID,
+			Patch:  a.patchOf(action.PlotIndex),
+		}
+	}
+
+	work.StolenCount += uint16(amount)
 	a.Plots[action.PlotIndex] = work
 	a.FarmSeq++
 

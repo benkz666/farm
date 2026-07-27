@@ -929,6 +929,74 @@ func TestWebSocketTillSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestPetCommandsActivateFeedAndReportStatus(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "owner")
+	aggregate.Coin = 3_000
+	if result := aggregate.Buy(farm.BuyReq{ItemID: farm.DogMuttShopItemID, Quantity: 1}); result.Err != pkgerr.OK {
+		t.Fatalf("Buy dog = %d", result.Err)
+	}
+	aggregate.Items[farm.DogFoodItem()] = 4
+	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	gateway.SetClock(func() int64 { return 1_000 })
+	connection := &wsConnection{uid: 42, authed: true}
+
+	activate := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandPetActivate,
+		Payload: json.RawMessage(`{"dog_type":1}`),
+	})
+	if activate.Err != pkgerr.OK {
+		t.Fatalf("PetActivate = %#v", activate)
+	}
+	feed := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandPetFeed,
+		Payload: json.RawMessage(`{"grams":4}`),
+	})
+	if feed.Err != pkgerr.OK {
+		t.Fatalf("PetFeed = %#v", feed)
+	}
+	status := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandPetStatus,
+		Payload: emptyPayload,
+	})
+	var got farm.PetStatus
+	if err := json.Unmarshal(status.Payload, &got); err != nil {
+		t.Fatalf("decode PetStatus: %v", err)
+	}
+	if status.Err != pkgerr.OK || got.ActiveDog != farm.DogMutt || got.BowlGrams != 4 {
+		t.Fatalf("PetStatus = %#v, payload=%#v", status, got)
+	}
+}
+
+func TestVisitorStealRejectsInsufficientCompensationBeforePublishing(t *testing.T) {
+	eventBus := bus.NewMemoryBus()
+	t.Cleanup(func() { _ = eventBus.Close() })
+
+	friends := newFriendStoreStub()
+	friends.add(7, 42)
+	visitor := farm.NewAggregate(7, "visitor")
+	visitor.Coin = 169 // 白萝卜赔付为 17 × 10。
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		7: {Aggregate: visitor},
+	}}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 7},
+		runtime,
+		WithFriendStore(friends),
+		WithCrossEventBus(eventBus),
+	)
+	response := gateway.handleWSRequest(&wsConnection{uid: 7, authed: true, roomUID: 42}, Envelope{
+		Cmd:     CommandSteal,
+		Payload: json.RawMessage(`{"owner_uid":42,"plot_index":0,"crop_id":1}`),
+	})
+	if response.Err != pkgerr.StealNoAfford {
+		t.Fatalf("Steal = %#v, want %d", response, pkgerr.StealNoAfford)
+	}
+	if visitor.Coin != 169 {
+		t.Fatalf("visitor coin mutated after failed freeze: %d", visitor.Coin)
+	}
+}
+
 func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
 	routes, err := routing.ParseRouteTable([]byte(`{
 		"logical_shards": 1024,

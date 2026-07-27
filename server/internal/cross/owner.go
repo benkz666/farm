@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/rand/v2"
 	"strconv"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/bus"
 	"farm/server/internal/farm"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
 
@@ -53,6 +55,9 @@ type Owner struct {
 	deltas  DeltaPublisher
 	owns    func(uint64) bool
 
+	stealRoll     func() uint16
+	interceptRoll func() uint8
+
 	mu      sync.Mutex
 	results map[uint64]*ownerResultCache
 }
@@ -78,6 +83,12 @@ func NewOwner(runtime Runtime, friends FriendChecker, eventBus bus.EventBus, now
 		now:     now,
 		deltas:  deltas,
 		owns:    owns,
+		stealRoll: func() uint16 {
+			return uint16(rand.IntN(10) + 1)
+		},
+		interceptRoll: func() uint8 {
+			return uint8(rand.IntN(100))
+		},
 		results: make(map[uint64]*ownerResultCache),
 	}
 }
@@ -127,9 +138,13 @@ func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta) {
 	if action.ReqID == 0 || action.VisitorUID == 0 || action.OwnerUID == 0 || action.VisitorUID == action.OwnerUID {
 		return result, nil
 	}
-	kind, ok := ownerPlotActionKind(action.Kind)
-	if !ok {
-		return result, nil
+	var kind farm.PlotActionKind
+	if action.Kind != Steal {
+		var ok bool
+		kind, ok = ownerPlotActionKind(action.Kind)
+		if !ok {
+			return result, nil
+		}
 	}
 	if o.friends == nil {
 		result.Code = pkgerr.NotFriend
@@ -148,6 +163,9 @@ func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta) {
 		result.Code = pkgerr.Internal
 		return result, nil
 	}
+	if action.Kind == Steal {
+		return o.decideSteal(action, result)
+	}
 
 	var delta *farm.FarmDelta
 	err = o.runtime.Do(action.OwnerUID, func(owner *actor.FarmActor) error {
@@ -160,6 +178,62 @@ func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta) {
 			PlotIndex: action.PlotIndex,
 		}, o.now())
 		result.Code = actionResult.Err
+		if owner.Aggregate.FarmSeq != beforeSeq {
+			emitted := farm.FarmDelta{
+				OwnerUID: action.OwnerUID,
+				FarmSeq:  owner.Aggregate.FarmSeq,
+				Plots:    []farm.PlotChange{ownerPlotChange(action.PlotIndex, owner.Aggregate.Plots[action.PlotIndex])},
+			}
+			owner.Deltas.Append(emitted)
+			delta = &emitted
+		}
+		return nil
+	})
+	if err != nil {
+		result.Code = pkgerr.Internal
+		return result, nil
+	}
+	return result, delta
+}
+
+func (o *Owner) decideSteal(action CrossAction, result CrossResult) (CrossResult, *farm.FarmDelta) {
+	var delta *farm.FarmDelta
+	err := o.runtime.Do(action.OwnerUID, func(owner *actor.FarmActor) error {
+		if owner == nil || owner.Aggregate == nil {
+			return errors.New("cross: owner actor aggregate is nil")
+		}
+		if int(action.PlotIndex) >= int(owner.Aggregate.UnlockedPlots) || int(action.PlotIndex) >= len(owner.Aggregate.Plots) {
+			result.Code = pkgerr.PlotNotFound
+			return nil
+		}
+		plot := owner.Aggregate.Plots[action.PlotIndex]
+		if plot.CropID != action.CropID {
+			result.Code = pkgerr.BadRequest
+			return nil
+		}
+		crop, ok := gameconf.CropByID(action.CropID)
+		if !ok || action.Compensation != int64(crop.FruitPrice)*10 {
+			result.Code = pkgerr.BadRequest
+			return nil
+		}
+
+		beforeSeq := owner.Aggregate.FarmSeq
+		intercept := owner.Aggregate.Pet.ShouldIntercept(o.now(), o.interceptRoll())
+		steal := owner.Aggregate.ApplySteal(farm.StealAction{
+			VisitorUID: action.VisitorUID,
+			PlotIndex:  action.PlotIndex,
+			Roll:       o.stealRoll(),
+			Intercept:  intercept,
+		}, o.now())
+		result.Code = steal.Err
+		result.CropID = steal.CropID
+		result.Amount = steal.Amount
+		if steal.Err == pkgerr.StealIntercepted {
+			result.Compensation = action.Compensation
+			result.DogType = owner.Aggregate.Pet.ActiveDog
+			owner.Aggregate.ReceiveStealCompensation(action.Compensation)
+			owner.Aggregate.RecordPetIntercept()
+		}
 		if owner.Aggregate.FarmSeq != beforeSeq {
 			emitted := farm.FarmDelta{
 				OwnerUID: action.OwnerUID,

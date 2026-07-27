@@ -84,3 +84,11 @@ const (
 	StealIntercepted    Code = 1411 // ERR_STEAL_INTERCEPTED 被看家狗抓住了
 	StealNoAfford       Code = 1412 // ERR_STEAL_NO_AFFORD 金币不足以承担被抓的赔付风险
 )
+
+// 4.6 宠物（1500—1599）。
+const (
+	DogAlreadyOwned Code = 1501 // ERR_DOG_ALREADY_OWNED 已经拥有这种狗了
+	DogNotOwned     Code = 1502 // ERR_DOG_NOT_OWNED 还没有这种狗
+	BowlFull        Code = 1503 // ERR_BOWL_FULL 狗盆已经满了
+	NoDogFood       Code = 1504 // ERR_NO_DOG_FOOD 狗粮不足
+)

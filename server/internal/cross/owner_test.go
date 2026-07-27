@@ -115,6 +115,47 @@ func TestOwnerReturnsAlreadyWateredWithoutCommitting(t *testing.T) {
 	}
 }
 
+func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
+	ownerAggregate := farm.NewAggregate(9, "owner")
+	ownerAggregate.Plots[0] = farm.Plot{
+		State:          farm.StateMature,
+		CropID:         1,
+		FinalYield:     16,
+		HarvestRound:   1,
+		SeasonDuration: 60_000,
+		MatureAt:       40_000,
+	}
+	ownerAggregate.Pet = farm.PetState{
+		ActiveDog:   farm.DogMutt,
+		Owned:       1,
+		BowlEmptyAt: 100_000,
+		MsPerGram:   farm.MuttMsPerGram,
+	}
+	runtime := ownerRuntime{actors: map[uint64]*actor.FarmActor{
+		9: {Aggregate: ownerAggregate},
+	}}
+	owner := NewOwner(runtime, ownerFriends{allowed: true}, nil, func() int64 { return 40_000 }, nil, nil)
+	owner.stealRoll = func() uint16 { return 1 }
+	owner.interceptRoll = func() uint8 { return 0 }
+
+	result, _ := owner.decide(CrossAction{
+		ReqID:        4,
+		Kind:         Steal,
+		VisitorUID:   7,
+		OwnerUID:     9,
+		PlotIndex:    0,
+		CropID:       1,
+		Compensation: 170,
+	})
+
+	if result.Code != pkgerr.StealIntercepted || result.Compensation != 170 || result.DogType != farm.DogMutt {
+		t.Fatalf("result = %#v", result)
+	}
+	if ownerAggregate.Coin != 1_170 || ownerAggregate.Plots[0].StolenCount != 0 || len(ownerAggregate.Plots[0].Stealers) != 1 {
+		t.Fatalf("owner aggregate after interception = %#v", ownerAggregate)
+	}
+}
+
 func collectResults(t *testing.T, eventBus bus.EventBus) <-chan CrossResult {
 	t.Helper()
 	results := make(chan CrossResult, 4)

@@ -11,6 +11,7 @@ import (
 	"farm/server/internal/bus"
 	"farm/server/internal/cross"
 	"farm/server/internal/farm"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
 
@@ -21,13 +22,25 @@ type crossPending struct {
 	dayID      uint32
 	rewarded   bool
 	kind       farm.PlotActionKind
+	steal      bool
+	frozenCoin int64
 	timer      *time.Timer
 }
 
 type crossActionResponse struct {
-	ReqID      uint64 `json:"req_id"`
-	ExpGained  uint32 `json:"exp_gained"`
-	CoinGained int64  `json:"coin_gained"`
+	ReqID        uint64       `json:"req_id"`
+	ExpGained    uint32       `json:"exp_gained"`
+	CoinGained   int64        `json:"coin_gained"`
+	CropID       uint16       `json:"crop_id,omitempty"`
+	Amount       uint16       `json:"amount,omitempty"`
+	Compensation int64        `json:"compensation,omitempty"`
+	DogType      farm.DogType `json:"dog_type,omitempty"`
+}
+
+type stealRequest struct {
+	OwnerUID  uint64 `json:"owner_uid"`
+	PlotIndex uint32 `json:"plot_index"`
+	CropID    uint32 `json:"crop_id"`
 }
 
 // WithCrossEventBus enables the visitor-side half of cross-farm actions.
@@ -152,6 +165,118 @@ func (g *Gateway) handleVisitorMutualAid(connection *wsConnection, request Envel
 	return Envelope{}
 }
 
+func (g *Gateway) handleVisitorSteal(connection *wsConnection, request Envelope) Envelope {
+	response := Envelope{
+		Cmd:       request.Cmd,
+		ClientSeq: request.ClientSeq,
+		Payload:   emptyPayload,
+	}
+	if g.crossBus == nil || g.crossVisitor == nil || g.crossSubscribeErr != nil || g.runtime == nil {
+		response.Err = pkgerr.Internal
+		return response
+	}
+
+	var payload stealRequest
+	if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PlotIndex > 255 || payload.CropID > 0xFFFF {
+		response.Err = pkgerr.BadRequest
+		return response
+	}
+	connection.roomMu.Lock()
+	ownerUID := connection.roomUID
+	connection.roomMu.Unlock()
+	if ownerUID == 0 || ownerUID == connection.uid || payload.OwnerUID != ownerUID {
+		response.Err = pkgerr.NotOwner
+		return response
+	}
+	if g.friends == nil {
+		response.Err = pkgerr.NotFriend
+		return response
+	}
+	friends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+	if err != nil {
+		response.Err = pkgerr.Internal
+		return response
+	}
+	if !friends {
+		response.Err = pkgerr.NotFriend
+		return response
+	}
+	crop, ok := gameconf.CropByID(uint16(payload.CropID))
+	if !ok {
+		response.Err = pkgerr.BadRequest
+		return response
+	}
+	compensation := int64(crop.FruitPrice) * 10
+	reqID := g.nextCrossReqID.Add(1)
+	action := cross.CrossAction{
+		ReqID:        reqID,
+		Kind:         cross.Steal,
+		VisitorUID:   connection.uid,
+		OwnerUID:     ownerUID,
+		PlotIndex:    uint8(payload.PlotIndex),
+		CropID:       uint16(payload.CropID),
+		Compensation: compensation,
+	}
+	pending := &crossPending{
+		connection: connection,
+		command:    request.Cmd,
+		clientSeq:  request.ClientSeq,
+		steal:      true,
+		frozenCoin: compensation,
+	}
+	var reserveCode pkgerr.Code
+	if err := g.runtime.Do(connection.uid, func(visitor *actor.FarmActor) error {
+		if visitor == nil || visitor.Aggregate == nil {
+			return errors.New("gateway: visitor actor aggregate is nil")
+		}
+		reserveCode = visitor.Aggregate.FreezeStealCompensation(compensation)
+		if reserveCode != pkgerr.OK {
+			return nil
+		}
+		if _, err := g.crossVisitor.Reserve(action); err != nil {
+			visitor.Aggregate.ReleaseStealCompensation(compensation)
+			reserveCode = pkgerr.Internal
+		}
+		return nil
+	}); err != nil {
+		response.Err = pkgerr.Internal
+		return response
+	}
+	if reserveCode != pkgerr.OK {
+		response.Err = reserveCode
+		return response
+	}
+
+	g.crossPending.Store(reqID, pending)
+	pending.timer = time.AfterFunc(cross.PendingTimeout, func() {
+		g.finishCrossResult(cross.CrossResult{
+			ReqID:      action.ReqID,
+			VisitorUID: action.VisitorUID,
+			OwnerUID:   action.OwnerUID,
+			Code:       pkgerr.Timeout,
+		})
+	})
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		g.finishCrossResult(cross.CrossResult{
+			ReqID:      action.ReqID,
+			VisitorUID: action.VisitorUID,
+			OwnerUID:   action.OwnerUID,
+			Code:       pkgerr.Internal,
+		})
+		return Envelope{}
+	}
+	if err := g.crossBus.Publish(context.Background(), bus.TopicCrossAction, ownerKey(ownerUID), encoded); err != nil {
+		g.finishCrossResult(cross.CrossResult{
+			ReqID:      action.ReqID,
+			VisitorUID: action.VisitorUID,
+			OwnerUID:   action.OwnerUID,
+			Code:       pkgerr.Internal,
+		})
+	}
+	return Envelope{}
+}
+
 func (g *Gateway) handleCrossResult(_ string, payload []byte) error {
 	var result cross.CrossResult
 	if err := json.Unmarshal(payload, &result); err != nil {
@@ -182,6 +307,26 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 		if visitor == nil || visitor.Aggregate == nil {
 			return errors.New("gateway: visitor actor aggregate is nil")
 		}
+		if pending.steal {
+			switch result.Code {
+			case pkgerr.OK:
+				if result.CropID == 0 || result.Amount == 0 {
+					code = pkgerr.Internal
+					visitor.Aggregate.ReleaseStealCompensation(pending.frozenCoin)
+					return nil
+				}
+				visitor.Aggregate.ReleaseStealCompensation(pending.frozenCoin)
+				visitor.Aggregate.Items[farm.FruitItem(result.CropID)] += uint32(result.Amount)
+				reward.CropID = result.CropID
+				reward.Amount = result.Amount
+			case pkgerr.StealIntercepted:
+				reward.Compensation = result.Compensation
+				reward.DogType = result.DogType
+			default:
+				visitor.Aggregate.ReleaseStealCompensation(pending.frozenCoin)
+			}
+			return nil
+		}
 		if result.Code == pkgerr.OK {
 			visitor.Aggregate.SettleMaintenance(pending.dayID, pending.rewarded, pending.kind)
 			if pending.rewarded {
@@ -209,7 +354,7 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 		Err:       code,
 		Payload:   emptyPayload,
 	}
-	if code == pkgerr.OK {
+	if code == pkgerr.OK || (pending.steal && code == pkgerr.StealIntercepted) {
 		response.Payload = marshalPayload(reward)
 	}
 	_ = pending.connection.respond(response)

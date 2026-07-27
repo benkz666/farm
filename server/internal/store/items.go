@@ -26,6 +26,9 @@ func ParseItemKey(key farm.ItemKey) (kind uint8, itemID uint16, err error) {
 	case strings.HasPrefix(s, "fert:"):
 		kind = ItemKindFertilizer
 		s = strings.TrimPrefix(s, "fert:")
+	case strings.HasPrefix(s, "dogfood:"):
+		kind = ItemKindDogFood
+		s = strings.TrimPrefix(s, "dogfood:")
 	case strings.HasPrefix(s, "fruit:"):
 		kind = ItemKindFruit
 		s = strings.TrimPrefix(s, "fruit:")
@@ -35,6 +38,9 @@ func ParseItemKey(key farm.ItemKey) (kind uint8, itemID uint16, err error) {
 	id, err := strconv.ParseUint(s, 10, 16)
 	if err != nil || id == 0 {
 		return 0, 0, fmt.Errorf("store: bad item id in key %q", key)
+	}
+	if kind == ItemKindDogFood && id != 1 {
+		return 0, 0, fmt.Errorf("store: unsupported dog food item id %d", id)
 	}
 	return kind, uint16(id), nil
 }
@@ -49,6 +55,11 @@ func FormatItemKey(kind uint8, itemID uint16) (farm.ItemKey, error) {
 		return farm.SeedItem(itemID), nil
 	case ItemKindFertilizer:
 		return farm.FertilizerItem(itemID), nil
+	case ItemKindDogFood:
+		if itemID != 1 {
+			return "", fmt.Errorf("store: unsupported dog food item id %d", itemID)
+		}
+		return farm.DogFoodItem(), nil
 	case ItemKindFruit:
 		return farm.FruitItem(itemID), nil
 	default:

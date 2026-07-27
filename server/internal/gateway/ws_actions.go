@@ -39,6 +39,8 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		switch request.Cmd {
 		case CommandWater, CommandRemoveWeed, CommandRemovePest:
 			return g.handleVisitorMutualAid(connection, request)
+		case CommandSteal:
+			return g.handleVisitorSteal(connection, request)
 		}
 		response.Err = pkgerr.NotOwner
 		return response

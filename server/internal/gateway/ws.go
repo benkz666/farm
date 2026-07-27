@@ -228,8 +228,10 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		return g.handleSyncFarm(connection, request)
 	case CommandTill, CommandClear, CommandPlant, CommandWater,
 		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest,
-		CommandBuy, CommandSell:
+		CommandSteal, CommandBuy, CommandSell:
 		return g.handlePlotOrShop(connection, request)
+	case CommandPetStatus, CommandPetActivate, CommandPetFeed:
+		return g.handlePet(connection, request)
 	case CommandFriendList, CommandGenShareLink, CommandAcceptInvite,
 		CommandRemoveFriend, CommandAddFriendByUID:
 		return g.handleFriendRequest(connection, request)

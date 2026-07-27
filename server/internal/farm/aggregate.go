@@ -13,6 +13,7 @@ type ItemKey string
 const (
 	seedItemPrefix       = "seed:"
 	fertilizerItemPrefix = "fert:"
+	dogFoodItemPrefix    = "dogfood:"
 	fruitItemPrefix      = "fruit:"
 )
 
@@ -24,6 +25,11 @@ func SeedItem(cropID uint16) ItemKey {
 // FertilizerItem 返回化肥背包键。
 func FertilizerItem(fertilizerID uint16) ItemKey {
 	return ItemKey(fertilizerItemPrefix + strconv.FormatUint(uint64(fertilizerID), 10))
+}
+
+// DogFoodItem returns the single dog-food item key. Food is measured in grams.
+func DogFoodItem() ItemKey {
+	return ItemKey(dogFoodItemPrefix + "1")
 }
 
 // FruitItem 返回作物果实的仓库键。
@@ -43,6 +49,7 @@ type Aggregate struct {
 	Plots         [gameconf.MaxPlots]Plot `json:"plots"`
 	Items         map[ItemKey]uint32      `json:"items"`
 	Daily         DailyState              `json:"daily"`
+	Pet           PetState                `json:"pet"`
 	FarmSeq       uint64                  `json:"farm_seq"`
 }
 

@@ -25,6 +25,32 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 	if req.Quantity == 0 {
 		return ActionResult{Err: pkgerr.BadQuantity}
 	}
+	if req.ItemID == DogFoodShopItemID {
+		cost := int64(req.Quantity)
+		if a.Coin < cost {
+			return ActionResult{Err: pkgerr.NotEnoughCoin}
+		}
+		a.Coin -= cost
+		a.Items[DogFoodItem()] += req.Quantity
+		a.FarmSeq++
+		return a.okPatch(0)
+	}
+	if req.ItemID == DogMuttShopItemID {
+		if req.Quantity != 1 {
+			return ActionResult{Err: pkgerr.BadQuantity}
+		}
+		if a.Pet.HasDog(DogMutt) {
+			return ActionResult{Err: pkgerr.DogAlreadyOwned}
+		}
+		const muttPrice int64 = 2_000
+		if a.Coin < muttPrice {
+			return ActionResult{Err: pkgerr.NotEnoughCoin}
+		}
+		a.Coin -= muttPrice
+		a.Pet.Owned |= 1 << uint(DogMutt-1)
+		a.FarmSeq++
+		return a.okPatch(0)
+	}
 	crop, ok := gameconf.CropByID(req.ItemID)
 	if ok {
 		if a.Level < uint16(crop.UnlockLevel) {

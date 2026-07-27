@@ -24,6 +24,7 @@ const (
 	CommandRemovePest     uint32 = 216
 	CommandFertilize      uint32 = 218
 	CommandHarvest        uint32 = 220
+	CommandSteal          uint32 = 222
 	CommandBuy            uint32 = 302
 	CommandSell           uint32 = 304
 	CommandFriendList     uint32 = 400
@@ -31,6 +32,9 @@ const (
 	CommandAcceptInvite   uint32 = 404
 	CommandRemoveFriend   uint32 = 406
 	CommandAddFriendByUID uint32 = 408
+	CommandPetStatus      uint32 = 500
+	CommandPetActivate    uint32 = 502
+	CommandPetFeed        uint32 = 504
 
 	CommandFarmDelta uint32 = 9000
 
