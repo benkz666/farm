@@ -15,10 +15,11 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	t.Parallel()
 
 	storage := newTaskMailStoreStub()
+	aggregate := farm.NewAggregate(42, "alice")
 	gateway := New(
 		authStub{},
 		sessionStub{uid: 42},
-		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		runtimeStub{aggregate: aggregate},
 		WithTaskMailStore(storage),
 	)
 	gateway.SetClock(func() int64 {
@@ -107,6 +108,9 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	if firstMailClaim.Err != pkgerr.OK {
 		t.Fatalf("first MailClaim err = %d, want OK", firstMailClaim.Err)
 	}
+	if aggregate.Coin != gameconf.InitialCoin+taskMail.AttachmentCoin {
+		t.Fatalf("online actor coin = %d, want %d", aggregate.Coin, gameconf.InitialCoin+taskMail.AttachmentCoin)
+	}
 	secondMailClaim := gateway.handleWSRequest(connection, Envelope{
 		Cmd:     CommandMailClaim,
 		Payload: marshalPayload(mailClaimRequest{MailID: taskMail.ID}),
@@ -132,11 +136,48 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	}
 }
 
+func TestSuccessfulPlantAdvancesDailyTaskProgress(t *testing.T) {
+	storage := newTaskMailStoreStub()
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0].State = farm.StateTilled
+	aggregate.Items[farm.SeedItem(1)] = 1
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+		WithTaskMailStore(storage),
+	)
+	gateway.SetClock(func() int64 {
+		return 7 * gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+	})
+
+	response := gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
+		Cmd:     CommandPlant,
+		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
+	})
+
+	if response.Err != pkgerr.OK {
+		t.Fatalf("Plant err = %d, want OK", response.Err)
+	}
+	want := taskProgressCall{uid: 42, logicDay: 7, taskID: store.TaskPlantID, amount: 1}
+	if len(storage.progressCalls) != 1 || storage.progressCalls[0] != want {
+		t.Fatalf("progress calls = %#v, want %#v", storage.progressCalls, want)
+	}
+}
+
 type taskMailStoreStub struct {
-	daily map[int64]bool
-	mails map[uint64]store.Mail
-	tasks map[uint32]bool
-	next  uint64
+	daily         map[int64]bool
+	mails         map[uint64]store.Mail
+	tasks         map[uint32]bool
+	progressCalls []taskProgressCall
+	next          uint64
+}
+
+type taskProgressCall struct {
+	uid      uint64
+	logicDay int64
+	taskID   uint32
+	amount   uint32
 }
 
 func newTaskMailStoreStub() *taskMailStoreStub {
@@ -193,6 +234,13 @@ func (s *taskMailStoreStub) ClaimDailyLogin(_ context.Context, _ uint64, logicDa
 	}
 	s.daily[logicDay] = true
 	return s.addMail("daily login", 100), nil
+}
+
+func (s *taskMailStoreStub) AdvanceTask(_ context.Context, uid uint64, logicDay int64, taskID, amount uint32) error {
+	s.progressCalls = append(s.progressCalls, taskProgressCall{
+		uid: uid, logicDay: logicDay, taskID: taskID, amount: amount,
+	})
+	return nil
 }
 
 func (s *taskMailStoreStub) addMail(title string, coin int64) store.Mail {

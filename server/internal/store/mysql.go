@@ -17,8 +17,46 @@ import (
 // mysqlDuplicateKey 是 MySQL 唯一键冲突（account.username UNIQUE）的错误码。
 const mysqlDuplicateKeyErrNo = 1062
 
-// SaveAccount 在一个事务内写入 account + player + MaxPlots 行 farm_plot，
-// 玩家初始数值取自 farm.NewAggregate（策划 4.2 节）。uid 由调用方（Auth）生成。
+// CreateAccount lets MySQL AUTO_INCREMENT allocate a uid shared by every
+// Gateway, then creates the player and initial plots in the same transaction.
+func (s *Store) CreateAccount(ctx context.Context, username, passwordHash string) (uint64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: begin create account tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UnixMilli()
+	result, err := tx.ExecContext(ctx,
+		`INSERT INTO account (username, password_hash, created_at) VALUES (?, ?, ?)`,
+		username, passwordHash, now,
+	)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlDuplicateKeyErrNo {
+			return 0, ErrUsernameTaken
+		}
+		return 0, fmt.Errorf("store: insert account: %w", err)
+	}
+	insertID, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("store: allocate account uid: %w", err)
+	}
+	if insertID <= 0 {
+		return 0, errors.New("store: allocated account uid is not positive")
+	}
+	uid := uint64(insertID)
+	if err := initializeFarmTx(ctx, tx, uid, username, now); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("store: commit create account tx: %w", err)
+	}
+	return uid, nil
+}
+
+// SaveAccount persists an explicitly supplied uid for integration fixtures and
+// data import. Online registration uses CreateAccount.
 func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordHash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -27,7 +65,6 @@ func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordH
 	defer tx.Rollback()
 
 	now := time.Now().UnixMilli()
-
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO account (uid, username, password_hash, created_at) VALUES (?, ?, ?, ?)`,
 		uid, username, passwordHash, now,
@@ -38,7 +75,16 @@ func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordH
 		}
 		return fmt.Errorf("store: insert account: %w", err)
 	}
+	if err := initializeFarmTx(ctx, tx, uid, username, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit save account tx: %w", err)
+	}
+	return nil
+}
 
+func initializeFarmTx(ctx context.Context, tx *sql.Tx, uid uint64, username string, now int64) error {
 	agg := farm.NewAggregate(uid, username)
 	dailyBlob, err := json.Marshal(agg.Daily)
 	if err != nil {
@@ -73,10 +119,6 @@ func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordH
 		); err != nil {
 			return fmt.Errorf("store: insert farm_plot %d: %w", i, err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("store: commit save account tx: %w", err)
 	}
 	return nil
 }

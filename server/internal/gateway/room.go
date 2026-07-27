@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 )
 
@@ -89,7 +90,7 @@ func (h *RoomHub) RevokeViewer(ownerUID, viewerUID uint64) {
 
 // Publish broadcasts a cross-farm owner commit to every local room viewer.
 // It implements cross.DeltaPublisher for the single-process development role.
-func (g *Gateway) Publish(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+func (g *Gateway) Publish(_ context.Context, delta farm.FarmDelta, _ connreg.ConnRef) error {
 	if g == nil || g.rooms == nil {
 		return errors.New("gateway: room hub is not configured")
 	}

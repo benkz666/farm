@@ -7,7 +7,9 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/store"
 )
 
 type plotActionRequest struct {
@@ -71,18 +73,24 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			response.Err = pkgerr.BadRequest
 			return response
 		}
-		if request.Cmd == CommandTill && g.farmRPC != nil {
+		if g.farmRPC != nil {
 			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-				Operation:        farmrpc.OperationTill,
-				OriginatorConnID: connection.id,
-				Payload:          request.Payload,
+				Operation:  farmrpc.OperationPlotAction,
+				Originator: g.connectionRef(connection),
+				Payload: marshalPayload(farmrpc.PlotActionRequest{
+					OwnerUID:  payload.OwnerUID,
+					PlotIndex: payload.PlotIndex,
+					Arg:       payload.Arg,
+					Kind:      kind,
+					Command:   request.Cmd,
+				}),
 			})
 			if err != nil {
 				response.Err = pkgerr.Internal
 				return response
 			}
 			response.Err = remote.Err
-			if remote.Err == pkgerr.OK {
+			if remote.Err == pkgerr.OK || (kind == farm.Clear && remote.Err == pkgerr.PlotNotCleanable) {
 				response.Payload = remote.Payload
 			}
 			return response
@@ -142,6 +150,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		if stoleHint {
 			g.writeStealHint(connection.uid, stealable)
 		}
+		if result.Err == pkgerr.OK {
+			g.advanceGameplayTask(connection.uid, kind)
+		}
 		return response
 
 	case CommandBuy, CommandSell:
@@ -152,6 +163,31 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 		if payload.ItemID > 0xFFFF {
 			response.Err = pkgerr.BadRequest
+			return response
+		}
+		if g.farmRPC != nil {
+			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
+				Operation:  farmrpc.OperationShop,
+				Originator: g.connectionRef(connection),
+				Payload: marshalPayload(farmrpc.ShopRequest{
+					Buy:      request.Cmd == CommandBuy,
+					ItemID:   payload.ItemID,
+					Quantity: payload.Quantity,
+					Command:  request.Cmd,
+				}),
+			})
+			if err != nil {
+				response.Err = pkgerr.Internal
+				return response
+			}
+			response.Err = remote.Err
+			if remote.Err == pkgerr.OK {
+				response.Payload = remote.Payload
+			}
+			return response
+		}
+		if g.runtime == nil {
+			response.Err = pkgerr.Internal
 			return response
 		}
 
@@ -204,6 +240,23 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		response.Err = pkgerr.BadRequest
 		return response
 	}
+}
+
+func (g *Gateway) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) {
+	if g.taskMail == nil {
+		return
+	}
+	var taskID uint32
+	switch kind {
+	case farm.Plant:
+		taskID = store.TaskPlantID
+	case farm.Harvest:
+		taskID = store.TaskHarvestID
+	default:
+		return
+	}
+	logicDay := g.Now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+	_ = g.taskMail.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

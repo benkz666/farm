@@ -36,7 +36,7 @@ type PlayerDeltaPushRequest struct {
 
 // DeltaPublisher fans a FarmDelta out after an authoritative mutation commits.
 type DeltaPublisher interface {
-	Publish(ctx context.Context, delta farm.FarmDelta, originatorConnID uint64) error
+	Publish(ctx context.Context, delta farm.FarmDelta, originator connreg.ConnRef) error
 }
 
 // DeltaPusher delivers one Delta to the Gateway that owns a connection.
@@ -71,7 +71,7 @@ func NewFanoutPublisher(registry *connreg.Registry, pusher DeltaPusher) *FanoutP
 // Publish attempts all current room subscribers except the connection that
 // initiated the command. The originator already receives the authoritative
 // response patch, so excluding it prevents duplicate FarmDelta delivery.
-func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, originatorConnID uint64) error {
+func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, originator connreg.ConnRef) error {
 	if p == nil || p.registry == nil || p.pusher == nil {
 		return fmt.Errorf("farmrpc: Delta publisher is not configured")
 	}
@@ -81,7 +81,7 @@ func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, ori
 	}
 	var firstErr error
 	for _, ref := range refs {
-		if ref.ConnID == originatorConnID {
+		if ref == originator {
 			continue
 		}
 		if err := p.pusher.Push(ctx, ref, delta); err != nil && firstErr == nil {

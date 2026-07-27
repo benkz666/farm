@@ -171,19 +171,38 @@ func (b *KafkaBus) consume(ctx context.Context, reader *kafka.Reader, handler fu
 			}
 			continue
 		}
-		if err := handler(string(message.Key), message.Value); err != nil {
-			if !waitForKafkaRetry(consumeCtx) {
-				return
-			}
-			continue
+		if !processKafkaMessage(consumeCtx, message, handler, func() error {
+			return reader.CommitMessages(consumeCtx, message)
+		}) {
+			return
 		}
-		if err := reader.CommitMessages(consumeCtx, message); err != nil {
-			if consumeCtx.Err() != nil {
-				return
-			}
-			if !waitForKafkaRetry(consumeCtx) {
-				return
-			}
+	}
+}
+
+// processKafkaMessage keeps ownership of one fetched message until both the
+// handler and offset commit succeed. FetchMessage advances the reader's local
+// position, so fetching another message after a handler failure could let a
+// later commit skip the failed delivery.
+func processKafkaMessage(
+	ctx context.Context,
+	message kafka.Message,
+	handler func(key string, payload []byte) error,
+	commit func() error,
+) bool {
+	for {
+		if err := handler(string(message.Key), message.Value); err == nil {
+			break
+		}
+		if !waitForKafkaRetry(ctx) {
+			return false
+		}
+	}
+	for {
+		if err := commit(); err == nil {
+			return true
+		}
+		if !waitForKafkaRetry(ctx) {
+			return false
 		}
 	}
 }

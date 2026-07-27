@@ -11,6 +11,7 @@ import (
 
 	"farm/server/internal/actor"
 	"farm/server/internal/bus"
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
@@ -34,7 +35,7 @@ type FriendChecker interface {
 // DeltaPublisher broadcasts an already committed FarmDelta. Delivery failure is
 // best effort because clients recover missing deltas through SyncFarm.
 type DeltaPublisher interface {
-	Publish(ctx context.Context, delta farm.FarmDelta, originatorConnID uint64) error
+	Publish(ctx context.Context, delta farm.FarmDelta, originator connreg.ConnRef) error
 }
 
 // PlayerDeltaPublisher delivers personal-state changes that cannot be inferred
@@ -49,10 +50,10 @@ type StealHintWriter interface {
 }
 
 // DeltaPublisherFunc adapts a function to DeltaPublisher.
-type DeltaPublisherFunc func(context.Context, farm.FarmDelta, uint64) error
+type DeltaPublisherFunc func(context.Context, farm.FarmDelta, connreg.ConnRef) error
 
-func (fn DeltaPublisherFunc) Publish(ctx context.Context, delta farm.FarmDelta, originatorConnID uint64) error {
-	return fn(ctx, delta, originatorConnID)
+func (fn DeltaPublisherFunc) Publish(ctx context.Context, delta farm.FarmDelta, originator connreg.ConnRef) error {
+	return fn(ctx, delta, originator)
 }
 
 // Owner consumes CrossAction messages for farms owned by this process and
@@ -151,7 +152,7 @@ func (o *Owner) handleAction(_ string, payload []byte) error {
 	o.mu.Unlock()
 
 	if delta != nil && o.deltas != nil {
-		_ = o.deltas.Publish(context.Background(), *delta, 0)
+		_ = o.deltas.Publish(context.Background(), *delta, connreg.ConnRef{})
 	}
 	if playerDelta != nil && o.players != nil {
 		_ = o.players.PublishPlayerDelta(context.Background(), action.OwnerUID, *playerDelta)

@@ -32,15 +32,21 @@ func TestTaskMailStoreClaimsRewardsExactlyOnce(t *testing.T) {
 	if len(tasks) != 3 {
 		t.Fatalf("ListTasks returned %d tasks, want 3", len(tasks))
 	}
+	if _, err := s.ClaimTask(ctx, uid, logicDay, store.TaskPlantID); !errors.Is(err, store.ErrTaskNotComplete) {
+		t.Fatalf("ClaimTask before gameplay error = %v, want ErrTaskNotComplete", err)
+	}
+	if err := s.AdvanceTask(ctx, uid, logicDay, store.TaskPlantID, 1); err != nil {
+		t.Fatalf("AdvanceTask: %v", err)
+	}
 
-	taskMail, err := s.ClaimTask(ctx, uid, logicDay, 1)
+	taskMail, err := s.ClaimTask(ctx, uid, logicDay, store.TaskPlantID)
 	if err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 	if taskMail.ID == 0 || taskMail.AttachmentCoin == 0 {
 		t.Fatalf("task reward mail = %#v", taskMail)
 	}
-	if _, err := s.ClaimTask(ctx, uid, logicDay, 1); !errors.Is(err, store.ErrTaskAlreadyClaimed) {
+	if _, err := s.ClaimTask(ctx, uid, logicDay, store.TaskPlantID); !errors.Is(err, store.ErrTaskAlreadyClaimed) {
 		t.Fatalf("second ClaimTask error = %v, want ErrTaskAlreadyClaimed", err)
 	}
 

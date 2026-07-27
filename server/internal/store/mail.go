@@ -78,8 +78,8 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	if err := tx.Commit(); err != nil {
 		return Mail{}, fmt.Errorf("store: commit claim mail: %w", err)
 	}
-	// 领取附件绕过 FarmActor 写库，删除缓存避免下一次 Actor 从旧金币快照启动。
-	// Redis 失效失败不改变已提交的领取结果，后续农场写入会再次回填缓存。
+	// ClaimMail 由 Gateway/FarmRPC 放在 uid 权威 Actor 的串行段内调用，并同步
+	// 更新在线聚合；删除缓存同时保护离线调用者不会加载旧金币快照。
 	_ = s.DeleteFarmCache(ctx, uid)
 	mail.Claimed = true
 	return mail, nil

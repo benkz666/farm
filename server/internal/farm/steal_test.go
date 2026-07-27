@@ -60,6 +60,22 @@ func TestApplyStealAllowsVisitorOncePerHarvestRound(t *testing.T) {
 	}
 }
 
+func TestApplyStealDoesNotCollideDistinctUint64Visitors(t *testing.T) {
+	owner := matureStealAggregate()
+	firstUID := uint64(1)<<40 | 7
+	secondUID := uint64(2)<<40 | 7
+
+	first := owner.ApplySteal(StealAction{VisitorUID: firstUID, PlotIndex: 0, Roll: 1}, actionNow)
+	second := owner.ApplySteal(StealAction{VisitorUID: secondUID, PlotIndex: 0, Roll: 1}, actionNow)
+
+	if first.Err != pkgerr.OK || second.Err != pkgerr.OK {
+		t.Fatalf("distinct uint64 visitors = first:%d second:%d, want both OK", first.Err, second.Err)
+	}
+	if got := owner.Plots[0].Stealers; len(got) != 2 || got[0] != firstUID || got[1] != secondUID {
+		t.Fatalf("Stealers = %#v, want [%d %d]", got, firstUID, secondUID)
+	}
+}
+
 func TestApplyStealAfterOwnerHarvestReturnsHarvestedByOwner(t *testing.T) {
 	owner := matureStealAggregate()
 

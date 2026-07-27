@@ -16,8 +16,8 @@ const keyPrefix = "farm:connreg:"
 
 // ConnRef identifies a connection that must receive a server-side push.
 type ConnRef struct {
-	ConnID    uint64
-	GatewayID string
+	ConnID    uint64 `json:"conn_id"`
+	GatewayID string `json:"gateway_id"`
 }
 
 // Backend is the narrow Redis hash surface used by Registry.
@@ -50,8 +50,8 @@ func (r *Registry) Register(ctx context.Context, uid, connID uint64, gatewayID s
 }
 
 // Unregister removes a disconnected player's WebSocket lifecycle record.
-func (r *Registry) Unregister(ctx context.Context, uid, connID uint64) error {
-	return r.delete(ctx, connectionKey(uid), connID)
+func (r *Registry) Unregister(ctx context.Context, uid, connID uint64, gatewayID string) error {
+	return r.delete(ctx, connectionKey(uid), connID, gatewayID)
 }
 
 // Lookup returns every currently registered connection for uid.
@@ -66,8 +66,8 @@ func (r *Registry) Subscribe(ctx context.Context, ownerUID, connID uint64, gatew
 }
 
 // Unsubscribe removes a connection from ownerUID's farm-room fan-out index.
-func (r *Registry) Unsubscribe(ctx context.Context, ownerUID, connID uint64) error {
-	return r.delete(ctx, roomKey(ownerUID), connID)
+func (r *Registry) Unsubscribe(ctx context.Context, ownerUID, connID uint64, gatewayID string) error {
+	return r.delete(ctx, roomKey(ownerUID), connID, gatewayID)
 }
 
 // LookupSubscribers returns the WebSockets currently viewing ownerUID's farm.
@@ -82,20 +82,20 @@ func (r *Registry) set(ctx context.Context, key string, connID uint64, gatewayID
 	if connID == 0 || strings.TrimSpace(gatewayID) == "" {
 		return errors.New("connreg: connection ID and gateway ID are required")
 	}
-	if err := r.backend.Set(ctx, key, strconv.FormatUint(connID, 10), gatewayID); err != nil {
+	if err := r.backend.Set(ctx, key, encodeRefField(gatewayID, connID), gatewayID); err != nil {
 		return fmt.Errorf("connreg: register connection: %w", err)
 	}
 	return nil
 }
 
-func (r *Registry) delete(ctx context.Context, key string, connID uint64) error {
+func (r *Registry) delete(ctx context.Context, key string, connID uint64, gatewayID string) error {
 	if r == nil || r.backend == nil {
 		return errors.New("connreg: registry backend is nil")
 	}
-	if connID == 0 {
-		return errors.New("connreg: connection ID is required")
+	if connID == 0 || strings.TrimSpace(gatewayID) == "" {
+		return errors.New("connreg: connection ID and gateway ID are required")
 	}
-	if err := r.backend.Delete(ctx, key, strconv.FormatUint(connID, 10)); err != nil {
+	if err := r.backend.Delete(ctx, key, encodeRefField(gatewayID, connID)); err != nil {
 		return fmt.Errorf("connreg: unregister connection: %w", err)
 	}
 	return nil
@@ -110,17 +110,37 @@ func (r *Registry) lookup(ctx context.Context, key string) ([]ConnRef, error) {
 		return nil, fmt.Errorf("connreg: lookup connections: %w", err)
 	}
 	refs := make([]ConnRef, 0, len(values))
-	for encodedID, gatewayID := range values {
-		connID, err := strconv.ParseUint(encodedID, 10, 64)
-		if err != nil || connID == 0 || strings.TrimSpace(gatewayID) == "" {
+	for encodedRef, storedGatewayID := range values {
+		ref, ok := decodeRefField(encodedRef)
+		if !ok || ref.GatewayID != strings.TrimSpace(storedGatewayID) {
 			continue
 		}
-		refs = append(refs, ConnRef{ConnID: connID, GatewayID: gatewayID})
+		refs = append(refs, ref)
 	}
 	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].ConnID == refs[j].ConnID {
+			return refs[i].GatewayID < refs[j].GatewayID
+		}
 		return refs[i].ConnID < refs[j].ConnID
 	})
 	return refs, nil
+}
+
+func encodeRefField(gatewayID string, connID uint64) string {
+	return strings.TrimSpace(gatewayID) + ":" + strconv.FormatUint(connID, 10)
+}
+
+func decodeRefField(field string) (ConnRef, bool) {
+	separator := strings.LastIndexByte(field, ':')
+	if separator <= 0 || separator == len(field)-1 {
+		return ConnRef{}, false
+	}
+	gatewayID := strings.TrimSpace(field[:separator])
+	connID, err := strconv.ParseUint(field[separator+1:], 10, 64)
+	if err != nil || connID == 0 || gatewayID == "" {
+		return ConnRef{}, false
+	}
+	return ConnRef{ConnID: connID, GatewayID: gatewayID}, true
 }
 
 func connectionKey(uid uint64) string {

@@ -23,7 +23,7 @@ func TestRegistryRegistersLooksUpAndUnregistersConnection(t *testing.T) {
 		t.Fatalf("Lookup after Register = %#v, want %#v", got, want)
 	}
 
-	if err := registry.Unregister(ctx, 42, 7); err != nil {
+	if err := registry.Unregister(ctx, 42, 7, "gateway-0"); err != nil {
 		t.Fatalf("Unregister: %v", err)
 	}
 	got, err = registry.Lookup(ctx, 42)
@@ -32,6 +32,43 @@ func TestRegistryRegistersLooksUpAndUnregistersConnection(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("Lookup after Unregister = %#v, want empty", got)
+	}
+}
+
+func TestRegistryKeepsSameLocalConnectionIDFromDifferentGateways(t *testing.T) {
+	backend := newMemoryBackend()
+	registry := NewWithBackend(backend)
+	ctx := context.Background()
+
+	if err := registry.Register(ctx, 42, 1, "gateway-0"); err != nil {
+		t.Fatalf("Register gateway-0: %v", err)
+	}
+	if err := registry.Register(ctx, 42, 1, "gateway-1"); err != nil {
+		t.Fatalf("Register gateway-1: %v", err)
+	}
+
+	got, err := registry.Lookup(ctx, 42)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	want := []ConnRef{
+		{ConnID: 1, GatewayID: "gateway-0"},
+		{ConnID: 1, GatewayID: "gateway-1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Lookup = %#v, want %#v", got, want)
+	}
+
+	if err := registry.Unregister(ctx, 42, 1, "gateway-0"); err != nil {
+		t.Fatalf("Unregister gateway-0: %v", err)
+	}
+	got, err = registry.Lookup(ctx, 42)
+	if err != nil {
+		t.Fatalf("Lookup after Unregister: %v", err)
+	}
+	want = []ConnRef{{ConnID: 1, GatewayID: "gateway-1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Lookup after Unregister = %#v, want %#v", got, want)
 	}
 }
 

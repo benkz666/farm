@@ -28,6 +28,20 @@ func TestRegisterDuplicateUsername(t *testing.T) {
 	}
 }
 
+func TestRegisterUsesUIDAllocatedByAccountStore(t *testing.T) {
+	accounts := newMemoryFarmStore()
+	accounts.nextUID = 9_001
+	service := New(accounts, &memorySessionStore{})
+
+	uid, _, err := service.Register(context.Background(), "allocated", "password-1")
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if uid != 9_001 {
+		t.Fatalf("Register uid = %d, want store-allocated 9001", uid)
+	}
+}
+
 func TestLoginWrongPassword(t *testing.T) {
 	t.Parallel()
 
@@ -72,6 +86,7 @@ func TestLoginCreatesSevenDaySession(t *testing.T) {
 
 type memoryFarmStore struct {
 	accounts map[string]memoryAccount
+	nextUID  uint64
 }
 
 type memoryAccount struct {
@@ -81,6 +96,18 @@ type memoryAccount struct {
 
 func newMemoryFarmStore() *memoryFarmStore {
 	return &memoryFarmStore{accounts: make(map[string]memoryAccount)}
+}
+
+func (s *memoryFarmStore) CreateAccount(ctx context.Context, username, passwordHash string) (uint64, error) {
+	if s.nextUID == 0 {
+		s.nextUID = uint64(len(s.accounts) + 1)
+	}
+	uid := s.nextUID
+	s.nextUID++
+	if err := s.SaveAccount(ctx, uid, username, passwordHash); err != nil {
+		return 0, err
+	}
+	return uid, nil
 }
 
 func (s *memoryFarmStore) SaveAccount(_ context.Context, uid uint64, username, passwordHash string) error {

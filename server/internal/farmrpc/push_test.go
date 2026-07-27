@@ -24,7 +24,7 @@ func TestFanoutPublisherPushesEverySubscribedConnection(t *testing.T) {
 	publisher := NewFanoutPublisher(registry, pusher)
 	delta := farm.FarmDelta{OwnerUID: 42, FarmSeq: 3}
 
-	if err := publisher.Publish(t.Context(), delta, 0); err != nil {
+	if err := publisher.Publish(t.Context(), delta, connreg.ConnRef{}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -40,22 +40,22 @@ func TestFanoutPublisherPushesEverySubscribedConnection(t *testing.T) {
 func TestFanoutPublisherSkipsOriginatingConnection(t *testing.T) {
 	backend := newRegistryBackend()
 	registry := connreg.NewWithBackend(backend)
-	if err := registry.Subscribe(t.Context(), 42, 8, "gateway-1"); err != nil {
+	if err := registry.Subscribe(t.Context(), 42, 1, "gateway-1"); err != nil {
 		t.Fatalf("Subscribe first connection: %v", err)
 	}
-	if err := registry.Subscribe(t.Context(), 42, 9, "gateway-0"); err != nil {
+	if err := registry.Subscribe(t.Context(), 42, 1, "gateway-0"); err != nil {
 		t.Fatalf("Subscribe originator connection: %v", err)
 	}
 	pusher := &recordingDeltaPusher{}
 	publisher := NewFanoutPublisher(registry, pusher)
 	delta := farm.FarmDelta{OwnerUID: 42, FarmSeq: 3}
 
-	if err := publisher.Publish(t.Context(), delta, 9); err != nil {
+	if err := publisher.Publish(t.Context(), delta, connreg.ConnRef{ConnID: 1, GatewayID: "gateway-0"}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
 	want := []pushedDelta{{
-		ref:   connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"},
+		ref:   connreg.ConnRef{ConnID: 1, GatewayID: "gateway-1"},
 		delta: delta,
 	}}
 	if !reflect.DeepEqual(pusher.pushes, want) {

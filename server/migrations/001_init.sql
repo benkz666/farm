@@ -4,10 +4,11 @@
 -- （与 docs/design/architecture.md 存储模型对齐，字段布局避免期 2 推翻）。
 
 CREATE TABLE IF NOT EXISTS account (
-  uid            BIGINT UNSIGNED PRIMARY KEY,
+  uid            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   username       VARCHAR(32) NOT NULL UNIQUE,
   password_hash  VARCHAR(255) NOT NULL,
-  created_at     BIGINT NOT NULL
+  created_at     BIGINT NOT NULL,
+  PRIMARY KEY (uid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS player (

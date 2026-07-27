@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
 )
 
@@ -21,6 +23,50 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 		Cmd:       request.Cmd,
 		ClientSeq: request.ClientSeq,
 		Payload:   emptyPayload,
+	}
+	if g.farmRPC != nil {
+		var payload farmrpc.PetRequest
+		switch request.Cmd {
+		case CommandPetStatus:
+			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+				response.Err = pkgerr.BadRequest
+				return response
+			}
+			payload.Kind = farmrpc.PetStatus
+		case CommandPetActivate:
+			var activate petActivateRequest
+			if err := unmarshalPayload(request.Payload, &activate); err != nil || activate.DogType > 0xFF {
+				response.Err = pkgerr.BadRequest
+				return response
+			}
+			payload.Kind = farmrpc.PetActivate
+			payload.DogType = farm.DogType(activate.DogType)
+		case CommandPetFeed:
+			var feed petFeedRequest
+			if err := unmarshalPayload(request.Payload, &feed); err != nil {
+				response.Err = pkgerr.BadRequest
+				return response
+			}
+			payload.Kind = farmrpc.PetFeed
+			payload.Grams = feed.Grams
+		default:
+			response.Err = pkgerr.BadRequest
+			return response
+		}
+		remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
+			Operation:  farmrpc.OperationPet,
+			Originator: g.connectionRef(connection),
+			Payload:    marshalPayload(payload),
+		})
+		if err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		response.Err = remote.Err
+		if remote.Err == pkgerr.OK {
+			response.Payload = remote.Payload
+		}
+		return response
 	}
 	if g.runtime == nil {
 		response.Err = pkgerr.Internal

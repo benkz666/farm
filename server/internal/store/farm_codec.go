@@ -12,7 +12,8 @@ import (
 // 「在 store 包内单一函数编解码，禁止两处各写一套互不兼容的格式」）。
 //
 // 采用固定顺序小端 binary 编码：先写定长字段（与 farm.Plot 字段声明顺序一致），
-// 再写 Stealers 变长部分（uint16 长度前缀 + uint32 数组）。
+// 再写 Stealers 变长部分（uint16 长度前缀 + uint64 数组）。DecodePlot
+// 仍接受旧版 uint32 数组，避免已持久化地块在滚动升级后无法加载。
 
 func EncodePlot(p farm.Plot) ([]byte, error) {
 	buf := new(bytes.Buffer)
@@ -69,11 +70,27 @@ func DecodePlot(blob []byte) (farm.Plot, error) {
 		return farm.Plot{}, fmt.Errorf("store: decode plot stealers count: %w", err)
 	}
 	if stealerCount > 0 {
-		p.Stealers = make([]uint32, stealerCount)
-		for i := range p.Stealers {
-			if err := binary.Read(r, binary.LittleEndian, &p.Stealers[i]); err != nil {
-				return farm.Plot{}, fmt.Errorf("store: decode plot stealer uid: %w", err)
+		p.Stealers = make([]uint64, stealerCount)
+		switch r.Len() {
+		case int(stealerCount) * 8:
+			for i := range p.Stealers {
+				if err := binary.Read(r, binary.LittleEndian, &p.Stealers[i]); err != nil {
+					return farm.Plot{}, fmt.Errorf("store: decode plot stealer uid: %w", err)
+				}
 			}
+		case int(stealerCount) * 4:
+			for i := range p.Stealers {
+				var legacyUID uint32
+				if err := binary.Read(r, binary.LittleEndian, &legacyUID); err != nil {
+					return farm.Plot{}, fmt.Errorf("store: decode legacy plot stealer uid: %w", err)
+				}
+				p.Stealers[i] = uint64(legacyUID)
+			}
+		default:
+			return farm.Plot{}, fmt.Errorf(
+				"store: decode plot: %d stealer bytes for count %d",
+				r.Len(), stealerCount,
+			)
 		}
 	}
 

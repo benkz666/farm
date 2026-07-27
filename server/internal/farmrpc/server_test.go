@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/pkgerr"
 )
@@ -131,11 +132,62 @@ func TestHandlerPublishesDeltaAfterRoutedTill(t *testing.T) {
 	}
 }
 
-func TestHandlerAcceptsOriginatorConnectionID(t *testing.T) {
+func TestHandlerExecutesShardedPlotShopSyncAndPetCommands(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0].State = farm.StateTilled
+	aggregate.Items[farm.SeedItem(1)] = 1
+	aggregate.Pet.Owned = 1
+	runtime := runtimeStub{actor: &actor.FarmActor{Aggregate: aggregate}}
+	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
+
+	plant := handler.execute(CommandRequest{
+		Operation: OperationPlotAction,
+		FarmUID:   42,
+		Payload: marshalPayload(PlotActionRequest{
+			Kind: farm.Plant, PlotIndex: 0, Arg: 1, Command: 210,
+		}),
+	})
+	buy := handler.execute(CommandRequest{
+		Operation: OperationShop,
+		FarmUID:   42,
+		Payload: marshalPayload(ShopRequest{
+			Buy: true, ItemID: uint32(farm.DogFoodShopItemID), Quantity: 4, Command: 302,
+		}),
+	})
+	sync := handler.execute(CommandRequest{
+		Operation: OperationSyncFarm,
+		FarmUID:   42,
+		Payload:   marshalPayload(SyncFarmRequest{FromSeq: 0}),
+	})
+	activate := handler.execute(CommandRequest{
+		Operation: OperationPet,
+		FarmUID:   42,
+		Payload:   marshalPayload(PetRequest{Kind: PetActivate, DogType: farm.DogMutt}),
+	})
+	feed := handler.execute(CommandRequest{
+		Operation: OperationPet,
+		FarmUID:   42,
+		Payload:   marshalPayload(PetRequest{Kind: PetFeed, Grams: 4}),
+	})
+
+	for name, response := range map[string]CommandResponse{
+		"plant": plant, "buy": buy, "sync": sync, "activate": activate, "feed": feed,
+	} {
+		if response.Err != pkgerr.OK {
+			t.Fatalf("%s response = %#v", name, response)
+		}
+	}
+	if aggregate.Plots[0].State != farm.StateGrowing || aggregate.Pet.ActiveDog != farm.DogMutt ||
+		aggregate.Pet.BowlEmptyAt <= 123 {
+		t.Fatalf("aggregate after routed commands = %#v", aggregate)
+	}
+}
+
+func TestHandlerAcceptsCompositeOriginatorConnection(t *testing.T) {
 	runtime := runtimeStub{actor: &actor.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
 	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
 	request := httptest.NewRequest(http.MethodPost, "/internal/v1/cmd", bytes.NewBufferString(
-		`{"operation":"till","farm_uid":42,"originator_conn_id":99,"payload":{"plot_index":0,"arg":0}}`,
+		`{"operation":"till","farm_uid":42,"originator":{"conn_id":99,"gateway_id":"gateway-0"},"payload":{"plot_index":0,"arg":0}}`,
 	))
 	request.Header.Set("Authorization", "Bearer internal-token")
 	recorder := httptest.NewRecorder()
@@ -209,7 +261,7 @@ type deltaPublisherStub struct {
 	published chan struct{}
 }
 
-func (p *deltaPublisherStub) Publish(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+func (p *deltaPublisherStub) Publish(_ context.Context, delta farm.FarmDelta, _ connreg.ConnRef) error {
 	p.mu.Lock()
 	p.deltas = append(p.deltas, delta)
 	p.mu.Unlock()
@@ -230,7 +282,7 @@ type blockingDeltaPublisher struct {
 	release chan struct{}
 }
 
-func (p *blockingDeltaPublisher) Publish(_ context.Context, _ farm.FarmDelta, _ uint64) error {
+func (p *blockingDeltaPublisher) Publish(_ context.Context, _ farm.FarmDelta, _ connreg.ConnRef) error {
 	close(p.started)
 	<-p.release
 	return nil

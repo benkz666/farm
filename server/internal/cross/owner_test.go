@@ -7,6 +7,7 @@ import (
 
 	"farm/server/internal/actor"
 	"farm/server/internal/bus"
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/pkgerr"
 )
@@ -48,7 +49,7 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 		ownerFriends{allowed: true},
 		eventBus,
 		func() int64 { return 40_000 },
-		DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+		DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ connreg.ConnRef) error {
 			deltas <- delta
 			return nil
 		}),

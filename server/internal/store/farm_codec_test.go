@@ -1,6 +1,9 @@
 package store_test
 
 import (
+	"bytes"
+	"encoding/binary"
+	"reflect"
 	"testing"
 
 	"farm/server/internal/farm"
@@ -63,7 +66,7 @@ func TestEncodeDecodePlot_NonZeroFields(t *testing.T) {
 		WeedSince:       1_700_020_000_000,
 		PestSince:       0,
 		AccruedWeighted: 42,
-		Stealers:        []uint32{7, 42, 100},
+		Stealers:        []uint64{7, 42, 1<<40 | 100},
 	}
 
 	blob, err := store.EncodePlot(want)
@@ -90,6 +93,46 @@ func TestEncodeDecodePlot_NonZeroFields(t *testing.T) {
 			t.Fatalf("stealers[%d] mismatch: want %d got %d", i, want.Stealers[i], got.Stealers[i])
 		}
 	}
+}
+
+func TestDecodePlotAcceptsLegacyUint32Stealers(t *testing.T) {
+	legacy := farm.Plot{
+		State:          farm.StateMature,
+		CropID:         1,
+		FinalYield:     16,
+		HarvestRound:   3,
+		SeasonDuration: 60_000,
+		MatureAt:       70_000,
+	}
+	blob, err := encodeLegacyPlotForTest(legacy, []uint32{7, 42})
+	if err != nil {
+		t.Fatalf("encode legacy plot: %v", err)
+	}
+
+	got, err := store.DecodePlot(blob)
+	if err != nil {
+		t.Fatalf("DecodePlot legacy blob: %v", err)
+	}
+	want := []uint64{7, 42}
+	if !reflect.DeepEqual(got.Stealers, want) {
+		t.Fatalf("legacy Stealers = %#v, want %#v", got.Stealers, want)
+	}
+}
+
+func encodeLegacyPlotForTest(plot farm.Plot, stealers []uint32) ([]byte, error) {
+	plot.Stealers = nil
+	blob, err := store.EncodePlot(plot)
+	if err != nil {
+		return nil, err
+	}
+	binary.LittleEndian.PutUint16(blob[len(blob)-2:], uint16(len(stealers)))
+	buffer := bytes.NewBuffer(blob)
+	for _, uid := range stealers {
+		if err := binary.Write(buffer, binary.LittleEndian, uid); err != nil {
+			return nil, err
+		}
+	}
+	return buffer.Bytes(), nil
 }
 
 // TestDecodePlot_TrailingBytes 确保 blob 末尾残留脏字节时 DecodePlot 失败，避免静默截断。

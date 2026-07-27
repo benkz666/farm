@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"farm/server/internal/actor"
+	"farm/server/internal/farm"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
@@ -79,12 +82,49 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 			response.Err = pkgerr.BadRequest
 			return response
 		}
-		mail, err := g.taskMail.ClaimMail(ctx, connection.uid, payload.MailID)
-		if err != nil {
-			response.Err = taskMailErrorCode(err)
+		if g.farmRPC != nil {
+			remote, err := g.executeFarmRPC(ctx, connection.uid, farmrpc.CommandRequest{
+				Operation: farmrpc.OperationMailClaim,
+				Payload:   marshalPayload(farmrpc.MailClaimRequest{MailID: payload.MailID}),
+			})
+			if err != nil {
+				response.Err = pkgerr.Internal
+				return response
+			}
+			response.Err = remote.Err
+			if remote.Err == pkgerr.OK {
+				response.Payload = remote.Payload
+			}
+			return response
+		}
+		if g.runtime == nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		var mail store.Mail
+		var playerDelta farm.PlayerDelta
+		var claimErr error
+		if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
+			if farmActor == nil || farmActor.Aggregate == nil {
+				return errors.New("gateway: actor aggregate is nil")
+			}
+			mail, claimErr = g.taskMail.ClaimMail(ctx, connection.uid, payload.MailID)
+			if claimErr != nil {
+				return nil
+			}
+			farmActor.Aggregate.CreditMailReward(mail.AttachmentCoin)
+			playerDelta = farmActor.Aggregate.PlayerDelta()
+			return nil
+		}); err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		if claimErr != nil {
+			response.Err = taskMailErrorCode(claimErr)
 			return response
 		}
 		response.Payload = marshalPayload(mail)
+		_ = g.PublishPlayerDelta(ctx, connection.uid, playerDelta)
 	case CommandClaimDailyLogin:
 		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
 			response.Err = pkgerr.BadRequest

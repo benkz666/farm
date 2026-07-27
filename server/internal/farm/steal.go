@@ -54,7 +54,7 @@ func (a *Aggregate) ApplySteal(action StealAction, now int64) StealResult {
 		return StealResult{Err: pkgerr.PlotNotMature}
 	}
 	for _, uid := range work.Stealers {
-		if uid == uint32(action.VisitorUID) {
+		if uid == action.VisitorUID {
 			return StealResult{Err: pkgerr.StealAlreadyDone}
 		}
 	}
@@ -69,7 +69,7 @@ func (a *Aggregate) ApplySteal(action StealAction, now int64) StealResult {
 		amount = remaining
 	}
 
-	work.Stealers = append(work.Stealers, uint32(action.VisitorUID))
+	work.Stealers = append(work.Stealers, action.VisitorUID)
 	if action.Intercept {
 		a.Plots[action.PlotIndex] = work
 		a.FarmSeq++

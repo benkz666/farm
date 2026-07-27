@@ -24,3 +24,15 @@ func (a *Aggregate) PlayerDelta() PlayerDelta {
 		Warehouse: warehouse,
 	}
 }
+
+// CreditMailReward mirrors an already committed mail attachment credit into
+// the resident authoritative aggregate so a later Actor flush cannot overwrite
+// the database reward with an older coin snapshot.
+func (a *Aggregate) CreditMailReward(amount int64) bool {
+	if a == nil || amount <= 0 {
+		return false
+	}
+	a.Coin += amount
+	a.FarmSeq++
+	return true
+}

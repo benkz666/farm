@@ -62,6 +62,19 @@ export function defaultState() {
 export const levelOf = (exp) => Math.floor(exp / EXP_PER_LEVEL);
 export const expProgress = (exp) => (exp % EXP_PER_LEVEL) / EXP_PER_LEVEL;
 
+/** 标记邮件附件已取走；金币余额只由服务端 PlayerDelta 更新。 */
+export function applyMailClaimReceipt(state, mailId, payload = {}) {
+  const mail = state.mails.find((item) => item.id === mailId);
+  const reward = Number(mail?.gold || mail?.attachmentCoin || payload?.attachment_coin) || 0;
+  if (mail) {
+    mail.claimed = true;
+    mail.read = true;
+    mail.gold = 0;
+    mail.attachmentCoin = 0;
+  }
+  return reward;
+}
+
 export function drawDailyTasks(state) {
   const pool = [...TASK_POOL];
   const tasks = [];

@@ -193,7 +193,17 @@ func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrp
 		return farmrpc.CommandResponse{}, err
 	}
 	command.FarmUID = uid
+	if command.Originator.ConnID != 0 && command.Originator.GatewayID == "" {
+		command.Originator.GatewayID = g.gatewayID
+	}
 	return g.farmRPC.Execute(ctx, farmID, command)
+}
+
+func (g *Gateway) connectionRef(connection *wsConnection) connreg.ConnRef {
+	if connection == nil {
+		return connreg.ConnRef{}
+	}
+	return connreg.ConnRef{ConnID: connection.id, GatewayID: g.gatewayID}
 }
 
 func (g *Gateway) registerConnection(ctx context.Context, connection *wsConnection) error {
@@ -220,7 +230,7 @@ func (g *Gateway) unregisterConnection(ctx context.Context, connection *wsConnec
 	}
 	g.connections.Delete(connection.id)
 	if g.connRegistry != nil && connection.uid != 0 {
-		_ = g.connRegistry.Unregister(ctx, connection.uid, connection.id)
+		_ = g.connRegistry.Unregister(ctx, connection.uid, connection.id, g.gatewayID)
 	}
 }
 

@@ -98,7 +98,15 @@ func run() error {
 		}
 		handler = combineHandlers(
 			transport.Handler(),
-			farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uint64) bool { return true }, transport.Now),
+			farmrpc.NewHandler(
+				runtime,
+				[]byte(config.internalToken),
+				func(uint64) bool { return true },
+				transport.Now,
+				farmrpc.WithPlayerDeltaPublisher(transport),
+				farmrpc.WithTaskProgressWriter(storage),
+				farmrpc.WithMailClaimer(storage),
+			),
 		)
 	case roleGateway:
 		routes, err := loadRouteTable(config.routeTable)
@@ -112,6 +120,10 @@ func run() error {
 			gateway.WithFarmRPC(farmrpc.NewHTTPClient(config.farmURLs, config.internalToken), routes),
 			gateway.WithCrossEventBus(eventBus),
 		)
+		if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
+			transport.EnableDebugTime()
+			log.Printf("debug time advance enabled (FARM_ALLOW_DEBUG_TIME=1)")
+		}
 		handler = transport.Handler()
 	case roleFarm:
 		routes, err := loadRouteTable(config.routeTable)
@@ -137,9 +149,17 @@ func run() error {
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}
-		handler = farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uid uint64) bool {
-			return owns(uid)
-		}, nil, farmrpc.WithDeltaPublisher(deltaPublisher), farmrpc.WithStealHintWriter(storage))
+		handler = farmrpc.NewHandler(
+			runtime,
+			[]byte(config.internalToken),
+			func(uid uint64) bool { return owns(uid) },
+			nil,
+			farmrpc.WithDeltaPublisher(deltaPublisher),
+			farmrpc.WithPlayerDeltaPublisher(playerDeltaPublisher),
+			farmrpc.WithStealHintWriter(storage),
+			farmrpc.WithTaskProgressWriter(storage),
+			farmrpc.WithMailClaimer(storage),
+		)
 	default:
 		return fmt.Errorf("unsupported FARM_ROLE %q", config.role)
 	}

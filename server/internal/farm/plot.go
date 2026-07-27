@@ -45,7 +45,7 @@ type Plot struct {
 	PestSince       int64 `json:"pest_since"`       // 害虫出现时刻，0 表示无虫
 	AccruedWeighted int64 `json:"accrued_weighted"` // 累计加权扣减，单位「百分点·毫秒」
 
-	Stealers []uint32 `json:"stealers,omitempty"` // 本轮已偷过的 uid，通常为 nil
+	Stealers []uint64 `json:"stealers,omitempty"` // 本轮已偷过的完整 uid，通常为 nil
 }
 
 // NewWastelandPlot 返回一块全字段置零的荒地，用于新农场初始化。

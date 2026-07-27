@@ -3,10 +3,13 @@ package bus
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/segmentio/kafka-go"
 )
 
 func TestKafkaBusRejectsMissingBrokers(t *testing.T) {
@@ -16,6 +19,31 @@ func TestKafkaBusRejectsMissingBrokers(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "brokers") {
 		t.Fatalf("错误应说明 brokers 配置无效，got %v", err)
+	}
+}
+
+func TestProcessKafkaMessageRetriesHandlerBeforeCommit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	attempts := 0
+	commits := 0
+
+	ok := processKafkaMessage(ctx, kafka.Message{Key: []byte("owner:42"), Value: []byte("payload")}, func(key string, payload []byte) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("transient publish failure")
+		}
+		if key != "owner:42" || string(payload) != "payload" {
+			t.Fatalf("handler input = %q %q", key, payload)
+		}
+		return nil
+	}, func() error {
+		commits++
+		return nil
+	})
+
+	if !ok || attempts != 2 || commits != 1 {
+		t.Fatalf("process = ok:%v attempts:%d commits:%d, want true/2/1", ok, attempts, commits)
 	}
 }
 

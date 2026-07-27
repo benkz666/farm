@@ -427,7 +427,7 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 		friends,
 		eventBus,
 		gateway.Now,
-		cross.DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+		cross.DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ connreg.ConnRef) error {
 			gateway.rooms.Broadcast(delta)
 			return nil
 		}),
@@ -1087,7 +1087,7 @@ func TestVisitorStealRejectsInsufficientCompensationBeforePublishing(t *testing.
 	}
 }
 
-func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
+func TestGatewayRoutesAuthoritativeCommandsThroughFarmRPC(t *testing.T) {
 	routes, err := routing.ParseRouteTable([]byte(`{
 		"logical_shards": 1024,
 		"routes": [{"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}]
@@ -1107,12 +1107,25 @@ func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
 			Err:     pkgerr.OK,
 			Payload: json.RawMessage(`{"farm_seq":1,"patch":{}}`),
 		},
+		{
+			Err:     pkgerr.OK,
+			Payload: json.RawMessage(`{"farm_seq":2,"patch":{}}`),
+		},
+		{
+			Err:     pkgerr.OK,
+			Payload: json.RawMessage(`{"farm_seq":2}`),
+		},
+		{
+			Err:     pkgerr.OK,
+			Payload: json.RawMessage(`{"active_dog":0,"owned":0}`),
+		},
 	}}
 	gateway := New(
 		authStub{},
 		sessionStub{uid: 42},
 		nil,
 		WithFarmRPC(client, routes),
+		WithConnectionRegistry(nil, "gateway-0"),
 	)
 	connection := &wsConnection{id: 73, uid: 42}
 
@@ -1120,28 +1133,91 @@ func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
 		Cmd:     CommandEnterFarm,
 		Payload: json.RawMessage(`{"owner_uid":0}`),
 	})
-	till := gateway.handlePlotOrShop(connection, Envelope{
-		Cmd:     CommandTill,
-		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	plant := gateway.handlePlotOrShop(connection, Envelope{
+		Cmd:     CommandPlant,
+		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
+	})
+	buy := gateway.handlePlotOrShop(connection, Envelope{
+		Cmd:     CommandBuy,
+		Payload: json.RawMessage(`{"item_id":1,"quantity":1}`),
+	})
+	sync := gateway.handleSyncFarm(connection, Envelope{
+		Cmd:     CommandSyncFarm,
+		Payload: json.RawMessage(`{"owner_uid":0,"from_seq":1}`),
+	})
+	pet := gateway.handlePet(connection, Envelope{
+		Cmd:     CommandPetStatus,
+		Payload: emptyPayload,
 	})
 
-	if enter.Err != pkgerr.OK || till.Err != pkgerr.OK {
-		t.Fatalf("responses = enter:%#v till:%#v", enter, till)
+	if enter.Err != pkgerr.OK || plant.Err != pkgerr.OK || buy.Err != pkgerr.OK ||
+		sync.Err != pkgerr.OK || pet.Err != pkgerr.OK {
+		t.Fatalf("responses = enter:%#v plant:%#v buy:%#v sync:%#v pet:%#v", enter, plant, buy, sync, pet)
 	}
-	if len(client.calls) != 2 {
-		t.Fatalf("RPC calls = %d, want 2", len(client.calls))
+	if len(client.calls) != 5 {
+		t.Fatalf("RPC calls = %d, want 5", len(client.calls))
 	}
 	for _, call := range client.calls {
-		if call.farmID != "farm-0" || call.request.FarmUID != 42 || call.request.OriginatorConnID != connection.id {
+		if call.farmID != "farm-0" || call.request.FarmUID != 42 ||
+			call.request.Originator != (connreg.ConnRef{ConnID: connection.id, GatewayID: "gateway-0"}) {
 			t.Fatalf("RPC call = %#v", call)
 		}
 	}
 	if client.calls[0].request.Operation != farmrpc.OperationEnterFarm {
 		t.Fatalf("first operation = %q", client.calls[0].request.Operation)
 	}
-	if client.calls[1].request.Operation != farmrpc.OperationTill {
+	if client.calls[1].request.Operation != farmrpc.OperationPlotAction {
 		t.Fatalf("second operation = %q", client.calls[1].request.Operation)
 	}
+	if client.calls[2].request.Operation != farmrpc.OperationShop ||
+		client.calls[3].request.Operation != farmrpc.OperationSyncFarm ||
+		client.calls[4].request.Operation != farmrpc.OperationPet {
+		t.Fatalf("routed operations = %#v", client.calls)
+	}
+}
+
+func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
+	routes, err := routing.ParseRouteTable([]byte(`{
+		"logical_shards": 1024,
+		"routes": [{"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}]
+	}`))
+	if err != nil {
+		t.Fatalf("parse route table: %v", err)
+	}
+	eventBus := bus.NewMemoryBus()
+	t.Cleanup(func() { _ = eventBus.Close() })
+	friends := newFriendStoreStub()
+	friends.add(7, 42)
+	client := &farmRPCStub{responses: []farmrpc.CommandResponse{{
+		Err:     pkgerr.OK,
+		Payload: marshalPayload(farmrpc.CrossReserveResponse{Rewarded: true}),
+	}}}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 7},
+		nil,
+		WithFarmRPC(client, routes),
+		WithFriendStore(friends),
+		WithCrossEventBus(eventBus),
+	)
+
+	response := gateway.handleVisitorMutualAid(&wsConnection{id: 1, uid: 7, roomUID: 42}, Envelope{
+		Cmd:       CommandWater,
+		ClientSeq: 9,
+		Payload:   json.RawMessage(`{"owner_uid":42,"plot_index":0,"arg":0}`),
+	})
+
+	if response.Cmd != 0 {
+		t.Fatalf("cross response = %#v, want deferred response", response)
+	}
+	if len(client.calls) != 1 || client.calls[0].request.Operation != farmrpc.OperationCrossReserve {
+		t.Fatalf("RPC calls = %#v, want CrossReserve", client.calls)
+	}
+	gateway.crossPending.Range(func(key, value any) bool {
+		value.(*crossPending).timer.Stop()
+		gateway.crossPending.Delete(key)
+		return true
+	})
 }
 
 func TestWebSocketFertilizeReturnsUpdatedPatch(t *testing.T) {

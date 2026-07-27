@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { clearSave, defaultState, loadGame, saveGame } from './state.js'
+import { applyMailClaimReceipt, clearSave, defaultState, loadGame, saveGame } from './state.js'
 
 const SAVE_KEY = 'farm3d_save_v1'
 
@@ -50,4 +50,22 @@ test('loadGame 忽略遗留权威存档', () => {
   assert.equal(loadGame(), null)
   clearSave()
   assert.equal(store.has(SAVE_KEY), false)
+})
+
+test('邮件领取回执不乐观累加金币', () => {
+  const state = defaultState()
+  state.gold = 900
+  state.mails = [{ id: 7, gold: 100, attachmentCoin: 100, claimed: false }]
+
+  const reward = applyMailClaimReceipt(state, 7, { attachment_coin: 100 })
+
+  assert.equal(reward, 100)
+  assert.equal(state.gold, 900)
+  assert.deepEqual(state.mails[0], {
+    id: 7,
+    gold: 0,
+    attachmentCoin: 0,
+    claimed: true,
+    read: true,
+  })
 })

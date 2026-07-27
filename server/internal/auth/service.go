@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -21,12 +20,12 @@ const (
 
 // Service orchestrates durable accounts and Redis-backed sessions.
 type Service struct {
-	accounts store.FarmStore
+	accounts store.AccountStore
 	sessions store.SessionStore
 }
 
 // New constructs an Auth service from its persistence boundaries.
-func New(accounts store.FarmStore, sessions store.SessionStore) *Service {
+func New(accounts store.AccountStore, sessions store.SessionStore) *Service {
 	return &Service{accounts: accounts, sessions: sessions}
 }
 
@@ -37,8 +36,8 @@ func (s *Service) Register(ctx context.Context, username, password string) (uint
 		return 0, "", fmt.Errorf("auth: hash password: %w", err)
 	}
 
-	uid := nextUID()
-	if err := s.accounts.SaveAccount(ctx, uid, username, string(passwordHash)); err != nil {
+	uid, err := s.accounts.CreateAccount(ctx, username, string(passwordHash))
+	if err != nil {
 		if errors.Is(err, store.ErrUsernameTaken) {
 			return 0, "", pkgerr.UsernameTaken
 		}
@@ -76,11 +75,4 @@ func (s *Service) Login(ctx context.Context, username, password string) (uint64,
 		return 0, "", fmt.Errorf("auth: create session: %w", err)
 	}
 	return uid, token, nil
-}
-
-var uidSequence atomic.Uint64
-
-func nextUID() uint64 {
-	// 该格式只避免单进程内短时碰撞；多实例/时钟回拨下不可保证唯一，生产环境应换雪花或数据库 ID。
-	return uint64(time.Now().UnixMilli())<<10 | uidSequence.Add(1)&0x3ff
 }

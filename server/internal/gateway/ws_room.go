@@ -49,8 +49,8 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			return response
 		}
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
-			Operation:        farmrpc.OperationEnterFarm,
-			OriginatorConnID: connection.id,
+			Operation:  farmrpc.OperationEnterFarm,
+			Originator: g.connectionRef(connection),
 		})
 		if err != nil {
 			g.leaveFarm(connection)
@@ -161,6 +161,23 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		return response
 	}
 
+	if g.farmRPC != nil {
+		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
+			Operation:  farmrpc.OperationSyncFarm,
+			Originator: g.connectionRef(connection),
+			Payload:    marshalPayload(farmrpc.SyncFarmRequest{FromSeq: payload.FromSeq}),
+		})
+		if err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		response.Err = result.Err
+		if result.Err == pkgerr.OK {
+			response.Payload = result.Payload
+		}
+		return response
+	}
+
 	var sync syncFarmResponse
 	if err := g.runtime.Do(ownerUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
@@ -238,7 +255,7 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 	if previousOwnerUID != 0 {
 		g.rooms.Unsubscribe(previousOwnerUID, connection.id)
 		if g.connRegistry != nil {
-			_ = g.connRegistry.Unsubscribe(context.Background(), previousOwnerUID, connection.id)
+			_ = g.connRegistry.Unsubscribe(context.Background(), previousOwnerUID, connection.id, g.gatewayID)
 		}
 	}
 	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta) {
@@ -266,7 +283,7 @@ func (g *Gateway) leaveFarm(connection *wsConnection) {
 	if ownerUID != 0 {
 		g.rooms.Unsubscribe(ownerUID, connection.id)
 		if g.connRegistry != nil {
-			_ = g.connRegistry.Unsubscribe(context.Background(), ownerUID, connection.id)
+			_ = g.connRegistry.Unsubscribe(context.Background(), ownerUID, connection.id, g.gatewayID)
 		}
 	}
 }

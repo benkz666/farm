@@ -30,6 +30,13 @@ type SessionStore interface {
 	Delete(ctx context.Context, token string) error
 }
 
+// AccountStore allocates globally unique account IDs in the shared database.
+// Gateway instances must not generate uid values from process-local state.
+type AccountStore interface {
+	CreateAccount(ctx context.Context, username, passwordHash string) (uint64, error)
+	GetAccountByUsername(ctx context.Context, username string) (uid uint64, passwordHash string, err error)
+}
+
 // FarmStore 管理账号与农场聚合的持久化（MySQL）与缓存（Redis `farm:{uid}`）。
 type FarmStore interface {
 	// SaveAccount 在一个事务内写入 account + player + MaxPlots 行 farm_plot
@@ -56,6 +63,7 @@ type FriendStore interface {
 // 任务领奖与每日登录只创建邮件；附件在 MailClaim 时才入账。
 type TaskMailStore interface {
 	ListTasks(ctx context.Context, uid uint64, logicDay int64) ([]Task, error)
+	AdvanceTask(ctx context.Context, uid uint64, logicDay int64, taskID, amount uint32) error
 	ClaimTask(ctx context.Context, uid uint64, logicDay int64, taskID uint32) (Mail, error)
 	ListMails(ctx context.Context, uid uint64) ([]Mail, error)
 	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error)
@@ -156,6 +164,7 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 
 var (
 	_ SessionStore  = (*Store)(nil)
+	_ AccountStore  = (*Store)(nil)
 	_ FarmStore     = (*Store)(nil)
 	_ FriendStore   = (*Store)(nil)
 	_ TaskMailStore = (*Store)(nil)

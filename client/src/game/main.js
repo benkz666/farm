@@ -7,7 +7,7 @@ import {
   YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO, DOG_BOWL_CAP, DOG_FOOD_SHOP_ITEM_ID,
   CODEX_MILESTONES, stageCount, STAGE_NAMES_3, STAGE_NAMES_4, levelUpGold, logicDayMs,
 } from './config.js';
-import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks } from './state.js';
+import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks, applyMailClaimReceipt } from './state.js';
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
@@ -950,15 +950,7 @@ const ui = new UI({
     try {
       const rsp = await netClient.mailClaim(id);
       if (rsp.err !== 0) return fail(errText(rsp.err));
-      const mail = state.mails.find((m) => m.id === id);
-      const reward = Number(mail?.gold || mail?.attachmentCoin || rsp.payload?.attachment_coin) || 0;
-      if (mail) {
-        mail.claimed = true;
-        mail.read = true;
-        mail.gold = 0;
-        mail.attachmentCoin = 0;
-      }
-      if (reward > 0) state.gold += reward;
+      const reward = applyMailClaimReceipt(state, id, rsp.payload);
       sfx.gold();
       ui.toast(reward > 0 ? `领取 💰${reward}` : '附件已领取', 'gold');
       ui.updateHUD(state);

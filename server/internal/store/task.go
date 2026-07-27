@@ -8,18 +8,23 @@ import (
 	"time"
 )
 
-// 薄任务先以已完成的桩进度交付日常领取闭环；后续本分片事件只需更新 player_task.progress。
+const (
+	TaskPlantID   uint32 = 1
+	TaskHarvestID uint32 = 2
+	TaskVisitID   uint32 = 3
+)
+
 var dailyTaskDefinitions = []struct {
 	id         uint32
 	title      string
 	rewardCoin int64
 }{
-	{id: 1, title: "完成一次播种", rewardCoin: 20},
-	{id: 2, title: "完成一次收获", rewardCoin: 30},
-	{id: 3, title: "拜访一次好友农场", rewardCoin: 40},
+	{id: TaskPlantID, title: "完成一次播种", rewardCoin: 20},
+	{id: TaskHarvestID, title: "完成一次收获", rewardCoin: 30},
+	{id: TaskVisitID, title: "拜访一次好友农场", rewardCoin: 40},
 }
 
-// ListTasks 返回指定逻辑日的三条任务，首次读取会初始化 stub 进度。
+// ListTasks 返回指定逻辑日的三条任务，首次读取以零进度初始化。
 func (s *Store) ListTasks(ctx context.Context, uid uint64, logicDay int64) ([]Task, error) {
 	if err := s.ensureDailyTasks(ctx, nil, uid, logicDay); err != nil {
 		return nil, err
@@ -47,6 +52,25 @@ func (s *Store) ListTasks(ctx context.Context, uid uint64, logicDay int64) ([]Ta
 		return nil, fmt.Errorf("store: iterate tasks: %w", err)
 	}
 	return tasks, nil
+}
+
+// AdvanceTask applies one authoritative gameplay event to a daily task.
+func (s *Store) AdvanceTask(ctx context.Context, uid uint64, logicDay int64, taskID, amount uint32) error {
+	if uid == 0 || amount == 0 || dailyTaskTitle(taskID) == "未知任务" {
+		return errors.New("store: invalid task progress")
+	}
+	if err := s.ensureDailyTasks(ctx, nil, uid, logicDay); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE player_task
+		SET progress = LEAST(target, progress + ?)
+		WHERE uid = ? AND logic_day = ? AND task_id = ?`,
+		amount, uid, logicDay, taskID,
+	); err != nil {
+		return fmt.Errorf("store: advance task %d: %w", taskID, err)
+	}
+	return nil
 }
 
 // ClaimTask 仅投递奖励邮件，附件由 ClaimMail 原子入账。
@@ -104,10 +128,9 @@ func (s *Store) ensureDailyTasks(ctx context.Context, tx *sql.Tx, uid uint64, lo
 		exec = tx.ExecContext
 	}
 	for _, task := range dailyTaskDefinitions {
-		// Stub 任务默认达标，方便在事件进度接入前验收邮件领取闭环。
 		if _, err := exec(ctx, `
 			INSERT IGNORE INTO player_task (uid, logic_day, task_id, progress, target, reward_coin)
-			VALUES (?, ?, ?, 1, 1, ?)`, uid, logicDay, task.id, task.rewardCoin); err != nil {
+			VALUES (?, ?, ?, 0, 1, ?)`, uid, logicDay, task.id, task.rewardCoin); err != nil {
 			return fmt.Errorf("store: initialize daily task %d: %w", task.id, err)
 		}
 	}
