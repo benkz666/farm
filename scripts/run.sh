@@ -152,7 +152,7 @@ start_farm_server() {
     fi
     export FARM_BUS="${FARM_BUS:-kafka}"
     export FARM_KAFKA_BROKERS="${FARM_KAFKA_BROKERS:-127.0.0.1:9094}"
-    if [[ "$role" == "gateway" || "$role" == "all" ]]; then
+    if [[ "$role" == "gateway" || "$role" == "all" || "$role" == "farm" ]]; then
       export FARM_ALLOW_DEBUG_TIME=1
     fi
     cd "$ROOT/server"
@@ -216,6 +216,10 @@ docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/005_task_mail.sql
 docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/006_account_uid_auto_increment.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/007_farm_plot_blob.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/008_mail_schema_align.sql
 
 if [[ "$MODE" == "shards" ]]; then
   info "启动双分片：farm-0/:${FARM0_PORT} farm-1/:${FARM1_PORT} gateway-0/:${GW0_PORT} gateway-1/:${GW1_PORT}"

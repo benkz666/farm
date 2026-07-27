@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"farm/server/internal/auth"
 	"farm/server/internal/bus"
 	"farm/server/internal/cross"
+	"farm/server/internal/debugclock"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/gateway"
 	"farm/server/internal/routing"
@@ -118,6 +120,7 @@ func run() error {
 			storage,
 			nil,
 			gateway.WithFarmRPC(farmrpc.NewHTTPClient(config.farmURLs, config.internalToken), routes),
+			gateway.WithDebugTimeFanout(config.farmURLs, config.gatewayURLs, config.internalToken),
 			gateway.WithCrossEventBus(eventBus),
 		)
 		if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
@@ -143,23 +146,31 @@ func run() error {
 			storage.ConnectionRegistry(),
 			farmrpc.NewHTTPPlayerDeltaPusher(config.gatewayURLs, config.internalToken),
 		)
-		owner := cross.NewOwner(runtime, storage, eventBus, nil, deltaPublisher, owns)
+		clock := &debugclock.Clock{}
+		owner := cross.NewOwner(runtime, storage, eventBus, clock.Now, deltaPublisher, owns)
 		owner.SetStealHintWriter(storage)
 		owner.SetPlayerDeltaPublisher(playerDeltaPublisher)
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}
-		handler = farmrpc.NewHandler(
+		rpcHandler := farmrpc.NewHandler(
 			runtime,
 			[]byte(config.internalToken),
 			func(uid uint64) bool { return owns(uid) },
-			nil,
+			clock.Now,
 			farmrpc.WithDeltaPublisher(deltaPublisher),
 			farmrpc.WithPlayerDeltaPublisher(playerDeltaPublisher),
 			farmrpc.WithStealHintWriter(storage),
 			farmrpc.WithTaskProgressWriter(storage),
 			farmrpc.WithMailClaimer(storage),
 		)
+		mux := http.NewServeMux()
+		mux.Handle("/internal/v1/cmd", rpcHandler)
+		if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
+			mux.Handle("/internal/v1/debug/advance", authorizeBearer(config.internalToken, clock.AdvanceHandler()))
+			log.Printf("debug time advance enabled on farm (FARM_ALLOW_DEBUG_TIME=1)")
+		}
+		handler = mux
 	default:
 		return fmt.Errorf("unsupported FARM_ROLE %q", config.role)
 	}
@@ -211,6 +222,17 @@ func combineHandlers(public http.Handler, internal http.Handler) http.Handler {
 	mux.Handle("/internal/v1/cmd", internal)
 	mux.Handle("/", public)
 	return mux
+}
+
+func authorizeBearer(token string, next http.HandlerFunc) http.Handler {
+	want := "Bearer " + strings.TrimSpace(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	})
 }
 
 func loadRouteTable(path string) (*routing.RouteTable, error) {

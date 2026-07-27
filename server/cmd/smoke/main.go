@@ -1325,6 +1325,9 @@ func runShardedDogIntercept(owner, visitor *smokePlayer, debugBaseURL string) er
 	} else if env.Err != pkgerr.OK {
 		return fmt.Errorf("PetActivate err = %d", env.Err)
 	}
+	if err := visitorEnter(visitor, owner.login.UID); err != nil {
+		return fmt.Errorf("visitor enter owner: %w", err)
+	}
 
 	for attempt := 0; attempt < stealMaxIntercept; attempt++ {
 		if attempt > 0 {

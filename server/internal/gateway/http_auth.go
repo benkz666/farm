@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -60,6 +62,9 @@ type Gateway struct {
 	crossSubscribeErr error
 	stealHints        store.StealHintStore
 	taskMail          store.TaskMailStore
+	debugFarmURLs     map[string]string
+	debugGatewayURLs  map[string]string
+	debugFarmToken    string
 }
 
 // Option configures optional Gateway boundaries.
@@ -101,6 +106,25 @@ func WithFarmRPC(client farmrpc.Client, routes *routing.RouteTable) Option {
 	return func(gateway *Gateway) {
 		gateway.farmRPC = client
 		gateway.routes = routes
+	}
+}
+
+// WithDebugTimeFanout fans /api/debug/advance to every Farm and peer Gateway
+// so sharded smoke keeps all process clocks aligned. Peer Gateways receive the
+// local-only internal endpoint to avoid recursive fan-out.
+func WithDebugTimeFanout(farmURLs, gatewayURLs map[string]string, token string) Option {
+	farms := make(map[string]string, len(farmURLs))
+	for id, endpoint := range farmURLs {
+		farms[id] = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	gateways := make(map[string]string, len(gatewayURLs))
+	for id, endpoint := range gatewayURLs {
+		gateways[id] = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	return func(gateway *Gateway) {
+		gateway.debugFarmURLs = farms
+		gateway.debugGatewayURLs = gateways
+		gateway.debugFarmToken = strings.TrimSpace(token)
 	}
 }
 
@@ -180,6 +204,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/internal/v1/push/player-delta", g.receivePlayerDelta)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
+		mux.HandleFunc("/internal/v1/debug/advance", g.debugAdvanceLocal)
 	}
 	return mux
 }
@@ -314,7 +339,80 @@ func (g *Gateway) debugAdvance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	g.offsetMs.Add(req.MS)
+	if err := g.fanoutDebugAdvance(r.Context(), req.MS); err != nil {
+		writeHTTPError(w, pkgerr.Internal, http.StatusBadGateway)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]int64{"server_time": g.Now()})
+}
+
+// debugAdvanceLocal advances only this Gateway's clock. Used by peer fan-out
+// so /api/debug/advance does not recurse across the Gateway mesh.
+func (g *Gateway) debugAdvanceLocal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if g.debugFarmToken != "" {
+		want := "Bearer " + g.debugFarmToken
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<10))
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var req debugAdvanceRequest
+	if err := json.Unmarshal(body, &req); err != nil || req.MS <= 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	g.offsetMs.Add(req.MS)
+	writeJSON(w, http.StatusOK, map[string]int64{"server_time": g.Now()})
+}
+
+func (g *Gateway) fanoutDebugAdvance(ctx context.Context, ms int64) error {
+	body, err := json.Marshal(debugAdvanceRequest{MS: ms})
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	post := func(label, url string) error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("gateway: build debug advance for %s: %w", label, err)
+		}
+		if g.debugFarmToken != "" {
+			request.Header.Set("Authorization", "Bearer "+g.debugFarmToken)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			return fmt.Errorf("gateway: debug advance %s: %w", label, err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return fmt.Errorf("gateway: debug advance %s HTTP %d", label, response.StatusCode)
+		}
+		return nil
+	}
+	for farmID, endpoint := range g.debugFarmURLs {
+		if err := post(farmID, endpoint+"/internal/v1/debug/advance"); err != nil {
+			return err
+		}
+	}
+	for peerID, endpoint := range g.debugGatewayURLs {
+		if peerID == g.gatewayID {
+			continue
+		}
+		if err := post(peerID, endpoint+"/internal/v1/debug/advance"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type authRequest struct {
