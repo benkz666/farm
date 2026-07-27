@@ -52,6 +52,35 @@ type FriendStore interface {
 	FindUserByUsername(ctx context.Context, username string) (UserSearchRow, error)
 }
 
+// TaskMailStore 管理逻辑日任务、奖励邮件和附件领取。
+// 任务领奖与每日登录只创建邮件；附件在 MailClaim 时才入账。
+type TaskMailStore interface {
+	ListTasks(ctx context.Context, uid uint64, logicDay int64) ([]Task, error)
+	ClaimTask(ctx context.Context, uid uint64, logicDay int64, taskID uint32) (Mail, error)
+	ListMails(ctx context.Context, uid uint64) ([]Mail, error)
+	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error)
+	ClaimDailyLogin(ctx context.Context, uid uint64, logicDay int64) (Mail, error)
+}
+
+// Task 是当前逻辑日任务的客户端安全视图。
+type Task struct {
+	ID         uint32 `json:"id"`
+	Title      string `json:"title"`
+	Progress   uint32 `json:"progress"`
+	Target     uint32 `json:"target"`
+	RewardCoin int64  `json:"reward_coin"`
+	Claimed    bool   `json:"claimed"`
+}
+
+// Mail 是个人邮件与其可领取金币附件。
+type Mail struct {
+	ID             uint64 `json:"id"`
+	Title          string `json:"title"`
+	AttachmentCoin int64  `json:"attachment_coin"`
+	Claimed        bool   `json:"claimed"`
+	CreatedAt      int64  `json:"created_at"`
+}
+
 // UserSearchRow 是按用户名搜索好友时可公开的玩家标识与昵称。
 // 不返回账号密码哈希，避免认证字段穿过社交边界。
 type UserSearchRow struct {
@@ -61,14 +90,20 @@ type UserSearchRow struct {
 
 // 哨兵错误，供上层用 errors.Is 判定并映射到 pkgerr 协议码。
 var (
-	ErrUsernameTaken   = errors.New("store: username already taken")
-	ErrAccountNotFound = errors.New("store: account not found")
-	ErrSessionNotFound = errors.New("store: session not found")
-	ErrFarmNotFound    = errors.New("store: farm not found")
-	ErrPlayerNotFound  = errors.New("store: player not found")
-	ErrAlreadyFriend   = errors.New("store: already friends")
-	ErrFriendLimitSelf = errors.New("store: friend limit reached for self")
-	ErrFriendLimitPeer = errors.New("store: friend limit reached for peer")
+	ErrUsernameTaken            = errors.New("store: username already taken")
+	ErrAccountNotFound          = errors.New("store: account not found")
+	ErrSessionNotFound          = errors.New("store: session not found")
+	ErrFarmNotFound             = errors.New("store: farm not found")
+	ErrPlayerNotFound           = errors.New("store: player not found")
+	ErrAlreadyFriend            = errors.New("store: already friends")
+	ErrFriendLimitSelf          = errors.New("store: friend limit reached for self")
+	ErrFriendLimitPeer          = errors.New("store: friend limit reached for peer")
+	ErrTaskNotComplete          = errors.New("store: task not complete")
+	ErrTaskAlreadyClaimed       = errors.New("store: task already claimed")
+	ErrMailNotFound             = errors.New("store: mail not found")
+	ErrMailNoAttachment         = errors.New("store: mail has no attachment")
+	ErrMailAlreadyClaimed       = errors.New("store: mail attachment already claimed")
+	ErrDailyLoginAlreadyClaimed = errors.New("store: daily login already claimed")
 )
 
 const (
@@ -120,7 +155,8 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 }
 
 var (
-	_ SessionStore = (*Store)(nil)
-	_ FarmStore    = (*Store)(nil)
-	_ FriendStore  = (*Store)(nil)
+	_ SessionStore  = (*Store)(nil)
+	_ FarmStore     = (*Store)(nil)
+	_ FriendStore   = (*Store)(nil)
+	_ TaskMailStore = (*Store)(nil)
 )

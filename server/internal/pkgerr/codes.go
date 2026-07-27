@@ -93,3 +93,12 @@ const (
 	BowlFull        Code = 1503 // ERR_BOWL_FULL 狗盆已经满了
 	NoDogFood       Code = 1504 // ERR_NO_DOG_FOOD 狗粮不足
 )
+
+// 4.7 任务、邮件与图鉴（1600—1699）。
+const (
+	TaskNotComplete    Code = 1601 // ERR_TASK_NOT_COMPLETE 任务尚未完成
+	TaskAlreadyClaimed Code = 1602 // ERR_TASK_ALREADY_CLAIMED 任务奖励已领取
+	MailNotFound       Code = 1603 // ERR_MAIL_NOT_FOUND 邮件不存在或已过期
+	MailNoAttachment   Code = 1604 // ERR_MAIL_NO_ATTACHMENT 这封邮件没有附件
+	MailAlreadyClaimed Code = 1605 // ERR_MAIL_ALREADY_CLAIMED 附件已领取
+)

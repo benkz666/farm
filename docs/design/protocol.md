@@ -441,6 +441,7 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 | 608 | `MailClaim` | 领取附件（策划 15.2） |
 | 610 | `MailDelete` | 删除 |
 | 612 | `CodexList` | 图鉴（策划 16 章） |
+| 614 | `ClaimDailyLogin` | 领取当日登录奖励；同一逻辑日重复返回 `ERR_DUPLICATE_OK` |
 
 ### 5.8 服务端推送（9000—9099）
 

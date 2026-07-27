@@ -206,6 +206,10 @@ docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/002_items.sql
 docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/003_friendship.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/004_pet.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/005_task_mail.sql
 
 if [[ "$MODE" == "shards" ]]; then
   info "启动双分片：farm-0/:${FARM0_PORT} farm-1/:${FARM1_PORT} gateway-0/:${GW0_PORT} gateway-1/:${GW1_PORT}"

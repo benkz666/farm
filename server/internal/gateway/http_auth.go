@@ -59,6 +59,7 @@ type Gateway struct {
 	nextCrossReqID    atomic.Uint64
 	crossSubscribeErr error
 	stealHints        store.StealHintStore
+	taskMail          store.TaskMailStore
 }
 
 // Option configures optional Gateway boundaries.
@@ -75,6 +76,13 @@ func WithFriendStore(friends store.FriendStore) Option {
 func WithStealHintStore(hints store.StealHintStore) Option {
 	return func(gateway *Gateway) {
 		gateway.stealHints = hints
+	}
+}
+
+// WithTaskMailStore configures task, mail and daily-login persistence.
+func WithTaskMailStore(taskMail store.TaskMailStore) Option {
+	return func(gateway *Gateway) {
+		gateway.taskMail = taskMail
 	}
 }
 

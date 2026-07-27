@@ -172,6 +172,7 @@ func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime
 	baseOptions := []gateway.Option{
 		gateway.WithFriendStore(storage),
 		gateway.WithStealHintStore(storage),
+		gateway.WithTaskMailStore(storage),
 		gateway.WithInviteSecret([]byte(config.inviteSecret)),
 		gateway.WithConnectionRegistry(storage.ConnectionRegistry(), config.instanceID),
 		gateway.WithInternalPushToken(config.internalToken),
