@@ -382,8 +382,9 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 		a.Plots[idx] = *work
 	} else {
 		a.Plots[idx] = Plot{
-			State:  StateResidue,
-			CropID: cropID,
+			State:        StateResidue,
+			CropID:       cropID,
+			HarvestRound: work.HarvestRound,
 		}
 	}
 	a.FarmSeq++
