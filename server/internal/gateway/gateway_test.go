@@ -16,7 +16,9 @@ import (
 
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/routing"
 	"farm/server/internal/social"
 	"farm/server/internal/store"
 )
@@ -714,6 +716,63 @@ func TestWebSocketTillSuccessAndFailure(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
+	routes, err := routing.ParseRouteTable([]byte(`{
+		"logical_shards": 1024,
+		"routes": [{"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}]
+	}`))
+	if err != nil {
+		t.Fatalf("parse route table: %v", err)
+	}
+	client := &farmRPCStub{responses: []farmrpc.CommandResponse{
+		{
+			Err: pkgerr.OK,
+			Payload: marshalPayload(farmrpc.EnterFarmResponse{
+				Snapshot:   farm.NewAggregate(42, "alice").Snapshot(),
+				ServerTime: 123,
+			}),
+		},
+		{
+			Err:     pkgerr.OK,
+			Payload: json.RawMessage(`{"farm_seq":1,"patch":{}}`),
+		},
+	}}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		nil,
+		WithFarmRPC(client, routes),
+	)
+	connection := &wsConnection{uid: 42}
+
+	enter := gateway.handleEnterFarm(connection, Envelope{
+		Cmd:     CommandEnterFarm,
+		Payload: json.RawMessage(`{"owner_uid":0}`),
+	})
+	till := gateway.handlePlotOrShop(connection, Envelope{
+		Cmd:     CommandTill,
+		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+
+	if enter.Err != pkgerr.OK || till.Err != pkgerr.OK {
+		t.Fatalf("responses = enter:%#v till:%#v", enter, till)
+	}
+	if len(client.calls) != 2 {
+		t.Fatalf("RPC calls = %d, want 2", len(client.calls))
+	}
+	for _, call := range client.calls {
+		if call.farmID != "farm-0" || call.request.FarmUID != 42 {
+			t.Fatalf("RPC call = %#v", call)
+		}
+	}
+	if client.calls[0].request.Operation != farmrpc.OperationEnterFarm {
+		t.Fatalf("first operation = %q", client.calls[0].request.Operation)
+	}
+	if client.calls[1].request.Operation != farmrpc.OperationTill {
+		t.Fatalf("second operation = %q", client.calls[1].request.Operation)
+	}
+}
+
 func TestWebSocketFertilizeReturnsUpdatedPatch(t *testing.T) {
 	t.Parallel()
 
@@ -1323,6 +1382,26 @@ func (s runtimeHookStub) Do(_ uint64, fn func(*actor.FarmActor) error) error {
 		s.after()
 	}
 	return nil
+}
+
+type farmRPCStub struct {
+	responses []farmrpc.CommandResponse
+	calls     []farmRPCCall
+}
+
+type farmRPCCall struct {
+	farmID  string
+	request farmrpc.CommandRequest
+}
+
+func (s *farmRPCStub) Execute(_ context.Context, farmID string, request farmrpc.CommandRequest) (farmrpc.CommandResponse, error) {
+	s.calls = append(s.calls, farmRPCCall{farmID: farmID, request: request})
+	if len(s.responses) == 0 {
+		return farmrpc.CommandResponse{}, errors.New("unexpected Farm RPC command")
+	}
+	response := s.responses[0]
+	s.responses = s.responses[1:]
+	return response, nil
 }
 
 type friendStoreStub struct {

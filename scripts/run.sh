@@ -156,6 +156,8 @@ info "启动 farm-server → :${HTTP_PORT}"
   . "$ROOT/.env"
   set +a
   export FARM_HTTP_ADDR=":${HTTP_PORT}"
+  # 此脚本是单进程开发入口，不能受 .env 中分布式角色配置影响。
+  export FARM_ROLE=all
   export FARM_ALLOW_DEBUG_TIME=1
   cd "$ROOT/server"
   exec go run ./cmd/farm-server

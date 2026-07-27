@@ -6,6 +6,7 @@ import (
 
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
 )
 
@@ -37,6 +38,44 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	ownerUID, relation, code := g.farmAccess(connection.uid, payload.OwnerUID)
 	if code != pkgerr.OK {
 		response.Err = code
+		return response
+	}
+
+	if g.farmRPC != nil {
+		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
+			Operation: farmrpc.OperationEnterFarm,
+		})
+		if err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		if result.Err != pkgerr.OK {
+			response.Err = result.Err
+			return response
+		}
+		var remote farmrpc.EnterFarmResponse
+		if err := unmarshalPayload(result.Payload, &remote); err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		g.enterRoom(connection, ownerUID)
+		if relation == "FRIEND" {
+			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+			if err != nil || !stillFriends {
+				g.leaveFarm(connection)
+				response.Err = pkgerr.NotFriend
+				if err != nil {
+					response.Err = pkgerr.Internal
+				}
+				return response
+			}
+		}
+		response.Payload = marshalPayload(enterFarmResponse{
+			Snapshot:   remote.Snapshot,
+			FarmSeq:    remote.FarmSeq,
+			ServerTime: remote.ServerTime,
+			Relation:   relation,
+		})
 		return response
 	}
 

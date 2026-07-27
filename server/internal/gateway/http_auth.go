@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/routing"
 	"farm/server/internal/store"
 )
 
@@ -31,6 +33,8 @@ type Gateway struct {
 	auth         Authenticator
 	sessions     store.SessionStore
 	runtime      FarmRuntime
+	farmRPC      farmrpc.Client
+	routes       *routing.RouteTable
 	friends      store.FriendStore
 	inviteSecret []byte
 	now          func() int64
@@ -55,6 +59,16 @@ func WithInviteSecret(secret []byte) Option {
 	secret = append([]byte(nil), secret...)
 	return func(gateway *Gateway) {
 		gateway.inviteSecret = secret
+	}
+}
+
+// WithFarmRPC enables routed Farm commands for a gateway-only process. The
+// route table is immutable after startup, so concurrent WebSocket requests may
+// safely share it.
+func WithFarmRPC(client farmrpc.Client, routes *routing.RouteTable) Option {
+	return func(gateway *Gateway) {
+		gateway.farmRPC = client
+		gateway.routes = routes
 	}
 }
 
@@ -105,6 +119,18 @@ func (g *Gateway) Handler() http.Handler {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 	}
 	return mux
+}
+
+func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrpc.CommandRequest) (farmrpc.CommandResponse, error) {
+	if g.farmRPC == nil || g.routes == nil {
+		return farmrpc.CommandResponse{}, errors.New("gateway: farm RPC is not configured")
+	}
+	farmID, err := g.routes.FarmID(uid)
+	if err != nil {
+		return farmrpc.CommandResponse{}, err
+	}
+	command.FarmUID = uid
+	return g.farmRPC.Execute(ctx, farmID, command)
 }
 
 type debugAdvanceRequest struct {

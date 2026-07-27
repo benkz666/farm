@@ -80,7 +80,7 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		writeHTTPError(w, pkgerr.BadRequest, http.StatusUpgradeRequired)
 		return
 	}
-	if g.sessions == nil || g.runtime == nil {
+	if g.sessions == nil || (g.runtime == nil && g.farmRPC == nil) {
 		writeHTTPError(w, pkgerr.Internal, http.StatusServiceUnavailable)
 		return
 	}

@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down migrate run client-dev test smoke smoke-friends smoke-room smoke-all run-all stop-all
+.PHONY: compose-up compose-down migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-all run-all stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -19,6 +19,22 @@ run:
 	if [ -f .env ]; then . ./.env; fi; \
 	set +a; \
 	export FARM_ALLOW_DEBUG_TIME=$${FARM_ALLOW_DEBUG_TIME:-1}; \
+	cd server && go run ./cmd/farm-server
+
+# 独立 Gateway：客户端 HTTP/WS 入口，EnterFarm/Till 通过内部 HTTP 转到目标 Farm。
+run-gateway:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	export FARM_ROLE=gateway; \
+	cd server && go run ./cmd/farm-server
+
+# 独立 Farm：只提供 /internal/v1/cmd；FARM_INSTANCE_ID 必须在路由表中存在。
+run-farm:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	export FARM_ROLE=farm; \
 	cd server && go run ./cmd/farm-server
 
 client-dev:

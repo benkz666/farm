@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"errors"
 
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
+	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
 )
 
@@ -61,6 +63,25 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 		if payload.Arg > 0xFFFF {
 			response.Err = pkgerr.BadRequest
+			return response
+		}
+		if request.Cmd == CommandTill && g.farmRPC != nil {
+			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
+				Operation: farmrpc.OperationTill,
+				Payload:   request.Payload,
+			})
+			if err != nil {
+				response.Err = pkgerr.Internal
+				return response
+			}
+			response.Err = remote.Err
+			if remote.Err == pkgerr.OK {
+				response.Payload = remote.Payload
+			}
+			return response
+		}
+		if g.runtime == nil {
+			response.Err = pkgerr.Internal
 			return response
 		}
 
