@@ -1,6 +1,6 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-all run-all run-shards stop-all
+.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-help smoke-all run-all run-shards stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -82,6 +82,15 @@ smoke-shards:
 	if [ -f .env ]; then . ./.env; fi; \
 	set +a; \
 	cd server && go run ./cmd/smoke shards
+
+# 期 4b 互助冒烟：A/B 跨逻辑片 → 好友 → A 翻地种植 → B 拜访 A 浇水成功得经验 →
+# 立即再浇得 AlreadyWatered（失败回滚计数）→ A SyncFarm 确认提交。
+# 需先 make run（all 模式，:9002）且 FARM_ALLOW_DEBUG_TIME=1。
+smoke-help:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke help
 
 run-all:
 	./scripts/run.sh

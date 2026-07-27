@@ -75,8 +75,10 @@ func main() {
 		fmt.Println("smoke: room enter/delta/sync passed")
 	case "shards":
 		fmt.Println("smoke: cross-shard friend EnterFarm passed")
+	case "help":
+		fmt.Println("smoke: cross-farm mutual aid water passed")
 	case "all":
-		fmt.Println("smoke: planting + friends + room passed")
+		fmt.Println("smoke: planting + friends + room + help passed")
 	default:
 		fmt.Println("smoke: planting buy/till/plant/advance/harvest/sell passed")
 	}
@@ -93,6 +95,8 @@ func run(mode string) error {
 		gw0 := strings.TrimRight(getenv("FARM_SMOKE_GATEWAY0", defaultGW0URL), "/")
 		gw1 := strings.TrimRight(getenv("FARM_SMOKE_GATEWAY1", defaultGW1URL), "/")
 		return runShards(gw0, gw1)
+	case "help":
+		return runHelp(baseURL)
 	case "all":
 		if err := runPlanting(baseURL); err != nil {
 			return err
@@ -100,7 +104,10 @@ func run(mode string) error {
 		if err := runFriends(baseURL); err != nil {
 			return err
 		}
-		return runRoom(baseURL)
+		if err := runRoom(baseURL); err != nil {
+			return err
+		}
+		return runHelp(baseURL)
 	default:
 		return runPlanting(baseURL)
 	}
@@ -804,6 +811,234 @@ func friendListContains(friends []friendEntry, uid uint64) bool {
 		}
 	}
 	return false
+}
+
+// runHelp 覆盖期 4b 互助主路径：A/B 跨逻辑片（all 模式下同进程内存总线）→
+// 好友 → A 翻地种植 → B 拜访 A → B 浇水成功得经验 → B 立即再浇一次得
+// AlreadyWatered 且无奖励（失败回滚计数）→ A SyncFarm 确认浇水已提交。
+func runHelp(baseURL string) error {
+	routes, err := loadSmokeRouteTable()
+	if err != nil {
+		return err
+	}
+
+	loginA, farmA, err := registerOnFarm(baseURL, routes, "farm-0")
+	if err != nil {
+		return fmt.Errorf("register A on farm-0: %w", err)
+	}
+	loginB, farmB, err := registerOnFarm(baseURL, routes, "farm-1")
+	if err != nil {
+		return fmt.Errorf("register B on farm-1: %w", err)
+	}
+	if farmA == farmB {
+		return fmt.Errorf("A and B landed on same farm %q", farmA)
+	}
+	fmt.Printf("smoke help: A uid=%d farm=%s; B uid=%d farm=%s\n",
+		loginA.UID, farmA, loginB.UID, farmB)
+
+	connA, err := dialAndHandshake(loginA)
+	if err != nil {
+		return fmt.Errorf("connect A: %w", err)
+	}
+	defer connA.Close()
+	connB, err := dialAndHandshake(loginB)
+	if err != nil {
+		return fmt.Errorf("connect B: %w", err)
+	}
+	defer connB.Close()
+
+	seqA := uint32(2)
+	seqB := uint32(2)
+
+	// 好友关系：A GenShareLink → B AcceptInvite。
+	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandGenShareLink,
+		ClientSeq: seqA,
+		Payload:   emptyJSONObject,
+	})
+	if err != nil {
+		return fmt.Errorf("GenShareLink: %w", err)
+	}
+	seqA++
+	var share genShareLinkResponse
+	if err := json.Unmarshal(shareEnv.Payload, &share); err != nil {
+		return fmt.Errorf("decode GenShareLink: %w", err)
+	}
+	token := strings.TrimPrefix(share.Path, "/i/")
+	if token == "" {
+		return fmt.Errorf("share token is empty")
+	}
+	if _, err := exchangeResponse(connB, gateway.Envelope{
+		Cmd:       gateway.CommandAcceptInvite,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"token": token}),
+	}); err != nil {
+		return fmt.Errorf("AcceptInvite: %w", err)
+	}
+	seqB++
+
+	// A 进入自己农场，买种、翻地、种植 plot 0。
+	if _, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
+	}); err != nil {
+		return fmt.Errorf("A EnterFarm(self): %w", err)
+	}
+	seqA++
+	if _, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandBuy,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"item_id": 1, "quantity": 1}),
+	}); err != nil {
+		return fmt.Errorf("A Buy seed: %w", err)
+	}
+	seqA++
+	if _, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandTill,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0, "plot_index": 0, "arg": 0}),
+	}); err != nil {
+		return fmt.Errorf("A Till: %w", err)
+	}
+	seqA++
+	if _, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandPlant,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0, "plot_index": 0, "arg": 1}),
+	}); err != nil {
+		return fmt.Errorf("A Plant: %w", err)
+	}
+	seqA++
+
+	// 推进到首次可浇水窗口，避免种植后立即浇水被判 AlreadyWatered。
+	crop, ok := gameconf.CropByID(1)
+	if !ok {
+		return fmt.Errorf("missing white radish crop config")
+	}
+	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	waterSpan := seasonMS * 35 / 100
+	if err := debugAdvance(baseURL, waterSpan); err != nil {
+		return fmt.Errorf("advance to water window: %w", err)
+	}
+
+	// B 拜访 A：relation=FRIEND。
+	enterBEnv, err := exchangeResponse(connB, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID}),
+	})
+	if err != nil {
+		return fmt.Errorf("B EnterFarm(A): %w", err)
+	}
+	seqB++
+	var enterB enterFarmResponse
+	if err := json.Unmarshal(enterBEnv.Payload, &enterB); err != nil {
+		return fmt.Errorf("decode B EnterFarm: %w", err)
+	}
+	if enterB.Relation != "FRIEND" {
+		return fmt.Errorf("B relation = %q, want FRIEND", enterB.Relation)
+	}
+
+	// B 浇水成功：得经验 2，无金币。可能伴随 FarmDelta 推送，需多帧匹配。
+	water1, err := exchangeVisitorEnvelope(connB, &seqB, gateway.CommandWater, loginA.UID, 0)
+	if err != nil {
+		return fmt.Errorf("B Water#1: %w", err)
+	}
+	if water1.Err != pkgerr.OK {
+		return fmt.Errorf("B Water#1 err = %d, want 0", water1.Err)
+	}
+	var reward crossRewardResponse
+	if err := json.Unmarshal(water1.Payload, &reward); err != nil {
+		return fmt.Errorf("decode Water#1 reward: %w", err)
+	}
+	if reward.ExpGained != 2 {
+		return fmt.Errorf("Water#1 exp_gained = %d, want 2", reward.ExpGained)
+	}
+	if reward.CoinGained != 0 {
+		return fmt.Errorf("Water#1 coin_gained = %d, want 0", reward.CoinGained)
+	}
+
+	// B 立即再浇一次：水分已满，应得 AlreadyWatered 且无奖励（失败回滚计数）。
+	water2, err := exchangeVisitorEnvelope(connB, &seqB, gateway.CommandWater, loginA.UID, 0)
+	if err != nil {
+		return fmt.Errorf("B Water#2: %w", err)
+	}
+	if water2.Err != pkgerr.AlreadyWatered {
+		return fmt.Errorf("Water#2 err = %d, want %d (AlreadyWatered)", water2.Err, pkgerr.AlreadyWatered)
+	}
+	if len(water2.Payload) != 0 && string(water2.Payload) != "{}" {
+		return fmt.Errorf("Water#2 payload = %s, want empty (no reward on failure)", string(water2.Payload))
+	}
+
+	// A SyncFarm(from=0)：浇水已提交，farm_seq 应 >=1。
+	syncEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandSyncFarm,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0, "from_seq": 0}),
+	})
+	if err != nil {
+		return fmt.Errorf("A SyncFarm: %w", err)
+	}
+	seqA++
+	var sync syncFarmResponse
+	if err := json.Unmarshal(syncEnv.Payload, &sync); err != nil {
+		return fmt.Errorf("decode A SyncFarm: %w", err)
+	}
+	if sync.FarmSeq == 0 {
+		return fmt.Errorf("A SyncFarm farm_seq = 0, want >=1 (water committed)")
+	}
+	return nil
+}
+
+// crossRewardResponse mirrors gateway.crossActionResponse; duplicated here
+// because the gateway type is unexported.
+type crossRewardResponse struct {
+	ReqID      uint64 `json:"req_id"`
+	ExpGained  uint32 `json:"exp_gained"`
+	CoinGained int64  `json:"coin_gained"`
+}
+
+// exchangeVisitorEnvelope sends a visiting plot action and reads frames until
+// it finds the matching response, draining any FarmDelta(9000) pushes the
+// server emits to the visiting connection. It does NOT assert Err so callers
+// can branch on success/failure codes.
+func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, ownerUID uint64, plotIndex uint32) (gateway.Envelope, error) {
+	request := gateway.Envelope{
+		Cmd:       cmd,
+		ClientSeq: *seq,
+		Payload:   mustJSON(map[string]any{"owner_uid": ownerUID, "plot_index": plotIndex, "arg": 0}),
+	}
+	*seq++
+	data, err := gateway.EncodeEnvelope(request)
+	if err != nil {
+		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return gateway.Envelope{}, fmt.Errorf("set read deadline: %w", err)
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	for attempt := 0; attempt < 4; attempt++ {
+		messageType, frame, err := conn.ReadMessage()
+		if err != nil {
+			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		env, err := gateway.DecodeEnvelope(frame)
+		if err != nil {
+			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+		}
+		if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
+			return env, nil
+		}
+		// 服务端主动推送（如 FarmDelta）忽略，继续等待匹配响应。
+	}
+	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 // runShards 覆盖期 4a 双分片主路径：A/B 落不同物理 Farm，分别连 gateway-0/1，
