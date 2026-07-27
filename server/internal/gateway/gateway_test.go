@@ -865,7 +865,7 @@ func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
 		nil,
 		WithFarmRPC(client, routes),
 	)
-	connection := &wsConnection{uid: 42}
+	connection := &wsConnection{id: 73, uid: 42}
 
 	enter := gateway.handleEnterFarm(connection, Envelope{
 		Cmd:     CommandEnterFarm,
@@ -883,7 +883,7 @@ func TestGatewayRoutesEnterFarmAndTillThroughFarmRPC(t *testing.T) {
 		t.Fatalf("RPC calls = %d, want 2", len(client.calls))
 	}
 	for _, call := range client.calls {
-		if call.farmID != "farm-0" || call.request.FarmUID != 42 {
+		if call.farmID != "farm-0" || call.request.FarmUID != 42 || call.request.OriginatorConnID != connection.id {
 			t.Fatalf("RPC call = %#v", call)
 		}
 	}

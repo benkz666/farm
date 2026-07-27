@@ -30,9 +30,10 @@ const (
 // CommandRequest is the HTTP JSON payload sent from a Gateway to the Farm
 // authoritative for FarmUID. The Gateway authenticates the player first.
 type CommandRequest struct {
-	Operation Operation       `json:"operation"`
-	FarmUID   uint64          `json:"farm_uid"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
+	Operation        Operation       `json:"operation"`
+	FarmUID          uint64          `json:"farm_uid"`
+	OriginatorConnID uint64          `json:"originator_conn_id,omitempty"`
+	Payload          json.RawMessage `json:"payload,omitempty"`
 }
 
 // CommandResponse preserves protocol-level errors inside a successful internal
@@ -150,7 +151,7 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 
 	switch request.Operation {
 	case OperationEnterFarm:
-		return h.enterFarm(request.FarmUID)
+		return h.enterFarm(request)
 	case OperationTill:
 		return h.till(request)
 	default:
@@ -158,10 +159,10 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 	}
 }
 
-func (h *Handler) enterFarm(uid uint64) CommandResponse {
+func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	var response EnterFarmResponse
 	var delta *farm.FarmDelta
-	if err := h.runtime.Do(uid, func(farmActor *actor.FarmActor) error {
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
@@ -173,7 +174,7 @@ func (h *Handler) enterFarm(uid uint64) CommandResponse {
 		}
 		if len(changes) > 0 {
 			emitted := farm.FarmDelta{
-				OwnerUID: uid,
+				OwnerUID: command.FarmUID,
 				FarmSeq:  farmActor.Aggregate.FarmSeq,
 				Plots:    changes,
 			}
@@ -184,7 +185,7 @@ func (h *Handler) enterFarm(uid uint64) CommandResponse {
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
 	}
-	h.publishDelta(delta)
+	h.publishDelta(delta, command.OriginatorConnID)
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
@@ -228,16 +229,20 @@ func (h *Handler) till(command CommandRequest) CommandResponse {
 	if result.Err != pkgerr.OK {
 		return CommandResponse{Err: result.Err}
 	}
-	h.publishDelta(delta)
+	h.publishDelta(delta, command.OriginatorConnID)
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
-func (h *Handler) publishDelta(delta *farm.FarmDelta) {
+func (h *Handler) publishDelta(delta *farm.FarmDelta, originatorConnID uint64) {
 	if delta == nil || h.deltaPublisher == nil {
 		return
 	}
-	// Delta delivery is best effort; SyncFarm recovers a missed callback.
-	_ = h.deltaPublisher.Publish(context.Background(), *delta)
+	publisher := h.deltaPublisher
+	emitted := *delta
+	go func() {
+		// Delta delivery is best effort; SyncFarm recovers a missed callback.
+		_ = publisher.Publish(context.Background(), emitted, originatorConnID)
+	}()
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

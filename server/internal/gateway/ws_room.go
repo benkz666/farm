@@ -49,7 +49,8 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			return response
 		}
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
-			Operation: farmrpc.OperationEnterFarm,
+			Operation:        farmrpc.OperationEnterFarm,
+			OriginatorConnID: connection.id,
 		})
 		if err != nil {
 			g.leaveFarm(connection)

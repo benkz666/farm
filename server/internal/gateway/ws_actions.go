@@ -67,8 +67,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 		if request.Cmd == CommandTill && g.farmRPC != nil {
 			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-				Operation: farmrpc.OperationTill,
-				Payload:   request.Payload,
+				Operation:        farmrpc.OperationTill,
+				OriginatorConnID: connection.id,
+				Payload:          request.Payload,
 			})
 			if err != nil {
 				response.Err = pkgerr.Internal
