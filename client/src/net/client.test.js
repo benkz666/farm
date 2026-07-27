@@ -41,6 +41,24 @@ test('SearchUser 使用 410 命令按用户名精确查询', async () => {
   })
 })
 
+test('Steal / Pet / Task / Mail / DailyLogin 使用约定命令和载荷', async () => {
+  const client = new NetClient()
+  client.request = async (cmd, payload) => ({ cmd, payload })
+
+  assert.deepEqual(await client.steal(9, 3, 1), {
+    cmd: 222,
+    payload: { owner_uid: 9, plot_index: 3, crop_id: 1 },
+  })
+  assert.deepEqual(await client.petStatus(), { cmd: 500, payload: {} })
+  assert.deepEqual(await client.petActivate(1), { cmd: 502, payload: { dog_type: 1 } })
+  assert.deepEqual(await client.petFeed(50), { cmd: 504, payload: { grams: 50 } })
+  assert.deepEqual(await client.taskList(), { cmd: 600, payload: {} })
+  assert.deepEqual(await client.taskClaim(2), { cmd: 602, payload: { task_id: 2 } })
+  assert.deepEqual(await client.mailList(), { cmd: 604, payload: {} })
+  assert.deepEqual(await client.mailClaim(8), { cmd: 608, payload: { mail_id: 8 } })
+  assert.deepEqual(await client.claimDailyLogin(), { cmd: 614, payload: {} })
+})
+
 test('FarmDelta 主动推送交给 delta 订阅者', () => {
   const client = new NetClient()
   let received

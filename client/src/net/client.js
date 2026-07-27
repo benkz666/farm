@@ -23,10 +23,23 @@ export const CMD_REMOVE_WEED = 214
 export const CMD_REMOVE_PEST = 216
 export const CMD_FERTILIZE = 218
 export const CMD_HARVEST = 220
+export const CMD_STEAL = 222
 
 /** 商店 */
 export const CMD_BUY = 302
 export const CMD_SELL = 304
+
+/** 宠物（protocol 5.6） */
+export const CMD_PET_STATUS = 500
+export const CMD_PET_ACTIVATE = 502
+export const CMD_PET_FEED = 504
+
+/** 任务 / 邮件 / 每日登录（protocol 5.7） */
+export const CMD_TASK_LIST = 600
+export const CMD_TASK_CLAIM = 602
+export const CMD_MAIL_LIST = 604
+export const CMD_MAIL_CLAIM = 608
+export const CMD_CLAIM_DAILY_LOGIN = 614
 
 export const WS_SUBPROTOCOL = 'farm.v1.json'
 export const CLIENT_CONFIG_VER = 1
@@ -203,6 +216,77 @@ export class NetClient {
    */
   searchUser(username) {
     return this.request(CMD_SEARCH_USER, { username })
+  }
+
+  /**
+   * 偷菜（cmd 222）。拜访好友农场时使用；不做数量乐观预测。
+   * @param {number} ownerUid
+   * @param {number} plotIndex
+   * @param {number} cropId
+   * @returns {Promise<Envelope>}
+   */
+  steal(ownerUid, plotIndex, cropId) {
+    return this.request(CMD_STEAL, {
+      owner_uid: ownerUid,
+      plot_index: plotIndex,
+      crop_id: cropId,
+    })
+  }
+
+  /** 狗状态（cmd 500）。 */
+  petStatus() {
+    return this.request(CMD_PET_STATUS, {})
+  }
+
+  /**
+   * 启用狗（cmd 502）。
+   * @param {number} dogType
+   * @returns {Promise<Envelope>}
+   */
+  petActivate(dogType) {
+    return this.request(CMD_PET_ACTIVATE, { dog_type: dogType })
+  }
+
+  /**
+   * 喂狗粮（cmd 504）。
+   * @param {number} grams
+   * @returns {Promise<Envelope>}
+   */
+  petFeed(grams) {
+    return this.request(CMD_PET_FEED, { grams })
+  }
+
+  /** 当日任务列表（cmd 600）。 */
+  taskList() {
+    return this.request(CMD_TASK_LIST, {})
+  }
+
+  /**
+   * 领取任务奖励（cmd 602）；奖励进邮件。
+   * @param {number} taskId
+   * @returns {Promise<Envelope>}
+   */
+  taskClaim(taskId) {
+    return this.request(CMD_TASK_CLAIM, { task_id: taskId })
+  }
+
+  /** 邮件列表（cmd 604）。 */
+  mailList() {
+    return this.request(CMD_MAIL_LIST, {})
+  }
+
+  /**
+   * 领取邮件附件（cmd 608）。
+   * @param {number} mailId
+   * @returns {Promise<Envelope>}
+   */
+  mailClaim(mailId) {
+    return this.request(CMD_MAIL_CLAIM, { mail_id: mailId })
+  }
+
+  /** 领取每日登录奖励（cmd 614）。 */
+  claimDailyLogin() {
+    return this.request(CMD_CLAIM_DAILY_LOGIN, {})
   }
 
   /**

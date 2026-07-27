@@ -108,6 +108,17 @@ export function bagToFertilizers(bag) {
 }
 
 /**
+ * bag `dogfood:1` → 狗粮克数。
+ * @param {Record<string, number>|null|undefined} bag
+ * @returns {number}
+ */
+export function bagToDogFood(bag) {
+  if (!bag || typeof bag !== 'object') return 0
+  const n = Number(bag['dogfood:1'])
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/**
  * warehouse `fruit:N` → warehouse[key]。
  * @param {Record<string, number>|null|undefined} warehouse
  * @returns {Record<string, number>}
@@ -149,6 +160,8 @@ export function applyPlotSnapshot(plot, snap) {
   plot.waterUntil = lastWater > 0 && seasonMs > 0
     ? lastWater + Math.floor(seasonMs * WATER_SPAN)
     : 0
+  if (typeof snap.final_yield === 'number') plot.finalYield = snap.final_yield
+  if (typeof snap.stolen_count === 'number') plot.stolenTotal = snap.stolen_count
   // 无 SeasonStartAt 时用成熟点回推，便于倒计时展示
   if (plot.matureTime > 0 && seasonMs > 0) {
     plot.plantTime = plot.matureTime - seasonMs
@@ -159,6 +172,8 @@ export function applyPlotSnapshot(plot, snap) {
   }
   if (stateNum === 0 || stateNum === 1) {
     plot.cropId = null
+    plot.finalYield = 0
+    plot.stolenTotal = 0
   }
   return plot
 }
@@ -176,6 +191,7 @@ function applyFullSnapshot(state, snap) {
     if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
     state.inventory.seeds = bagToSeeds(snap.bag)
     state.inventory.fertilizers = bagToFertilizers(snap.bag)
+    state.inventory.dogFood = bagToDogFood(snap.bag)
   }
   if (snap.warehouse) {
     state.warehouse = warehouseFromServer(snap.warehouse)
@@ -208,6 +224,7 @@ function applyActionPatch(state, patch) {
     if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
     state.inventory.seeds = bagToSeeds(patch.bag)
     state.inventory.fertilizers = bagToFertilizers(patch.bag)
+    state.inventory.dogFood = bagToDogFood(patch.bag)
   }
   if (patch.warehouse) {
     state.warehouse = warehouseFromServer(patch.warehouse)

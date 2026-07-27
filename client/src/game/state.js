@@ -25,6 +25,7 @@ export function makePlot(id) {
     stolenTotal: 0,       // 本轮成熟被偷总量
     stolenBy: [],         // 本轮已偷过的访客 id
     stealRound: 0,        // 成熟轮次
+    finalYield: 0,        // 服务端固化产量（成熟后）
   };
 }
 
@@ -39,7 +40,7 @@ export function defaultState() {
     exp: 0,
     plots: Array.from({ length: MAX_PLOTS }, (_, i) => makePlot(i)),
     unlockedPlots: INITIAL_PLOTS,
-    inventory: { seeds: {}, fertilizers: { normal: 0, fast: 0, super: 0 } },
+    inventory: { seeds: {}, fertilizers: { normal: 0, fast: 0, super: 0 }, dogFood: 0 },
     warehouse: {},        // cropId -> 果实数
     dog: null,            // { id, level, catches }
     dogBowl: 0,

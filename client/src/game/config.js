@@ -50,10 +50,13 @@ export const DOG_MAX_LEVEL = 5;
 export const DOG_CATCHES_PER_LEVEL = 20;
 
 export const DOGS = [
-  { id: 'tugou',   name: '土狗',   unlock: 0,  intercept: 0.25, consumption: 4, price: 2000, color: 0xb08968 },
-  { id: 'muyang',  name: '牧羊犬', unlock: 10, intercept: 0.35, consumption: 5, price: 4500, color: 0x8d99ae },
-  { id: 'zangao',  name: '藏獒',   unlock: 20, intercept: 0.45, consumption: 7, price: 8000, color: 0x4a3728 },
+  { id: 'tugou',   name: '土狗',   unlock: 0,  intercept: 0.25, consumption: 4, price: 2000, color: 0xb08968, shopItemId: 2001, dogType: 1 },
+  { id: 'muyang',  name: '牧羊犬', unlock: 10, intercept: 0.35, consumption: 5, price: 4500, color: 0x8d99ae, shopItemId: 0, dogType: 0 },
+  { id: 'zangao',  name: '藏獒',   unlock: 20, intercept: 0.45, consumption: 7, price: 8000, color: 0x4a3728, shopItemId: 0, dogType: 0 },
 ];
+
+/** 狗粮商店 item_id（按克购买）。 */
+export const DOG_FOOD_SHOP_ITEM_ID = 2000;
 
 // ---- 化肥（18.5）----
 export const FERTILIZERS = [

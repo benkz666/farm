@@ -39,6 +39,7 @@ export class UI {
     $('#btn-settings').onclick = () => this.renderSettings();
     $('#btn-back-home').onclick = () => cb.onBackHome();
     $('#btn-expand').onclick = () => cb.onExpand();
+    $('#dog-status')?.addEventListener('click', () => { this.cb.onPanel?.('pet'); });
 
     document.querySelectorAll('#side-menu button').forEach(b => {
       b.onclick = () => { this.cb.onPanel(b.dataset.panel); };
@@ -57,9 +58,13 @@ export class UI {
       dogChip.classList.remove('hidden');
       $('#dog-food-num').textContent = `${Math.floor(state.dogBowl)}g`;
       dogChip.style.opacity = state.dogBowl > 0 ? 1 : 0.5;
+      dogChip.style.cursor = 'pointer';
+      dogChip.title = '点击管理看家狗';
     } else dogChip.classList.add('hidden');
-    $('#dot-mail').classList.toggle('hidden', !state.mails.some(m => !m.read));
-    $('#dot-tasks').classList.toggle('hidden', !state.tasks.some(t => t.done && !t.seen));
+    const claimableMail = state.mails.some(m => !m.claimed && (m.gold || m.attachmentCoin));
+    const unreadMail = state.mails.some(m => !m.read);
+    $('#dot-mail').classList.toggle('hidden', !(claimableMail || unreadMail));
+    $('#dot-tasks').classList.toggle('hidden', !state.tasks.some(t => (t.done || t.progress >= (t.target || 1)) && !t.claimed && !t.seen));
     // 扩地按钮
     const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
     const canExpand = !this.readOnly && !!next && lv >= next[1] && state.gold >= next[2];
@@ -82,7 +87,7 @@ export class UI {
     }
   }
 
-  /** 访客农场只保留浏览入口，隐藏一切写入农场的控件。 */
+  /** 访客农场隐藏主人专属写入入口；互助/偷菜工具仍由 toolbar 渲染。 */
   setReadOnly(readOnly) {
     this.readOnly = readOnly;
     $('#side-menu button[data-panel="shop"]').classList.toggle('hidden', readOnly);
@@ -193,14 +198,15 @@ export class UI {
       const card = document.createElement('div');
       card.className = 'shop-card';
       card.style.gridColumn = '1 / -1';
+      const bagFood = state.inventory?.dogFood || 0;
       card.innerHTML = `<span style="font-size:34px">🦴</span><div class="name">狗粮</div>
-        <div class="meta">1 金币 / g · 狗盆容量 ${DOG_BOWL_CAP}g<br>当前余量 ${Math.floor(state.dogBowl)}g · 狗盆空了看家狗将罢工</div>`;
+        <div class="meta">1 金币 / g · 狗盆容量 ${DOG_BOWL_CAP}g<br>背包狗粮 ${bagFood}g · 狗盆 ${Math.floor(state.dogBowl)}g</div>`;
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;justify-content:center';
       for (const [label, g] of [['+50g', 50], ['+120g', 120], ['填满狗盆', -1]]) {
         const btn = document.createElement('button');
         btn.className = 'buy-btn'; btn.textContent = label;
-        btn.onclick = () => { this.cb.onBuyFood(g); this.renderShop(state, tab); };
+        btn.onclick = async () => { await this.cb.onBuyFood(g); this.renderShop(this.cb.getState(), tab); };
         row.appendChild(btn);
       }
       card.appendChild(row);
@@ -209,16 +215,17 @@ export class UI {
       for (const d of DOGS) {
         const owned = state.dog && state.dog.id === d.id;
         const locked = lv < d.unlock;
+        const onlineReady = !!d.shopItemId;
         const card = document.createElement('div');
-        card.className = 'shop-card' + (locked ? ' locked' : '');
+        card.className = 'shop-card' + (locked || !onlineReady ? ' locked' : '');
         card.innerHTML = `<span style="font-size:34px">🐕</span><div class="name">${d.name}</div>
-          <div class="meta">拦截率 ${Math.round(d.intercept * 100)}%<br>粮耗 ${d.consumption}g/小时</div>
+          <div class="meta">拦截率 ${Math.round(d.intercept * 100)}%<br>粮耗 ${d.consumption}g/小时${!onlineReady ? '<br>期 4 暂未上架' : ''}</div>
           <div class="price">💰 ${d.price}</div>`;
         const btn = document.createElement('button');
         btn.className = 'buy-btn';
-        btn.textContent = owned ? '看家中' : locked ? `Lv.${d.unlock} 解锁` : state.dog ? '替换当前狗' : '购买';
-        btn.disabled = owned || locked || state.gold < d.price;
-        btn.onclick = () => { this.cb.onBuyDog(d.id); this.renderShop(state, tab); };
+        btn.textContent = owned ? '看家中' : !onlineReady ? '暂未开放' : locked ? `Lv.${d.unlock} 解锁` : state.dog ? '替换当前狗' : '购买并启用';
+        btn.disabled = owned || locked || !onlineReady || state.gold < d.price;
+        btn.onclick = async () => { await this.cb.onBuyDog(d.id); this.renderShop(this.cb.getState(), tab); };
         card.appendChild(btn);
         grid.appendChild(card);
       }
@@ -230,7 +237,8 @@ export class UI {
     const body = this.openModal('🎒 背包');
     const seeds = Object.entries(state.inventory.seeds).filter(([, n]) => n > 0);
     const ferts = Object.entries(state.inventory.fertilizers).filter(([, n]) => n > 0);
-    if (!seeds.length && !ferts.length) {
+    const dogFood = state.inventory?.dogFood || 0;
+    if (!seeds.length && !ferts.length && dogFood <= 0) {
       body.innerHTML = `<div class="empty-tip">背包空空如也<br><br>去商店买些种子吧，锄地时也可能意外发现隐藏种子 ✨</div>`;
       return;
     }
@@ -252,6 +260,12 @@ export class UI {
           <div class="grow"><div class="title">${f.name}</div><div class="sub">当前阶段提速 ${f.reduceH} 小时</div></div>
           <b>×${n}</b></div>`);
       }
+    }
+    if (dogFood > 0) {
+      body.insertAdjacentHTML('beforeend', `<div style="font-weight:800;color:var(--brown);margin:14px 0 10px">🦴 狗粮</div>`);
+      body.insertAdjacentHTML('beforeend', `<div class="list-row"><span style="font-size:26px">🦴</span>
+        <div class="grow"><div class="title">狗粮</div><div class="sub">喂食看家狗</div></div>
+        <b>${dogFood}g</b></div>`);
     }
   }
 
@@ -289,16 +303,48 @@ export class UI {
   // ---------------- 任务 ----------------
   renderTasks(state, dayRemainMs) {
     const body = this.openModal('📋 日常任务');
-    body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">每日随机 3 条 · 完成后奖励发送至邮箱 📮 · <b>${fmtTime(dayRemainMs)}</b> 后刷新</div>`);
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap';
+    head.innerHTML = `<div style="font-size:12.5px;color:var(--ink-soft)">每日任务 · 奖励发送至邮箱 📮${dayRemainMs != null ? ` · <b>${fmtTime(dayRemainMs)}</b> 后刷新` : ''}</div>`;
+    const dailyBtn = document.createElement('button');
+    dailyBtn.className = 'act-btn green';
+    dailyBtn.textContent = '领取每日登录';
+    dailyBtn.onclick = async () => {
+      await this.cb.onClaimDailyLogin?.();
+      if (this.modalOpen) this.cb.onPanel?.('tasks');
+    };
+    head.appendChild(dailyBtn);
+    body.appendChild(head);
+
+    if (!state.tasks?.length) {
+      body.insertAdjacentHTML('beforeend', `<div class="empty-tip">暂无任务</div>`);
+      return;
+    }
     for (const t of state.tasks) {
-      const def = TASK_POOL.find(d => d.id === t.taskId);
-      const pct = Math.min(1, t.progress / def.target);
+      const name = t.title || TASK_POOL.find(d => d.id === t.taskId)?.name || `任务 ${t.id || t.taskId}`;
+      const target = t.target || TASK_POOL.find(d => d.id === t.taskId)?.target || 1;
+      const progress = t.progress || 0;
+      const reward = t.rewardCoin ?? TASK_POOL.find(d => d.id === t.taskId)?.gold;
+      const done = t.done || progress >= target;
+      const claimed = !!t.claimed;
+      const pct = Math.min(1, progress / target);
       const card = document.createElement('div');
-      card.className = 'task-card' + (t.done ? ' done' : '');
-      card.innerHTML = `<div class="head"><span class="name">${def.name}</span>
-        ${t.done ? '<span class="done-tag">✓ 已完成</span>' : `<span class="reward">💰${def.gold} · ✨${def.exp}</span>`}</div>
+      card.className = 'task-card' + (done ? ' done' : '');
+      card.innerHTML = `<div class="head"><span class="name">${name}</span>
+        ${claimed ? '<span class="done-tag">✓ 已领取</span>' : done ? '' : `<span class="reward">💰${reward ?? 0}</span>`}</div>
         <div class="pbar"><i style="width:${pct * 100}%"></i></div>
-        <div class="ptext">${Math.min(t.progress, def.target)} / ${def.target}</div>`;
+        <div class="ptext">${Math.min(progress, target)} / ${target}</div>`;
+      if (done && !claimed && t.id != null) {
+        const btn = document.createElement('button');
+        btn.className = 'act-btn';
+        btn.textContent = '领取奖励';
+        btn.style.marginTop = '8px';
+        btn.onclick = async () => {
+          await this.cb.onClaimTask?.(t.id);
+          if (this.modalOpen) this.cb.onPanel?.('tasks');
+        };
+        card.appendChild(btn);
+      }
       body.appendChild(card);
       t.seen = true;
     }
@@ -344,17 +390,22 @@ export class UI {
     for (const m of list) {
       const row = document.createElement('div');
       row.className = 'list-row mail-row' + (m.read ? '' : ' unread');
+      const gold = m.gold || m.attachmentCoin || 0;
       const attach = [];
-      if (m.gold) attach.push(`<span class="chip">💰 ${m.gold}</span>`);
+      if (gold) attach.push(`<span class="chip">💰 ${gold}</span>`);
       if (m.exp) attach.push(`<span class="chip">✨ ${m.exp} 经验</span>`);
       row.innerHTML = `${m.read ? '' : '<span class="unread-dot"></span>'}
         <div class="grow"><div class="title">${m.title}</div>
-        <div class="sub">${m.content}</div>
+        <div class="sub">${m.content || ''}</div>
         ${attach.length ? `<div class="mail-attach">${attach.join('')}</div>` : ''}</div>`;
-      if ((m.gold || m.exp) && !m.claimed) {
+      if (gold && !m.claimed) {
         const btn = document.createElement('button');
         btn.className = 'act-btn'; btn.textContent = '领取';
-        btn.onclick = () => { this.cb.onClaimMail(m.id); this.renderMail(state); };
+        btn.onclick = async (e) => {
+          e.stopPropagation();
+          await this.cb.onClaimMail(m.id);
+          if (this.modalOpen) this.cb.onPanel?.('mail');
+        };
         row.appendChild(btn);
       } else if (m.claimed) {
         row.insertAdjacentHTML('beforeend', `<span style="font-size:11.5px;color:var(--ink-soft);font-weight:700">已领取</span>`);
@@ -362,6 +413,52 @@ export class UI {
       row.onclick = () => { m.read = true; row.classList.remove('unread'); row.querySelector('.unread-dot')?.remove(); this.updateHUD(state); };
       body.appendChild(row);
     }
+  }
+
+  // ---------------- 看家狗 ----------------
+  renderPet(state) {
+    const body = this.openModal('🐶 看家狗');
+    const dog = state.dog;
+    const bagFood = state.inventory?.dogFood || 0;
+    if (!dog) {
+      body.innerHTML = `<div class="empty-tip">还没有看家狗<br><br>去商店购买土狗，启用后记得喂狗粮</div>`;
+      const go = document.createElement('button');
+      go.className = 'act-btn blue';
+      go.textContent = '去商店';
+      go.onclick = () => this.renderShop(state, 'dog');
+      body.appendChild(go);
+      return;
+    }
+    const def = DOGS.find(d => d.id === dog.id);
+    body.insertAdjacentHTML('beforeend', `<div class="list-row">
+      <span style="font-size:34px">🐕</span>
+      <div class="grow"><div class="title">${def?.name || dog.id}</div>
+      <div class="sub">等级 ${dog.level || 0} · 拦截 ${dog.intercepts || 0} 次 · 拦截率 ${dog.interceptionPct ?? Math.round((def?.intercept || 0) * 100)}%</div></div>
+    </div>
+    <div style="font-size:12.5px;color:var(--ink-soft);margin:8px 0 14px">狗盆 ${Math.floor(state.dogBowl)}g / ${DOG_BOWL_CAP}g · 背包狗粮 ${bagFood}g</div>`);
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+    for (const grams of [10, 50, 120]) {
+      const btn = document.createElement('button');
+      btn.className = 'act-btn';
+      btn.textContent = `喂 ${grams}g`;
+      btn.disabled = bagFood < 1;
+      btn.onclick = async () => {
+        await this.cb.onFeedPet?.(grams);
+        if (this.modalOpen) this.renderPet(this.cb.getState());
+      };
+      row.appendChild(btn);
+    }
+    const activate = document.createElement('button');
+    activate.className = 'act-btn blue';
+    activate.textContent = '确认启用';
+    activate.onclick = async () => {
+      await this.cb.onActivatePet?.(dog.id);
+      if (this.modalOpen) this.renderPet(this.cb.getState());
+    };
+    row.appendChild(activate);
+    body.appendChild(row);
   }
 
   // ---------------- 好友 ----------------
@@ -407,7 +504,7 @@ export class UI {
     addButton.className = 'act-btn';
     addButton.textContent = '搜索并添加';
     addButton.onclick = async () => {
-      if (await this.cb.onAddFriend?.(addInput.value)) this.renderFriends(state);
+      if (await this.cb.onAddFriend?.(addInput.value)) this.renderFriends(this.cb.getState());
     };
     addRow.append(addInput, addButton);
     body.appendChild(addRow);
@@ -432,6 +529,14 @@ export class UI {
       sub.className = 'sub';
       sub.textContent = `UID：${f.uid}`;
       detail.append(title, sub);
+      if (f.has_stealable) {
+        const badge = document.createElement('span');
+        badge.className = 'friend-dog';
+        badge.style.marginTop = '4px';
+        badge.style.display = 'inline-block';
+        badge.textContent = '🥷 有菜可偷';
+        detail.appendChild(badge);
+      }
       const visit = document.createElement('button');
       visit.className = 'act-btn blue';
       visit.textContent = '访问农场';
@@ -441,7 +546,7 @@ export class UI {
       remove.style.marginLeft = '6px';
       remove.textContent = '删除';
       remove.onclick = async () => {
-        if (await this.cb.onRemoveFriend?.(f.uid)) this.renderFriends(state);
+        if (await this.cb.onRemoveFriend?.(f.uid)) this.renderFriends(this.cb.getState());
       };
       row.append(avatar, detail, visit, remove);
       body.appendChild(row);

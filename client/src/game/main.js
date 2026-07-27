@@ -4,7 +4,7 @@
 // ============================================================
 import {
   TIME_SCALES, CROP_MAP, FERTILIZERS, DOGS, EXPANSION, TASK_POOL,
-  YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO,
+  YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO, DOG_BOWL_CAP, DOG_FOOD_SHOP_ITEM_ID,
   CODEX_MILESTONES, stageCount, STAGE_NAMES_3, STAGE_NAMES_4, levelUpGold, logicDayMs,
 } from './config.js';
 import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks } from './state.js';
@@ -12,11 +12,11 @@ import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
 import { enterOnline, isOnline, session, setFarmView } from '../net/session.js';
-import { CMD_FERTILIZE, CMD_PLANT } from '../net/client.js';
+import { CMD_FERTILIZE, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
 import { createFarmMirror } from './farmMirror.js';
-import { plotCmdForTool } from './onlineActions.js';
+import { plotCmdForTool, isVisitTool } from './onlineActions.js';
 import { shouldApplyPatchFromError } from './onlineResponse.js';
 
 // ---------------- 初始化（期 3：无本地权威存档；状态由 snapshot/Rsp 驱动） ----------------
@@ -56,6 +56,13 @@ const TOOLS_HOME = [
   { id: 'fert', name: '施肥', icon: '🧪' },
   { id: 'harvest', name: '收获', icon: '🧺' },
 ];
+const TOOLS_VISIT = [
+  { id: 'water', name: '浇水', icon: '💧' },
+  { id: 'weed', name: '除草', icon: '🌿' },
+  { id: 'pest', name: '除虫', icon: '🐛' },
+  { id: 'steal', name: '偷菜', icon: '🥷' },
+];
+const DOG_TYPE_TO_ID = Object.freeze({ 1: 'tugou' });
 // ---------------- 通用辅助 ----------------
 const cropOf = (plot) => CROP_MAP[plot.cropId];
 
@@ -80,13 +87,15 @@ function applyResponsePatch(payload) {
 
 function refreshFarmMirror() {
   const visiting = isVisitingFriend();
-  activeTool = visiting ? null : activeTool;
+  if (visiting && activeTool && !isVisitTool(activeTool)) activeTool = null;
+  if (!visiting && activeTool === 'steal') activeTool = null;
   ui.setReadOnly?.(visiting);
   ui.setVisitor?.(visiting ? `UID ${session.viewingOwnerUid}` : null);
   refreshToolbar();
   refreshSubBar();
   syncAllPlots();
   ui.updateHUD(state);
+  if (!visiting) void refreshPetStatus();
 }
 
 const healthOf = (plot) => Math.max(0, Math.min(100, 100 - plot.penalty));
@@ -229,6 +238,7 @@ function enterOnlineFromNet(client, enterEnv) {
     refreshSubBar();
   });
   refreshFarmMirror();
+  void refreshPetStatus();
   ui.toast('已进入 online 模式：操作将发往服务端', 'ok');
 }
 
@@ -252,7 +262,7 @@ async function enterFarm(ownerUid, nickname = '') {
     refreshFarmMirror();
     if (isVisitingFriend()) {
       ui.setVisitor?.(nickname || snapshot.nickname || `UID ${session.viewingOwnerUid}`);
-      ui.toast('已进入好友农场，只可浏览', 'info');
+      ui.toast('已进入好友农场，可浇水/除草/除虫/偷菜', 'info');
     }
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -291,12 +301,16 @@ function playOnlineFx(tool, plotId) {
       sfx.harvest();
       scene.harvestAnim(plotId);
       break;
+    case 'steal':
+      sfx.steal();
+      scene.harvestAnim(plotId);
+      break;
     default:
       break;
   }
 }
 
-/** online：发意图 → 等 Rsp → applyPatch；失败 toast 不改地块 */
+/** online：发意图 → 等 Rsp → applyPatch；失败 toast 不改地块；偷菜不做数量乐观预测 */
 async function onPlotClickOnline(plotId) {
   if (onlineBusy || !netClient) return;
   const farm = currentFarm();
@@ -304,12 +318,18 @@ async function onPlotClickOnline(plotId) {
   if (!plot || plotId >= farm.unlocked) return;
 
   if (!activeTool) return showPlotTip(plotId);
+  if (isVisitingFriend() && !isVisitTool(activeTool)) {
+    return fail('好友农场仅可浇水、除草、除虫或偷菜');
+  }
 
   const cmd = plotCmdForTool(activeTool, plot.state);
   if (cmd == null) {
     if (activeTool === 'till') return fail('这块地不需要锄地');
+    if (activeTool === 'steal') return fail('这块地没有可偷的成熟作物');
     return showPlotTip(plotId);
   }
+
+  const ownerUid = isVisitingFriend() ? Number(session.viewingOwnerUid) || 0 : 0;
 
   let arg = 0;
   if (cmd === CMD_PLANT) {
@@ -323,7 +343,25 @@ async function onPlotClickOnline(plotId) {
 
   onlineBusy = true;
   try {
-    const rsp = await netClient.plotAction(cmd, plotId, arg);
+    let rsp;
+    if (cmd === CMD_STEAL) {
+      const cropId = cropKeyToId(plot.cropId);
+      if (!cropId) return fail('作物未知，无法偷菜');
+      rsp = await netClient.steal(ownerUid, plotId, cropId);
+    } else {
+      rsp = await netClient.plotAction(cmd, plotId, arg, ownerUid);
+    }
+
+    if (rsp.err === 1411) {
+      // 被狗拦截：有副作用（赔付），展示赔付金额；金币由 PlayerDelta 刷新
+      const compensation = Number(rsp.payload?.compensation) || 0;
+      sfx.dog();
+      fail(compensation > 0
+        ? `被看家狗抓住了，赔付 💰${compensation}`
+        : errText(rsp.err));
+      ui.updateHUD(state);
+      return;
+    }
     if (rsp.err !== 0) {
       if (shouldApplyPatchFromError(rsp.err, rsp.payload)) {
         applyResponsePatch(rsp.payload);
@@ -336,7 +374,19 @@ async function onPlotClickOnline(plotId) {
     }
     applyResponsePatch(rsp.payload);
     playOnlineFx(activeTool, plotId);
-    ok(activeTool === 'harvest' ? '收获成功' : '操作成功');
+    if (cmd === CMD_STEAL) {
+      const amount = Number(rsp.payload?.amount) || 0;
+      ok(amount > 0 ? `偷菜成功 ×${amount}` : '偷菜成功', 'gold');
+    } else if (isVisitingFriend()) {
+      const exp = Number(rsp.payload?.exp_gained) || 0;
+      const coin = Number(rsp.payload?.coin_gained) || 0;
+      const bits = [];
+      if (exp) bits.push(`+${exp} 经验`);
+      if (coin) bits.push(`+${coin} 金币`);
+      ok(bits.length ? `互助成功 ${bits.join(' · ')}` : '互助成功');
+    } else {
+      ok(activeTool === 'harvest' ? '收获成功' : '操作成功');
+    }
     ui.updateHUD(state);
     syncAllPlots();
     refreshSubBar();
@@ -463,10 +513,6 @@ function onPlotClick(plotId) {
     fail('请先登录后再操作');
     return;
   }
-  if (isVisitingFriend()) {
-    fail('好友农场仅可浏览');
-    return;
-  }
   void onPlotClickOnline(plotId);
 }
 
@@ -512,7 +558,7 @@ function tooltipHTML(plotId) {
       const h = Math.round(healthOf(plot));
       const dry = now > plot.waterUntil;
       const mature = plot.state === PLOT.MATURE;
-      const yieldEst = actualYield(c, h);
+      const yieldEst = plot.finalYield > 0 ? plot.finalYield : actualYield(c, h);
       const cap = Math.floor(yieldEst * STEAL_CAP_RATIO);
       let rows = `<div class="row"><span>第 ${plot.season + 1}/${c.seasons} 季</span><b>${mature ? '✨ 已成熟' : stageName(c, stage)}</b></div>`;
       rows += `<div class="row"><span>${mature ? '枯萎倒计时' : '成熟倒计时'}</span><b>${fmtTime(mature ? plot.matureTime + plot.seasonMs * WITHER_SPAN - now : plot.matureTime - now)}</b></div>`;
@@ -560,8 +606,102 @@ function syncAllPlots() {
 
 // ---------------- 工具选择 ----------------
 function refreshToolbar() {
-  const tools = isVisitingFriend() ? [] : TOOLS_HOME;
+  const tools = isVisitingFriend() ? TOOLS_VISIT : TOOLS_HOME;
   ui.renderToolbar(tools, activeTool);
+}
+
+function applyPetStatus(status) {
+  if (!status || typeof status !== 'object') return;
+  const dogId = DOG_TYPE_TO_ID[status.active_dog];
+  if (dogId) {
+    state.dog = {
+      id: dogId,
+      level: Number(status.dog_level) || 0,
+      intercepts: Number(status.intercepts) || 0,
+      interceptionPct: Number(status.interception_pct) || 0,
+    };
+  } else if (!status.owned) {
+    state.dog = null;
+  } else if (status.owned & 1) {
+    // 拥有土狗但未启用：仍展示为已拥有，便于商店/面板
+    state.dog = state.dog || { id: 'tugou', level: 0, intercepts: 0, interceptionPct: 25 };
+  }
+  if (typeof status.bowl_grams === 'number') state.dogBowl = status.bowl_grams;
+  ui.updateHUD(state);
+}
+
+async function refreshPetStatus() {
+  if (!netClient || isVisitingFriend()) return false;
+  try {
+    const response = await netClient.petStatus();
+    if (response.err !== 0) return false;
+    applyPetStatus(response.payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function mapServerTasks(tasks) {
+  return (Array.isArray(tasks) ? tasks : []).map((t) => ({
+    id: Number(t.id),
+    taskId: String(t.id),
+    title: t.title || `任务 ${t.id}`,
+    progress: Number(t.progress) || 0,
+    target: Number(t.target) || 1,
+    rewardCoin: Number(t.reward_coin) || 0,
+    done: (Number(t.progress) || 0) >= (Number(t.target) || 1),
+    claimed: !!t.claimed,
+    seen: false,
+  }));
+}
+
+function mapServerMails(mails) {
+  return (Array.isArray(mails) ? mails : []).map((m) => ({
+    id: Number(m.id),
+    title: m.title || '系统邮件',
+    content: '',
+    gold: Number(m.attachment_coin) || 0,
+    attachmentCoin: Number(m.attachment_coin) || 0,
+    exp: 0,
+    claimed: !!m.claimed,
+    read: !!m.claimed,
+    time: Number(m.created_at) || Date.now(),
+  }));
+}
+
+async function refreshTasks() {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.taskList();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.tasks = mapServerTasks(response.payload?.tasks);
+    ui.updateHUD(state);
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function refreshMails() {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.mailList();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.mails = mapServerMails(response.payload?.mails);
+    ui.updateHUD(state);
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
 }
 
 async function refreshFriends() {
@@ -702,9 +842,25 @@ const ui = new UI({
       case 'shop': ui.renderShop(state); break;
       case 'bag': ui.renderBag(state); break;
       case 'barn': ui.renderBarn(state); break;
-      case 'tasks': ui.renderTasks(state, logicDayMs(state.timeScale) - (Date.now() - state.daily.dayStart)); break;
+      case 'tasks':
+        ui.renderTasks(state, null);
+        void refreshTasks().then((ok) => {
+          if (ok && ui.modalOpen) ui.renderTasks(state, null);
+        });
+        break;
       case 'codex': ui.renderCodex(state); break;
-      case 'mail': ui.renderMail(state); break;
+      case 'mail':
+        ui.renderMail(state);
+        void refreshMails().then((ok) => {
+          if (ok && ui.modalOpen) ui.renderMail(state);
+        });
+        break;
+      case 'pet':
+        ui.renderPet(state);
+        void refreshPetStatus().then((ok) => {
+          if (ok && ui.modalOpen) ui.renderPet(state);
+        });
+        break;
       case 'friends':
         ui.renderFriends(state);
         void refreshFriends().then((ok) => {
@@ -726,12 +882,53 @@ const ui = new UI({
     return onlineBuyFertilizer(id);
   },
 
-  onBuyFood(_g) {
-    return fail('线上暂不支持');
+  async onBuyFood(g) {
+    if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (onlineBusy || !netClient) return;
+    const grams = g < 0 ? Math.max(1, DOG_BOWL_CAP - Math.floor(state.dogBowl)) : g;
+    if (grams <= 0) return ok('狗盆已满');
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.buy(DOG_FOOD_SHOP_ITEM_ID, grams);
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      applyResponsePatch(rsp.payload);
+      sfx.gold();
+      ui.toast(`购买狗粮 ${grams}g`, 'ok');
+      ui.updateHUD(state);
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
   },
 
-  onBuyDog(_id) {
-    return fail('线上暂不支持');
+  async onBuyDog(id) {
+    if (!isOnline()) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (onlineBusy || !netClient) return;
+    const dog = DOGS.find((d) => d.id === id);
+    if (!dog?.shopItemId || !dog.dogType) return fail('该狗种暂未上架');
+    onlineBusy = true;
+    try {
+      const buy = await netClient.buy(dog.shopItemId, 1);
+      if (buy.err !== 0) return fail(errText(buy.err));
+      applyResponsePatch(buy.payload);
+      const act = await netClient.petActivate(dog.dogType);
+      if (act.err !== 0) {
+        fail(errText(act.err));
+        await refreshPetStatus();
+        return;
+      }
+      applyPetStatus(act.payload);
+      sfx.dog();
+      ui.toast(`已购买并启用 ${dog.name}`, 'ok');
+      ui.updateHUD(state);
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
   },
 
   async onSell(id, n) {
@@ -746,8 +943,113 @@ const ui = new UI({
     return onlineSellAll();
   },
 
-  onClaimMail(_id) {
-    return fail('线上暂不支持');
+  async onClaimMail(id) {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (onlineBusy) return;
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.mailClaim(id);
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      const mail = state.mails.find((m) => m.id === id);
+      const reward = Number(mail?.gold || mail?.attachmentCoin || rsp.payload?.attachment_coin) || 0;
+      if (mail) {
+        mail.claimed = true;
+        mail.read = true;
+        mail.gold = 0;
+        mail.attachmentCoin = 0;
+      }
+      if (reward > 0) state.gold += reward;
+      sfx.gold();
+      ui.toast(reward > 0 ? `领取 💰${reward}` : '附件已领取', 'gold');
+      ui.updateHUD(state);
+      await refreshMails();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
+  async onClaimTask(taskId) {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (onlineBusy) return;
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.taskClaim(taskId);
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      ui.toast('任务奖励已发送至邮箱', 'gold');
+      await refreshTasks();
+      await refreshMails();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
+  async onClaimDailyLogin() {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (onlineBusy) return;
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.claimDailyLogin();
+      if (rsp.err === 1005) {
+        ui.toast('今日登录奖励已领取', 'info');
+        return;
+      }
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      sfx.gold();
+      ui.toast('每日登录奖励已发送至邮箱', 'gold');
+      await refreshMails();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
+  async onFeedPet(grams) {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('只能在自己的农场喂狗');
+    if (onlineBusy) return;
+    onlineBusy = true;
+    try {
+      const beforeBowl = Number(state.dogBowl) || 0;
+      const rsp = await netClient.petFeed(grams);
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      applyPetStatus(rsp.payload);
+      const afterBowl = Number(rsp.payload?.bowl_grams) || 0;
+      const fed = Math.max(0, afterBowl - beforeBowl);
+      // PetFeed Rsp 不含背包；按盆增量本地扣减狗粮展示
+      state.inventory.dogFood = Math.max(0, (state.inventory.dogFood || 0) - (fed || grams));
+      sfx.click();
+      ui.toast(`已喂食 ${fed || grams}g`, 'ok');
+      ui.updateHUD(state);
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
+  async onActivatePet(dogKey) {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (isVisitingFriend()) return fail('只能在自己的农场启用狗');
+    const dog = DOGS.find((d) => d.id === dogKey);
+    if (!dog?.dogType) return fail('该狗种暂未开放');
+    if (onlineBusy) return;
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.petActivate(dog.dogType);
+      if (rsp.err !== 0) return fail(errText(rsp.err));
+      applyPetStatus(rsp.payload);
+      sfx.dog();
+      ui.toast(`已启用 ${dog.name}`, 'ok');
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
   },
 
   onVisit(friendId, nickname) {
@@ -806,8 +1108,8 @@ function tick() {
 
   // 期 3：不做本地权威地块推进 / NPC 假好友写；镜像仅由 snapshot/Rsp/Delta 更新
 
-  // 玩家狗粮消耗（展示用；写权威在后期服务端）
-  if (state.dog && state.dogBowl > 0) {
+  // 玩家狗粮：online 以 PetStatus 为准，不做本地权威扣减
+  if (!isOnline() && state.dog && state.dogBowl > 0) {
     const dogDef = DOGS.find(d => d.id === state.dog.id);
     state.dogBowl = Math.max(0, state.dogBowl - (dogDef.consumption / hourMs()) * dt);
     if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
