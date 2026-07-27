@@ -144,8 +144,12 @@ start_farm_server() {
     export FARM_HTTP_ADDR=":${port}"
     export FARM_ROUTE_TABLE="${FARM_ROUTE_TABLE:-deploy/route-table.example.json}"
     export FARM_INTERNAL_TOKEN="${FARM_INTERNAL_TOKEN:-dev-only-internal-token-change-me}"
-    export FARM_FARM_URLS="${FARM_FARM_URLS:-{\"farm-0\":\"http://127.0.0.1:${FARM0_PORT}\",\"farm-1\":\"http://127.0.0.1:${FARM1_PORT}\"}}"
-    export FARM_GATEWAY_URLS="${FARM_GATEWAY_URLS:-{\"gateway-0\":\"http://127.0.0.1:${GW0_PORT}\",\"gateway-1\":\"http://127.0.0.1:${GW1_PORT}\"}}"
+    if [[ -z "${FARM_FARM_URLS:-}" ]]; then
+      export FARM_FARM_URLS="{\"farm-0\":\"http://127.0.0.1:${FARM0_PORT}\",\"farm-1\":\"http://127.0.0.1:${FARM1_PORT}\"}"
+    fi
+    if [[ -z "${FARM_GATEWAY_URLS:-}" ]]; then
+      export FARM_GATEWAY_URLS="{\"gateway-0\":\"http://127.0.0.1:${GW0_PORT}\",\"gateway-1\":\"http://127.0.0.1:${GW1_PORT}\"}"
+    fi
     export FARM_BUS="${FARM_BUS:-kafka}"
     export FARM_KAFKA_BROKERS="${FARM_KAFKA_BROKERS:-127.0.0.1:9094}"
     if [[ "$role" == "gateway" || "$role" == "all" ]]; then
@@ -210,6 +214,8 @@ docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/004_pet.sql
 docker compose -f deploy/compose.yml exec -T mysql \
   mysql -ufarm -pfarm farm < server/migrations/005_task_mail.sql
+docker compose -f deploy/compose.yml exec -T mysql \
+  mysql -ufarm -pfarm farm < server/migrations/006_account_uid_auto_increment.sql
 
 if [[ "$MODE" == "shards" ]]; then
   info "启动双分片：farm-0/:${FARM0_PORT} farm-1/:${FARM1_PORT} gateway-0/:${GW0_PORT} gateway-1/:${GW1_PORT}"
@@ -236,6 +242,9 @@ fi
 info "启动 Vite → :${VITE_PORT}"
 (
   cd "$ROOT/client"
+  if [[ "$MODE" == "shards" ]]; then
+    export FARM_GATEWAY_URL="http://127.0.0.1:${GW0_PORT}"
+  fi
   exec npm run dev -- --host 0.0.0.0 --port "${VITE_PORT}" --strictPort
 ) >"$VITE_LOG" 2>&1 &
 echo $! >"$VITE_PID_FILE"

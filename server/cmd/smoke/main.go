@@ -74,7 +74,7 @@ func main() {
 	case "room":
 		fmt.Println("smoke: room enter/delta/sync passed")
 	case "shards":
-		fmt.Println("smoke: cross-shard friend EnterFarm passed")
+		fmt.Println("smoke: sharded RPC plant/pet/task/mail + cross-farm help/steal passed")
 	case "help":
 		fmt.Println("smoke: cross-farm mutual aid water passed")
 	case "steal":
@@ -335,24 +335,31 @@ func exchangeResponse(conn *websocket.Conn, request gateway.Envelope) (gateway.E
 	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
-	messageType, data, err := conn.ReadMessage()
-	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+	for attempt := 0; attempt < 32; attempt++ {
+		messageType, data, err := conn.ReadMessage()
+		if err != nil {
+			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		response, err := gateway.DecodeEnvelope(data)
+		if err != nil {
+			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+		}
+		if response.ClientSeq == 0 {
+			// FarmDelta/PlayerDelta can legitimately race an ordinary Rsp.
+			continue
+		}
+		if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
+			return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
+		}
+		if response.Err != pkgerr.OK {
+			return gateway.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, pkgerr.OK)
+		}
+		return response, nil
 	}
-	if messageType != websocket.TextMessage {
-		return gateway.Envelope{}, fmt.Errorf("response message type = %d, want text", messageType)
-	}
-	response, err := gateway.DecodeEnvelope(data)
-	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
-	}
-	if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
-		return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
-	}
-	if response.Err != pkgerr.OK {
-		return gateway.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, pkgerr.OK)
-	}
-	return response, nil
+	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 func smokeUsername() (string, error) {
@@ -1048,8 +1055,8 @@ func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, owne
 	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
-// runShards 覆盖期 4a 双分片主路径：A/B 落不同物理 Farm，分别连 gateway-0/1，
-// 加好友后互相 EnterFarm，断言 relation=FRIEND 且能拿到对方快照。
+// runShards 覆盖双分片权威主路径：RPC 种植/宠物/同步/任务邮件，以及经 Kafka 的
+// 跨 Farm 互助与偷菜；A/B 的客户端分别连 gateway-0/1。
 func runShards(gw0, gw1 string) error {
 	routes, err := loadSmokeRouteTable()
 	if err != nil {
@@ -1083,6 +1090,14 @@ func runShards(gw0, gw1 string) error {
 
 	seqA := uint32(2)
 	seqB := uint32(2)
+	_, err = prepareShardedFarm(connA, &seqA, true)
+	if err != nil {
+		return fmt.Errorf("prepare A through sharded Farm RPC: %w", err)
+	}
+	plantedBAt, err := prepareShardedFarm(connB, &seqB, false)
+	if err != nil {
+		return fmt.Errorf("prepare B through sharded Farm RPC: %w", err)
+	}
 
 	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
@@ -1151,7 +1166,223 @@ func runShards(gw0, gw1 string) error {
 	if enterB.Snapshot.UnlockedPlots == 0 {
 		return fmt.Errorf("B EnterFarm(A) returned empty snapshot")
 	}
+
+	crop, ok := gameconf.CropByID(1)
+	if !ok {
+		return fmt.Errorf("missing white radish crop config")
+	}
+	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	waterSpan := seasonMS * 35 / 100
+	sleepUntilElapsed(plantedBAt, waterSpan+250)
+	if _, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandWater,
+		ClientSeq: seqA,
+		Payload: mustJSON(map[string]any{
+			"owner_uid": loginB.UID, "plot_index": 0, "arg": 0,
+		}),
+	}); err != nil {
+		return fmt.Errorf("A help-water B across farms: %w", err)
+	}
+	seqA++
+
+	sleepUntilElapsed(plantedBAt, seasonMS+500)
+	matureEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": loginB.UID}),
+	})
+	if err != nil {
+		return fmt.Errorf("A refresh mature B farm: %w", err)
+	}
+	seqA++
+	var mature enterFarmResponse
+	if err := json.Unmarshal(matureEnv.Payload, &mature); err != nil {
+		return fmt.Errorf("decode mature B farm: %w", err)
+	}
+	if len(mature.Snapshot.Plots) == 0 || mature.Snapshot.Plots[0].FinalYield == 0 {
+		return fmt.Errorf("B plot 0 final yield = 0 after maturity")
+	}
+
+	stealEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandSteal,
+		ClientSeq: seqA,
+		Payload: mustJSON(map[string]any{
+			"owner_uid": loginB.UID, "plot_index": 0, "crop_id": 1,
+		}),
+	})
+	if err != nil {
+		return fmt.Errorf("A steal B across farms: %w", err)
+	}
+	seqA++
+	var steal struct {
+		Amount uint16 `json:"amount"`
+	}
+	if err := json.Unmarshal(stealEnv.Payload, &steal); err != nil || steal.Amount == 0 {
+		return fmt.Errorf("decode cross-farm steal reward: amount=%d err=%v", steal.Amount, err)
+	}
+
+	selfAfterSteal, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
+	})
+	if err != nil {
+		return fmt.Errorf("A EnterFarm(self) after steal: %w", err)
+	}
+	seqA++
+	var afterSteal enterFarmResponse
+	if err := json.Unmarshal(selfAfterSteal.Payload, &afterSteal); err != nil {
+		return fmt.Errorf("decode A state after steal: %w", err)
+	}
+	if got := afterSteal.Snapshot.Warehouse[string(farm.FruitItem(1))]; got < uint32(steal.Amount) {
+		return fmt.Errorf("A authoritative warehouse fruit = %d, want at least %d", got, steal.Amount)
+	}
 	return nil
+}
+
+func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (time.Time, error) {
+	enterEnv, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: *seq,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
+	})
+	*seq++
+	if err != nil {
+		return time.Time{}, fmt.Errorf("EnterFarm(self): %w", err)
+	}
+	var initial enterFarmResponse
+	if err := json.Unmarshal(enterEnv.Payload, &initial); err != nil {
+		return time.Time{}, fmt.Errorf("decode initial farm: %w", err)
+	}
+
+	buy, err := mustAction(conn, seq, gateway.CommandBuy, map[string]any{"item_id": 1, "quantity": 1})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("buy: %w", err)
+	}
+	if _, err := mustAction(conn, seq, gateway.CommandTill, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 0,
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("till: %w", err)
+	}
+	plant, err := mustAction(conn, seq, gateway.CommandPlant, map[string]any{
+		"owner_uid": 0, "plot_index": 0, "arg": 1,
+	})
+	if err != nil {
+		return time.Time{}, fmt.Errorf("plant: %w", err)
+	}
+	plantedAt := time.Now()
+	if plant.FarmSeq <= buy.FarmSeq {
+		return time.Time{}, fmt.Errorf("plant farm_seq=%d did not advance after buy=%d", plant.FarmSeq, buy.FarmSeq)
+	}
+
+	if _, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandPetStatus,
+		ClientSeq: *seq,
+		Payload:   emptyJSONObject,
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("pet status: %w", err)
+	}
+	*seq++
+
+	syncEnv, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandSyncFarm,
+		ClientSeq: *seq,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0, "from_seq": 0}),
+	})
+	*seq++
+	if err != nil {
+		return time.Time{}, fmt.Errorf("SyncFarm: %w", err)
+	}
+	var sync syncFarmResponse
+	if err := json.Unmarshal(syncEnv.Payload, &sync); err != nil || sync.FarmSeq < plant.FarmSeq {
+		return time.Time{}, fmt.Errorf("decode SyncFarm: farm_seq=%d want >=%d err=%v", sync.FarmSeq, plant.FarmSeq, err)
+	}
+
+	taskEnv, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandTaskList,
+		ClientSeq: *seq,
+		Payload:   emptyJSONObject,
+	})
+	*seq++
+	if err != nil {
+		return time.Time{}, fmt.Errorf("TaskList: %w", err)
+	}
+	var taskList struct {
+		Tasks []struct {
+			ID       uint32 `json:"id"`
+			Progress uint32 `json:"progress"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal(taskEnv.Payload, &taskList); err != nil {
+		return time.Time{}, fmt.Errorf("decode TaskList: %w", err)
+	}
+	plantProgress := uint32(0)
+	for _, task := range taskList.Tasks {
+		if task.ID == 1 {
+			plantProgress = task.Progress
+		}
+	}
+	if plantProgress == 0 {
+		return time.Time{}, fmt.Errorf("real Plant event did not advance daily task")
+	}
+	if !verifyMail {
+		return plantedAt, nil
+	}
+
+	dailyEnv, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandClaimDailyLogin,
+		ClientSeq: *seq,
+		Payload:   emptyJSONObject,
+	})
+	*seq++
+	if err != nil {
+		return time.Time{}, fmt.Errorf("ClaimDailyLogin: %w", err)
+	}
+	var dailyMail struct {
+		ID             uint64 `json:"id"`
+		AttachmentCoin int64  `json:"attachment_coin"`
+	}
+	if err := json.Unmarshal(dailyEnv.Payload, &dailyMail); err != nil ||
+		dailyMail.ID == 0 || dailyMail.AttachmentCoin <= 0 {
+		return time.Time{}, fmt.Errorf("decode daily mail: id=%d coin=%d err=%v", dailyMail.ID, dailyMail.AttachmentCoin, err)
+	}
+	if _, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandMailClaim,
+		ClientSeq: *seq,
+		Payload:   mustJSON(map[string]any{"mail_id": dailyMail.ID}),
+	}); err != nil {
+		return time.Time{}, fmt.Errorf("MailClaim: %w", err)
+	}
+	*seq++
+	afterEnv, err := exchangeResponse(conn, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: *seq,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
+	})
+	*seq++
+	if err != nil {
+		return time.Time{}, fmt.Errorf("EnterFarm after MailClaim: %w", err)
+	}
+	var after enterFarmResponse
+	if err := json.Unmarshal(afterEnv.Payload, &after); err != nil {
+		return time.Time{}, fmt.Errorf("decode farm after MailClaim: %w", err)
+	}
+	crop, ok := gameconf.CropByID(1)
+	if !ok {
+		return time.Time{}, fmt.Errorf("missing white radish crop config")
+	}
+	wantCoin := initial.Snapshot.Coin - int64(crop.SeedPrice) + dailyMail.AttachmentCoin
+	if after.Snapshot.Coin != wantCoin {
+		return time.Time{}, fmt.Errorf("coin after actor MailClaim=%d, want %d", after.Snapshot.Coin, wantCoin)
+	}
+	return plantedAt, nil
+}
+
+func sleepUntilElapsed(start time.Time, targetMS int64) {
+	remaining := time.Duration(targetMS)*time.Millisecond - time.Since(start)
+	if remaining > 0 {
+		time.Sleep(remaining)
+	}
 }
 
 func registerOnFarm(baseURL string, routes *routing.RouteTable, wantFarm string) (authResponse, string, error) {

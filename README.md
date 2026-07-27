@@ -69,7 +69,8 @@ cd server && go run ./cmd/smoke shards
 # 或 make smoke-shards
 ```
 
-`smoke shards` 会注册落在不同物理 Farm 的 A/B，分别连 gateway-0 / gateway-1，加好友后互相 `EnterFarm`，断言 `relation=FRIEND`。
+`smoke shards` 会让 A/B 落在不同物理 Farm、分别接入 gateway-0 / gateway-1，
+覆盖 Farm RPC 种植/Pet/SyncFarm/任务邮件，再经 Kafka 验证跨 Farm 互助、偷菜及访客权威背包结算。
 
 **方式 B — 全容器（compose profile）**
 
@@ -117,16 +118,28 @@ make client-dev
 # 或全容器：make compose-shards（需先 make migrate）
 ```
 
-确认 4 个端口监听、Kafka 在 9094、MySQL/Redis 已迁移到 `004_pet.sql`。
+确认 4 个端口监听、Kafka 在 9094、MySQL/Redis 已迁移到 `006_account_uid_auto_increment.sql`。
 
 ### 2. 双浏览器演示剧本
 
-准备两个浏览器（或正常 + 隐私窗口），分别打到一个 Gateway 即可验证跨片：
+`run.sh shards` 会启动前端 `:9001` 并代理到 gateway-0。另开终端启动第二个
+Vite 入口并代理到 gateway-1：
 
-- **窗口 A** → http://127.0.0.1:9200/（走 gateway-0）
-- **窗口 B** → http://127.0.0.1:9201/（走 gateway-1）
+```bash
+cd client
+FARM_GATEWAY_URL=http://127.0.0.1:9201 npm run dev -- --host 0.0.0.0 --port 9003 --strictPort
+```
+
+准备两个浏览器（或正常 + 隐私窗口）：
+
+- **窗口 A** → http://127.0.0.1:9001/（Vite → gateway-0）
+- **窗口 B** → http://127.0.0.1:9003/（Vite → gateway-1）
 
 > 演示时让 A、B 注册的用户名尽量不同，便于「按用户名搜索」步骤区分。逻辑分片 `hash(uid) % 1024` 决定落点，A/B 大概率落在不同物理 Farm，正可验证跨农场总线。
+>
+> 当前浏览器客户端断线后不会自动重连，尚未实现 gateway-0 / gateway-1
+> 故障后的自动跨 Gateway 切换。跨 Gateway 接入与服务端
+> `(gateway_id, conn_id)` 路由由上述双入口演示；故障转移不在本演示的能力声明内。
 
 1. **注册并进入**：A、B 各自注册登录进入自己的农场。
 2. **按用户名搜索加好友**：B 打开好友面板 → 输入 A 的**用户名**（不是 UID）→「搜索并添加」。命中后即出现在好友列表；搜不到会得到明确错误码。也可继续用 UID / 分享链接（`/i/:invite`）路径。
@@ -149,7 +162,9 @@ make smoke-steal     # 4c 额度 / 收获竞争 1216 / 余额不足 1412 / 狗�
 make smoke-all       # 种植 + 好友 + 房间 + 互助 + 偷菜 全链路（all 模式）
 ```
 
-`smoke-help` / `smoke-steal` 走单进程内存总线，验证三段式状态机与去重/超时回滚；`smoke-shards` 走 Kafka + 双 Gateway/Farm，验证跨农场主路径。规格 §9.1 中「FriendList 摘要最终一致」「用户名搜索 + 限流」「每日登录幂等」由对应 Task 的单测/集成覆盖，演示剧本中肉眼复核。
+`smoke-help` / `smoke-steal` 走单进程内存总线，验证三段式状态机与去重/超时回滚；
+`smoke-shards` 走 Kafka + 双 Gateway/Farm，验证种植、任务/邮件、跨农场互助/偷菜及 Player 状态落地。
+规格 §9.1 中「FriendList 摘要最终一致」「用户名搜索 + 限流」「每日登录幂等」由对应 Task 的单测/集成覆盖，演示剧本中肉眼复核。
 
 ## Makefile 目标
 
@@ -160,7 +175,7 @@ make smoke-all       # 种植 + 好友 + 房间 + 互助 + 偷菜 全链路（al
 | `make compose-up` | 启动 MySQL + Redis + Kafka |
 | `make compose-shards` | 启动双分片 farm-0/1 + gateway-0/1（compose profile） |
 | `make compose-down` | 停止 compose（含 shards profile） |
-| `make migrate` | 执行迁移（`001_init.sql` + `002_items.sql` + `003_friendship.sql` + `004_pet.sql`） |
+| `make migrate` | 顺序执行 `server/migrations/001_init.sql` 至 `006_account_uid_auto_increment.sql` |
 | `make run` | 前台启动 `farm-server`（默认 `FARM_ALLOW_DEBUG_TIME=1`，供 smoke 调时） |
 | `make run-gateway` | 独立 Gateway 进程（`FARM_ROLE=gateway`） |
 | `make run-farm` | 独立 Farm 进程（`FARM_ROLE=farm`，`FARM_INSTANCE_ID` 需在路由表中） |
@@ -170,7 +185,7 @@ make smoke-all       # 种植 + 好友 + 房间 + 互助 + 偷菜 全链路（al
 | `make smoke` | 种植闭环冒烟（需服务已启动且 debug 调时可用） |
 | `make smoke-friends` | 期 3 加好友冒烟（注册 A/B → 分享链接 → 列表 → 重复加得 1402） |
 | `make smoke-room` | 期 3 房间同步冒烟（好友拜访 → 主人动作 → 访客收 `FarmDelta`） |
-| `make smoke-shards` | 期 4a 双分片冒烟（跨 Farm 好友互相 EnterFarm） |
+| `make smoke-shards` | 双分片冒烟（RPC 种植/任务邮件 + Kafka 互助/偷菜） |
 | `make smoke-help` | 期 4b 互助冒烟（浇水成功 / AlreadyWatered 失败回滚，all 模式 :9002） |
 | `make smoke-steal` | 期 4c 偷菜冒烟（额度 / 收获竞争 1216 / 余额不足 1412 / 狗拦截 1411） |
 | `make smoke-all` | 种植 + 加好友 + 房间同步 + 互助 + 偷菜 全链路（需 `FARM_ALLOW_DEBUG_TIME=1`） |

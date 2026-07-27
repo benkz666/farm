@@ -53,7 +53,6 @@ func runSteal(baseURL string) error {
 		return fmt.Errorf("missing crop %d", stealCropID)
 	}
 	compensation := int64(crop.FruitPrice) * 10
-	quotaCap := uint32(crop.Yield) * 40 / 100
 
 	owner, err := openSmokePlayer(baseURL, routes, "farm-0")
 	if err != nil {
@@ -90,6 +89,14 @@ func runSteal(baseURL string) error {
 	// --- 场景 1：额度竞争（无狗）---
 	if err := ownerPrepareMaturePlot(owner, baseURL, 0); err != nil {
 		return fmt.Errorf("quota mature plot0: %w", err)
+	}
+	finalYield, err := ownerFinalYield(owner, 0)
+	if err != nil {
+		return fmt.Errorf("quota final yield: %w", err)
+	}
+	quotaCap := uint32(finalYield) * 40 / 100
+	if quotaCap == 0 {
+		return fmt.Errorf("quota cap is zero for final yield %d", finalYield)
 	}
 	var stolenTotal uint32
 	var sawQuotaExhausted bool
@@ -482,6 +489,26 @@ func ownerPrepareMaturePlot(owner *smokePlayer, baseURL string, plotIndex uint32
 		return fmt.Errorf("plant: %w", err)
 	}
 	return ownerAdvanceToMature(owner, baseURL, plotIndex)
+}
+
+func ownerFinalYield(owner *smokePlayer, plotIndex uint32) (uint16, error) {
+	env, err := exchangeResponse(owner.conn, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: owner.seq,
+		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
+	})
+	owner.seq++
+	if err != nil {
+		return 0, err
+	}
+	var enter enterFarmResponse
+	if err := json.Unmarshal(env.Payload, &enter); err != nil {
+		return 0, err
+	}
+	if int(plotIndex) >= len(enter.Snapshot.Plots) {
+		return 0, fmt.Errorf("plot %d missing from snapshot", plotIndex)
+	}
+	return enter.Snapshot.Plots[plotIndex].FinalYield, nil
 }
 
 func ownerResetAndMature(owner *smokePlayer, baseURL string, plotIndex uint32) error {
