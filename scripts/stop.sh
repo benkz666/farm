@@ -8,6 +8,10 @@ SERVER_PID_FILE="$RUN_DIR/farm-server.pid"
 VITE_PID_FILE="$RUN_DIR/vite.pid"
 VITE_PORT=9001
 HTTP_PORT=9002
+FARM0_PORT=9100
+FARM1_PORT=9101
+GW0_PORT=9200
+GW1_PORT=9201
 
 COMPOSE_DOWN=0
 if [[ "${1:-}" == "--compose" ]] || [[ "${1:-}" == "-c" ]]; then
@@ -61,14 +65,21 @@ stop_pid_file() {
 
 stop_pid_file "$VITE_PID_FILE" "Vite"
 stop_pid_file "$SERVER_PID_FILE" "farm-server"
+for role in farm-0 farm-1 gateway-0 gateway-1; do
+  stop_pid_file "$RUN_DIR/${role}.pid" "$role"
+done
 pkill -f 'cmd/farm-server' 2>/dev/null || true
 pkill -f "vite.*--port ${VITE_PORT}" 2>/dev/null || true
 kill_port "$VITE_PORT"
 kill_port "$HTTP_PORT"
+kill_port "$FARM0_PORT"
+kill_port "$FARM1_PORT"
+kill_port "$GW0_PORT"
+kill_port "$GW1_PORT"
 
 if [[ "$COMPOSE_DOWN" -eq 1 ]]; then
-  info "停止 MySQL + Redis (compose)"
-  docker compose -f "$ROOT/deploy/compose.yml" down
+  info "停止 compose（含 shards profile 服务）"
+  docker compose -f "$ROOT/deploy/compose.yml" --profile shards down
 fi
 
 info "已关闭，如需关闭数据库: ./scripts/stop.sh --compose"

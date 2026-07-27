@@ -4,7 +4,7 @@
 
 ## 前置依赖
 
-- Docker（MySQL 8.4、Redis 7）
+- Docker（MySQL 8.4、Redis 7、Kafka；双分片可选容器化 farm/gateway）
 - Node.js 18+
 - Go 1.22+
 - `curl`、`lsof`（启动脚本用）
@@ -22,7 +22,7 @@ chmod +x scripts/run.sh scripts/stop.sh   # 只需一次
 
 1. 检查并安装前端依赖（`client/npm install`，若缺失）
 2. 检查并下载后端 Go 模块（`go mod download`）
-3. 启动 MySQL / Redis，执行迁移（含 `001` / `002` / `003`）
+3. 启动 MySQL / Redis / Kafka，执行迁移（含 `001` / `002` / `003`）
 4. **固定端口**启动：前端 `9001`、后端 `9002`（占用则先 kill 再起）
 
 成功后打开：
@@ -46,6 +46,42 @@ chmod +x scripts/run.sh scripts/stop.sh   # 只需一次
 ```
 
 也可用 Make：`make run-all` / `make stop-all`。
+
+## 期 4a：双分片本地联调
+
+单进程 `all` 适合日常开发；验收跨 Farm 路由时用双分片拓扑：
+
+| 角色 | 端口 | 职责 |
+|------|------|------|
+| MySQL / Redis / Kafka | 3306 / 6379 / 9094 | 共享存储与跨农场总线 |
+| farm-0 | 9100 | 逻辑片 `0..511` |
+| farm-1 | 9101 | 逻辑片 `512..1023` |
+| gateway-0 | 9200 | 客户端 HTTP/WS（可任意接入） |
+| gateway-1 | 9201 | 同上 |
+
+**方式 A — 宿主机进程（推荐联调 / smoke）**
+
+```bash
+./scripts/run.sh shards
+# 或 make run-shards
+
+cd server && go run ./cmd/smoke shards
+# 或 make smoke-shards
+```
+
+`smoke shards` 会注册落在不同物理 Farm 的 A/B，分别连 gateway-0 / gateway-1，加好友后互相 `EnterFarm`，断言 `relation=FRIEND`。
+
+**方式 B — 全容器（compose profile）**
+
+```bash
+# 先起依赖并 migrate，再构建 farm/gateway 镜像
+make migrate   # 需已 make compose-up（或 compose 已含 mysql）
+make compose-shards
+# Gateway: :9200 / :9201 ；Farm 内部: :9100 / :9101
+make smoke-shards
+```
+
+路由表示例：`deploy/route-table.example.json`。环境变量见 `.env.example`（`FARM_ROLE` / `FARM_FARM_URLS` / `FARM_GATEWAY_URLS`）。
 
 ## 分步启动
 
@@ -76,13 +112,16 @@ make client-dev
 |------|------|
 | `make run-all` | 一键启动（`./scripts/run.sh`） |
 | `make stop-all` | 停止前后端（`./scripts/stop.sh`） |
-| `make compose-up` | 启动 MySQL + Redis |
-| `make compose-down` | 停止 compose 容器 |
+| `make compose-up` | 启动 MySQL + Redis + Kafka |
+| `make compose-shards` | 启动双分片 farm-0/1 + gateway-0/1（compose profile） |
+| `make compose-down` | 停止 compose（含 shards profile） |
 | `make migrate` | 执行迁移（`001_init.sql` + `002_items.sql` + `003_friendship.sql`） |
 | `make run` | 前台启动 `farm-server`（默认 `FARM_ALLOW_DEBUG_TIME=1`，供 smoke 调时） |
+| `make run-shards` | 双分片一键启动（`./scripts/run.sh shards`） |
 | `make client-dev` | 前台启动 Vite |
 | `make test` | `go test ./...` |
 | `make smoke` | 种植闭环冒烟（需服务已启动且 debug 调时可用） |
 | `make smoke-friends` | 期 3 加好友冒烟（注册 A/B → 分享链接 → 列表 → 重复加得 1402） |
 | `make smoke-room` | 期 3 房间同步冒烟（好友拜访 → 主人动作 → 访客收 `FarmDelta`） |
+| `make smoke-shards` | 期 4a 双分片冒烟（跨 Farm 好友互相 EnterFarm） |
 | `make smoke-all` | 种植 + 加好友 + 房间同步全链路（需 `FARM_ALLOW_DEBUG_TIME=1`） |

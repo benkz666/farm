@@ -19,10 +19,13 @@ import (
 	"farm/server/internal/gameconf"
 	"farm/server/internal/gateway"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/routing"
 )
 
 const (
 	defaultBaseURL = "http://127.0.0.1:9002"
+	defaultGW0URL  = "http://127.0.0.1:9200"
+	defaultGW1URL  = "http://127.0.0.1:9201"
 	smokePassword  = "smoke-password"
 )
 
@@ -70,6 +73,8 @@ func main() {
 		fmt.Println("smoke: friends gen/accept/list/duplicate-add passed")
 	case "room":
 		fmt.Println("smoke: room enter/delta/sync passed")
+	case "shards":
+		fmt.Println("smoke: cross-shard friend EnterFarm passed")
 	case "all":
 		fmt.Println("smoke: planting + friends + room passed")
 	default:
@@ -84,6 +89,10 @@ func run(mode string) error {
 		return runFriends(baseURL)
 	case "room":
 		return runRoom(baseURL)
+	case "shards":
+		gw0 := strings.TrimRight(getenv("FARM_SMOKE_GATEWAY0", defaultGW0URL), "/")
+		gw1 := strings.TrimRight(getenv("FARM_SMOKE_GATEWAY1", defaultGW1URL), "/")
+		return runShards(gw0, gw1)
 	case "all":
 		if err := runPlanting(baseURL); err != nil {
 			return err
@@ -795,6 +804,162 @@ func friendListContains(friends []friendEntry, uid uint64) bool {
 		}
 	}
 	return false
+}
+
+// runShards 覆盖期 4a 双分片主路径：A/B 落不同物理 Farm，分别连 gateway-0/1，
+// 加好友后互相 EnterFarm，断言 relation=FRIEND 且能拿到对方快照。
+func runShards(gw0, gw1 string) error {
+	routes, err := loadSmokeRouteTable()
+	if err != nil {
+		return err
+	}
+
+	loginA, farmA, err := registerOnFarm(gw0, routes, "farm-0")
+	if err != nil {
+		return fmt.Errorf("register A on farm-0 via gateway-0: %w", err)
+	}
+	loginB, farmB, err := registerOnFarm(gw1, routes, "farm-1")
+	if err != nil {
+		return fmt.Errorf("register B on farm-1 via gateway-1: %w", err)
+	}
+	if farmA == farmB {
+		return fmt.Errorf("A and B landed on same farm %q", farmA)
+	}
+	fmt.Printf("smoke shards: A uid=%d farm=%s gw=%s; B uid=%d farm=%s gw=%s\n",
+		loginA.UID, farmA, gw0, loginB.UID, farmB, gw1)
+
+	connA, err := dialAndHandshake(loginA)
+	if err != nil {
+		return fmt.Errorf("connect A: %w", err)
+	}
+	defer connA.Close()
+	connB, err := dialAndHandshake(loginB)
+	if err != nil {
+		return fmt.Errorf("connect B: %w", err)
+	}
+	defer connB.Close()
+
+	seqA := uint32(2)
+	seqB := uint32(2)
+
+	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandGenShareLink,
+		ClientSeq: seqA,
+		Payload:   emptyJSONObject,
+	})
+	if err != nil {
+		return fmt.Errorf("GenShareLink: %w", err)
+	}
+	seqA++
+	var share genShareLinkResponse
+	if err := json.Unmarshal(shareEnv.Payload, &share); err != nil {
+		return fmt.Errorf("decode GenShareLink payload: %w", err)
+	}
+	token := strings.TrimPrefix(share.Path, "/i/")
+	if token == "" {
+		return fmt.Errorf("share token is empty")
+	}
+	if _, err := exchangeResponse(connB, gateway.Envelope{
+		Cmd:       gateway.CommandAcceptInvite,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"token": token}),
+	}); err != nil {
+		return fmt.Errorf("AcceptInvite: %w", err)
+	}
+	seqB++
+
+	// A 拜访 B：应转发到 farm-1。
+	enterAEnv, err := exchangeResponse(connA, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqA,
+		Payload:   mustJSON(map[string]any{"owner_uid": loginB.UID}),
+	})
+	if err != nil {
+		return fmt.Errorf("A EnterFarm(B): %w", err)
+	}
+	seqA++
+	var enterA enterFarmResponse
+	if err := json.Unmarshal(enterAEnv.Payload, &enterA); err != nil {
+		return fmt.Errorf("decode A EnterFarm payload: %w", err)
+	}
+	if enterA.Relation != "FRIEND" {
+		return fmt.Errorf("A relation = %q, want FRIEND", enterA.Relation)
+	}
+	if enterA.Snapshot.UnlockedPlots == 0 {
+		return fmt.Errorf("A EnterFarm(B) returned empty snapshot")
+	}
+
+	// B 拜访 A：应转发到 farm-0。
+	enterBEnv, err := exchangeResponse(connB, gateway.Envelope{
+		Cmd:       gateway.CommandEnterFarm,
+		ClientSeq: seqB,
+		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID}),
+	})
+	if err != nil {
+		return fmt.Errorf("B EnterFarm(A): %w", err)
+	}
+	seqB++
+	var enterB enterFarmResponse
+	if err := json.Unmarshal(enterBEnv.Payload, &enterB); err != nil {
+		return fmt.Errorf("decode B EnterFarm payload: %w", err)
+	}
+	if enterB.Relation != "FRIEND" {
+		return fmt.Errorf("B relation = %q, want FRIEND", enterB.Relation)
+	}
+	if enterB.Snapshot.UnlockedPlots == 0 {
+		return fmt.Errorf("B EnterFarm(A) returned empty snapshot")
+	}
+	return nil
+}
+
+func registerOnFarm(baseURL string, routes *routing.RouteTable, wantFarm string) (authResponse, string, error) {
+	const maxAttempts = 64
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		username, err := smokeUsername()
+		if err != nil {
+			return authResponse{}, "", err
+		}
+		if _, err := authenticate(baseURL+"/api/register", username, smokePassword); err != nil {
+			return authResponse{}, "", fmt.Errorf("register %s: %w", username, err)
+		}
+		login, err := authenticate(baseURL+"/api/login", username, smokePassword)
+		if err != nil {
+			return authResponse{}, "", fmt.Errorf("login %s: %w", username, err)
+		}
+		farmID, err := routes.FarmID(login.UID)
+		if err != nil {
+			return authResponse{}, "", err
+		}
+		if farmID == wantFarm {
+			return login, farmID, nil
+		}
+	}
+	return authResponse{}, "", fmt.Errorf("after %d registers still no uid on %s", maxAttempts, wantFarm)
+}
+
+func loadSmokeRouteTable() (*routing.RouteTable, error) {
+	candidates := []string{
+		getenv("FARM_ROUTE_TABLE", ""),
+		"deploy/route-table.example.json",
+		"../deploy/route-table.example.json",
+		"../../deploy/route-table.example.json",
+	}
+	var lastErr error
+	for _, path := range candidates {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		routes, err := routing.LoadRouteTable(path)
+		if err == nil {
+			return routes, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("route table not found")
+	}
+	return nil, lastErr
 }
 
 var emptyJSONObject = json.RawMessage(`{}`)

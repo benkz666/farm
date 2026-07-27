@@ -1,12 +1,16 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-all run-all stop-all
+.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-all run-all run-shards stop-all
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
 
+# 仅依赖（MySQL/Redis/Kafka）。双分片 farm/gateway 见 compose-shards 或 ./scripts/run.sh shards。
 compose-down:
-	docker compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) --profile shards down
+
+compose-shards:
+	docker compose -f $(COMPOSE_FILE) --profile shards up -d --build
 
 migrate:
 	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/001_init.sql
@@ -71,8 +75,19 @@ smoke-all:
 	set +a; \
 	cd server && go run ./cmd/smoke all
 
+# 期 4a 双分片冒烟：A/B 落不同 Farm，分别连 gateway-0/1，互为好友后互相 EnterFarm。
+# 需先 ./scripts/run.sh shards（或 make compose-shards 且已 migrate）。
+smoke-shards:
+	@set -a; \
+	if [ -f .env ]; then . ./.env; fi; \
+	set +a; \
+	cd server && go run ./cmd/smoke shards
+
 run-all:
 	./scripts/run.sh
+
+run-shards:
+	./scripts/run.sh shards
 
 stop-all:
 	./scripts/stop.sh
