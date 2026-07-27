@@ -30,6 +30,17 @@ test('好友与房间 API 使用约定命令和载荷', async () => {
   })
 })
 
+test('SearchUser 使用 410 命令按用户名精确查询', async () => {
+  const client = new NetClient()
+  client.request = async (cmd, payload) => ({ cmd, payload })
+
+  assert.equal(typeof client.searchUser, 'function')
+  assert.deepEqual(await client.searchUser('alice'), {
+    cmd: 410,
+    payload: { username: 'alice' },
+  })
+})
+
 test('FarmDelta 主动推送交给 delta 订阅者', () => {
   const client = new NetClient()
   let received

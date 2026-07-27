@@ -305,6 +305,7 @@ link    = https://<host>/i/<payload>.<sig>
 | 1410 | `ERR_STEAL_QUOTA_EXHAUSTED` | 这块地能偷的已经被偷光了 | 8.9 / 11.3 |
 | 1411 | `ERR_STEAL_INTERCEPTED` | 被看家狗抓住了 | 8.9 / 12.4 |
 | 1412 | `ERR_STEAL_NO_AFFORD` | 金币不足以承担被抓的赔付风险 | 见下 |
+| 1413 | `ERR_USER_NOT_FOUND` | 用户不存在 | 11.1 |
 
 **1411 是一种特殊错误**。策划 8.9 节明确：「被狗拦截是一种特殊失败，它不返还操作机会，且会让访客赔付金币。」因此它虽然返回错误码，却是**有副作用**的——这是全表唯一违反「失败无副作用」通用规则的情形，而这个例外是策划刻意设计的。应答体因此需要携带赔付金额：
 
@@ -408,10 +409,18 @@ message PlotActionReq {
 | 404 | `AcceptInvite` | 用凭证建立好友关系 |
 | 406 | `RemoveFriend` | 解除好友，双向生效（策划 11.1） |
 | 408 | `AddFriendByUID` | 按 uid 直接建立好友关系 |
+| 410 | `SearchUser` | 按用户名精确搜索，返回 uid 与昵称，随后可调用 `AddFriendByUID` |
 
 `FriendList` 携带「农场有无可偷作物」这个摘要字段，是一个刻意的设计：策划 11.4 节的验算结论是「访问好友的主要动机是偷菜」，如果客户端要靠逐个进入好友农场才能发现哪里有菜可偷，会产生大量无效的 `EnterFarm` 请求。这个摘要把一次遍历 200 个好友的操作压缩成一次请求。
 
 摘要值由好友的 Actor 在状态变化时更新到 Redis 的一个小 hash 里，`FriendList` 批量读取。它是**弱一致**的（可能读到几秒前的状态），这完全可以接受——进去发现菜已经被收了，本来就是偷菜玩法的一部分。
+
+```proto
+message SearchUserReq { string username = 1; }  // 精确匹配 account.username
+message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
+```
+
+用户名未命中返回 `ERR_USER_NOT_FOUND`（1413）。该命令同样适用 1.5 节的连接级令牌桶限流，以防止批量枚举账号。
 
 ### 5.6 宠物（500—599）
 

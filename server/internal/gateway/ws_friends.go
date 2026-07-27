@@ -17,6 +17,10 @@ type friendPeerRequest struct {
 	PeerUID uint64 `json:"peer_uid"`
 }
 
+type searchUserRequest struct {
+	Username string `json:"username"`
+}
+
 type friendJSON struct {
 	UID          uint64 `json:"uid"`
 	Nickname     string `json:"nickname"`
@@ -33,6 +37,11 @@ func (g *Gateway) writeStealHint(uid uint64, hasStealable bool) {
 
 type friendListResponse struct {
 	Friends []friendJSON `json:"friends"`
+}
+
+type searchUserResponse struct {
+	UID      uint64 `json:"uid"`
+	Nickname string `json:"nickname"`
 }
 
 type genShareLinkResponse struct {
@@ -82,6 +91,27 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			})
 		}
 		response.Payload = marshalPayload(friendListResponse{Friends: list})
+		return response
+
+	case CommandSearchUser:
+		var payload searchUserRequest
+		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.Username == "" {
+			response.Err = pkgerr.BadRequest
+			return response
+		}
+		user, err := g.friends.FindUserByUsername(context.Background(), payload.Username)
+		if err != nil {
+			if errors.Is(err, store.ErrAccountNotFound) {
+				response.Err = pkgerr.UserNotFound
+				return response
+			}
+			response.Err = pkgerr.Internal
+			return response
+		}
+		response.Payload = marshalPayload(searchUserResponse{
+			UID:      user.UID,
+			Nickname: user.Nickname,
+		})
 		return response
 
 	case CommandGenShareLink:

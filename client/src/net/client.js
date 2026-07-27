@@ -10,6 +10,7 @@ export const CMD_GEN_SHARE_LINK = 402
 export const CMD_ACCEPT_INVITE = 404
 export const CMD_REMOVE_FRIEND = 406
 export const CMD_ADD_FRIEND_BY_UID = 408
+export const CMD_SEARCH_USER = 410
 export const CMD_FARM_DELTA = 9000
 
 /** 地块动作（protocol 5.3）。 */
@@ -192,6 +193,15 @@ export class NetClient {
    */
   addFriendByUID(peerUid) {
     return this.request(CMD_ADD_FRIEND_BY_UID, { peer_uid: peerUid })
+  }
+
+  /**
+   * 按用户名精确查询玩家（cmd 410）。
+   * @param {string} username
+   * @returns {Promise<Envelope>}
+   */
+  searchUser(username) {
+    return this.request(CMD_SEARCH_USER, { username })
   }
 
   /**

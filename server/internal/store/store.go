@@ -49,6 +49,14 @@ type FriendStore interface {
 	RemoveFriends(ctx context.Context, a, b uint64) error
 	ListFriends(ctx context.Context, uid uint64) ([]FriendRow, error)
 	CountFriends(ctx context.Context, uid uint64) (int, error)
+	FindUserByUsername(ctx context.Context, username string) (UserSearchRow, error)
+}
+
+// UserSearchRow 是按用户名搜索好友时可公开的玩家标识与昵称。
+// 不返回账号密码哈希，避免认证字段穿过社交边界。
+type UserSearchRow struct {
+	UID      uint64
+	Nickname string
 }
 
 // 哨兵错误，供上层用 errors.Is 判定并映射到 pkgerr 协议码。

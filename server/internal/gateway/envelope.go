@@ -32,6 +32,7 @@ const (
 	CommandAcceptInvite   uint32 = 404
 	CommandRemoveFriend   uint32 = 406
 	CommandAddFriendByUID uint32 = 408
+	CommandSearchUser     uint32 = 410
 	CommandPetStatus      uint32 = 500
 	CommandPetActivate    uint32 = 502
 	CommandPetFeed        uint32 = 504

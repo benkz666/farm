@@ -401,11 +401,11 @@ export class UI {
     addRow.className = 'set-row';
     addRow.style.marginBottom = '10px';
     const addInput = document.createElement('input');
-    addInput.placeholder = '输入 UID 或粘贴分享链接';
+    addInput.placeholder = '输入用户名、UID 或粘贴分享链接';
     addInput.style.cssText = 'flex:1;min-width:0';
     const addButton = document.createElement('button');
     addButton.className = 'act-btn';
-    addButton.textContent = '添加';
+    addButton.textContent = '搜索并添加';
     addButton.onclick = async () => {
       if (await this.cb.onAddFriend?.(addInput.value)) this.renderFriends(state);
     };

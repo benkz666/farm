@@ -18,6 +18,25 @@ type FriendRow struct {
 	Nickname string
 }
 
+// FindUserByUsername 精确查询可添加好友的玩家公开资料。
+func (s *Store) FindUserByUsername(ctx context.Context, username string) (UserSearchRow, error) {
+	var user UserSearchRow
+	err := s.db.QueryRowContext(ctx,
+		`SELECT a.uid, p.nickname
+		FROM account AS a
+		JOIN player AS p ON p.uid = a.uid
+		WHERE a.username = ?`,
+		username,
+	).Scan(&user.UID, &user.Nickname)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UserSearchRow{}, ErrAccountNotFound
+	}
+	if err != nil {
+		return UserSearchRow{}, fmt.Errorf("store: find user by username: %w", err)
+	}
+	return user, nil
+}
+
 // AreFriends 返回两个 uid 是否已有一条双向好友关系。
 func (s *Store) AreFriends(ctx context.Context, a, b uint64) (bool, error) {
 	uidLo, uidHi := friendshipPair(a, b)

@@ -83,6 +83,7 @@ const (
 	StealQuotaExhausted Code = 1410 // ERR_STEAL_QUOTA_EXHAUSTED 这块地能偷的已经被偷光了
 	StealIntercepted    Code = 1411 // ERR_STEAL_INTERCEPTED 被看家狗抓住了
 	StealNoAfford       Code = 1412 // ERR_STEAL_NO_AFFORD 金币不足以承担被抓的赔付风险
+	UserNotFound        Code = 1413 // ERR_USER_NOT_FOUND 用户不存在
 )
 
 // 4.6 宠物（1500—1599）。

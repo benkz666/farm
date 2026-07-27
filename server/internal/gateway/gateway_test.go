@@ -875,6 +875,76 @@ func TestWebSocketRateLimitResponsePreservesRequestHeader(t *testing.T) {
 	}
 }
 
+func TestSearchUserReturnsExactMatchAndNotFound(t *testing.T) {
+	t.Parallel()
+
+	friends := newFriendStoreStub()
+	friends.users["alice"] = searchUserStub{UID: 7, Nickname: "Alice's farm"}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{},
+		WithFriendStore(friends),
+	)
+	connection := &wsConnection{uid: 42, authed: true}
+
+	t.Run("exact match", func(t *testing.T) {
+		response := gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandSearchUser,
+			Payload: json.RawMessage(`{"username":"alice"}`),
+		})
+		if response.Err != pkgerr.OK {
+			t.Fatalf("SearchUser err = %d, want OK", response.Err)
+		}
+		var payload struct {
+			UID      uint64 `json:"uid"`
+			Nickname string `json:"nickname"`
+		}
+		if err := json.Unmarshal(response.Payload, &payload); err != nil {
+			t.Fatalf("decode SearchUser payload: %v", err)
+		}
+		if payload.UID != 7 || payload.Nickname != "Alice's farm" {
+			t.Fatalf("SearchUser payload = %#v", payload)
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		response := gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandSearchUser,
+			Payload: json.RawMessage(`{"username":"missing"}`),
+		})
+		if response.Err != pkgerr.UserNotFound {
+			t.Fatalf("SearchUser err = %d, want %d", response.Err, pkgerr.UserNotFound)
+		}
+	})
+}
+
+func TestSearchUserIsLimitedByConnectionLimiter(t *testing.T) {
+	t.Parallel()
+
+	conn := openWebSocket(t, New(authStub{}, sessionStub{uid: 42}, runtimeStub{}).Handler())
+	handshakeWebSocket(t, conn, "token-42")
+	for clientSeq := uint32(2); clientSeq <= connectionBurst; clientSeq++ {
+		writeEnvelope(t, conn, Envelope{
+			Cmd:       CommandPing,
+			ClientSeq: clientSeq,
+			Payload:   json.RawMessage(`{"client_time":0}`),
+		})
+		if got := readEnvelope(t, conn); got.Err != pkgerr.OK {
+			t.Fatalf("Ping response = %#v", got)
+		}
+	}
+
+	writeEnvelope(t, conn, Envelope{
+		Cmd:       CommandSearchUser,
+		ClientSeq: connectionBurst + 1,
+		Payload:   json.RawMessage(`{"username":"alice"}`),
+	})
+	if got := readEnvelope(t, conn); got.Cmd != CommandSearchUser || got.ClientSeq != connectionBurst+1 || got.Err != pkgerr.RateLimited {
+		t.Fatalf("SearchUser rate-limit response = %#v", got)
+	}
+}
+
 func TestWebSocketTillSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1730,12 +1800,19 @@ func (s *farmRPCStub) Execute(_ context.Context, farmID string, request farmrpc.
 type friendStoreStub struct {
 	pairs     map[[2]uint64]bool
 	nicknames map[uint64]string
+	users     map[string]searchUserStub
+}
+
+type searchUserStub struct {
+	UID      uint64
+	Nickname string
 }
 
 func newFriendStoreStub() *friendStoreStub {
 	return &friendStoreStub{
 		pairs:     make(map[[2]uint64]bool),
 		nicknames: make(map[uint64]string),
+		users:     make(map[string]searchUserStub),
 	}
 }
 
@@ -1768,6 +1845,14 @@ func (s *friendStoreStub) ListFriends(_ context.Context, uid uint64) ([]store.Fr
 		}
 	}
 	return friends, nil
+}
+
+func (s *friendStoreStub) FindUserByUsername(_ context.Context, username string) (store.UserSearchRow, error) {
+	user, ok := s.users[username]
+	if !ok {
+		return store.UserSearchRow{}, store.ErrAccountNotFound
+	}
+	return store.UserSearchRow{UID: user.UID, Nickname: user.Nickname}, nil
 }
 
 func (s *friendStoreStub) CountFriends(_ context.Context, uid uint64) (int, error) {
@@ -1816,6 +1901,10 @@ func (s friendStoreErrorStub) RemoveFriends(context.Context, uint64, uint64) err
 
 func (s friendStoreErrorStub) ListFriends(context.Context, uint64) ([]store.FriendRow, error) {
 	return nil, s.err
+}
+
+func (s friendStoreErrorStub) FindUserByUsername(context.Context, string) (store.UserSearchRow, error) {
+	return store.UserSearchRow{}, s.err
 }
 
 func (s friendStoreErrorStub) CountFriends(context.Context, uint64) (int, error) {
@@ -1977,4 +2066,3 @@ func TestHarvestWritesStealableHint(t *testing.T) {
 		t.Fatalf("harvest did not write has_stealable=false; calls = %#v", calls)
 	}
 }
-

@@ -233,7 +233,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 	case CommandPetStatus, CommandPetActivate, CommandPetFeed:
 		return g.handlePet(connection, request)
 	case CommandFriendList, CommandGenShareLink, CommandAcceptInvite,
-		CommandRemoveFriend, CommandAddFriendByUID:
+		CommandRemoveFriend, CommandAddFriendByUID, CommandSearchUser:
 		return g.handleFriendRequest(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest

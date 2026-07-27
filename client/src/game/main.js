@@ -603,19 +603,30 @@ async function addFriend(value) {
   if (!netClient) return false;
   const input = value.trim();
   if (!input) {
-    fail('请输入 UID 或分享链接');
+    fail('请输入用户名、UID 或分享链接');
     return false;
   }
   try {
     const token = inviteTokenFromInput(input);
     const peerUid = Number(input);
-    if (!token && (!Number.isSafeInteger(peerUid) || peerUid <= 0)) {
-      fail('UID 格式无效');
-      return false;
+    let response;
+    if (token) {
+      response = await netClient.acceptInvite(token);
+    } else if (Number.isSafeInteger(peerUid) && peerUid > 0) {
+      response = await netClient.addFriendByUID(peerUid);
+    } else {
+      const search = await netClient.searchUser(input);
+      if (search.err !== 0) {
+        fail(errText(search.err));
+        return false;
+      }
+      const foundUID = Number(search.payload?.uid);
+      if (!Number.isSafeInteger(foundUID) || foundUID <= 0) {
+        fail('搜索结果无效');
+        return false;
+      }
+      response = await netClient.addFriendByUID(foundUID);
     }
-    const response = token
-      ? await netClient.acceptInvite(token)
-      : await netClient.addFriendByUID(peerUid);
     if (response.err !== 0) {
       fail(errText(response.err));
       return false;
