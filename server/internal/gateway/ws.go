@@ -306,6 +306,18 @@ func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDe
 	})
 }
 
+// pushPlayerDelta delivers state owned by this connection's authenticated
+// player. Unlike FarmDelta, it is independent of the farm room being viewed.
+func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) {
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
+	_ = connection.respondLocked(Envelope{
+		Cmd:       CommandPlayerDelta,
+		ClientSeq: 0,
+		Payload:   marshalPayload(delta),
+	})
+}
+
 func unmarshalPayload(payload json.RawMessage, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()

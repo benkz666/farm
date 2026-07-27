@@ -177,6 +177,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/i/", g.inviteLanding)
 	mux.HandleFunc("/ws", g.serveWS)
 	mux.HandleFunc("/internal/v1/push/farm-delta", g.receiveFarmDelta)
+	mux.HandleFunc("/internal/v1/push/player-delta", g.receivePlayerDelta)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 	}
@@ -244,6 +245,33 @@ func (g *Gateway) receiveFarmDelta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	connection.(*wsConnection).pushFarmDelta(request.Delta.OwnerUID, request.Delta)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) receivePlayerDelta(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !g.authorizedPush(r.Header.Get("Authorization")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var request farmrpc.PlayerDeltaPushRequest
+	if err := decodeJSON(io.LimitReader(r.Body, 64<<10), &request); err != nil ||
+		request.ConnectionID == 0 || request.UID == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	connection, ok := g.connections.Load(request.ConnectionID)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	wsConnection := connection.(*wsConnection)
+	if wsConnection.uid == request.UID {
+		wsConnection.pushPlayerDelta(request.Delta)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

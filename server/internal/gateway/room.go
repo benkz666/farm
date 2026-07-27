@@ -97,6 +97,23 @@ func (g *Gateway) Publish(_ context.Context, delta farm.FarmDelta, _ uint64) err
 	return nil
 }
 
+// PublishPlayerDelta sends a personal state snapshot to every local connection
+// authenticated as uid. It implements cross.PlayerDeltaPublisher in all-in-one
+// development mode; multi-process Farm servers use farmrpc fan-out instead.
+func (g *Gateway) PublishPlayerDelta(_ context.Context, uid uint64, delta farm.PlayerDelta) error {
+	if g == nil || uid == 0 {
+		return errors.New("gateway: invalid PlayerDelta target")
+	}
+	g.connections.Range(func(_, value any) bool {
+		connection, ok := value.(*wsConnection)
+		if ok && connection.uid == uid {
+			connection.pushPlayerDelta(delta)
+		}
+		return true
+	})
+	return nil
+}
+
 // Broadcast 向 delta.OwnerUID 房间中当前的全部订阅者推送增量。
 func (h *RoomHub) Broadcast(delta farm.FarmDelta) {
 	h.BroadcastExcept(delta, 0)

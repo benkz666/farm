@@ -138,7 +138,7 @@ func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
 	owner.stealRoll = func() uint16 { return 1 }
 	owner.interceptRoll = func() uint8 { return 0 }
 
-	result, _, _, _ := owner.decide(CrossAction{
+	result, _, _, _, _ := owner.decide(CrossAction{
 		ReqID:        4,
 		Kind:         Steal,
 		VisitorUID:   7,

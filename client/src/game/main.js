@@ -39,6 +39,7 @@ let hoverPlot = null;
 let netClient = null;
 let farmMirror = null;
 let stopDeltaSubscription = null;
+let stopPlayerDeltaSubscription = null;
 /** 等 Rsp 期间防连点 */
 let onlineBusy = false;
 
@@ -220,6 +221,12 @@ function enterOnlineFromNet(client, enterEnv) {
     void farmMirror.onDelta(deltaEnv.payload).catch((error) => {
       fail(error instanceof Error ? error.message : String(error));
     });
+  });
+  stopPlayerDeltaSubscription?.();
+  stopPlayerDeltaSubscription = client.onPlayerDelta((deltaEnv) => {
+    applyPatch(state, deltaEnv.payload);
+    ui.updateHUD(state);
+    refreshSubBar();
   });
   refreshFarmMirror();
   ui.toast('已进入 online 模式：操作将发往服务端', 'ok');

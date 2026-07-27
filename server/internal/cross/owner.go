@@ -37,6 +37,12 @@ type DeltaPublisher interface {
 	Publish(ctx context.Context, delta farm.FarmDelta, originatorConnID uint64) error
 }
 
+// PlayerDeltaPublisher delivers personal-state changes that cannot be inferred
+// from a farm-room delta, such as dog-interception compensation.
+type PlayerDeltaPublisher interface {
+	PublishPlayerDelta(ctx context.Context, uid uint64, delta farm.PlayerDelta) error
+}
+
 // StealHintWriter updates the weak-consistent FriendList stealable hint.
 type StealHintWriter interface {
 	SetStealHint(ctx context.Context, uid uint64, hasStealable bool) error
@@ -58,6 +64,7 @@ type Owner struct {
 	bus     bus.EventBus
 	now     func() int64
 	deltas  DeltaPublisher
+	players PlayerDeltaPublisher
 	owns    func(uint64) bool
 	hints   StealHintWriter
 
@@ -106,6 +113,14 @@ func (o *Owner) SetStealHintWriter(hints StealHintWriter) {
 	}
 }
 
+// SetPlayerDeltaPublisher configures personal-state pushes for cross-farm
+// settlements. It is optional for tests that only exercise owner authority.
+func (o *Owner) SetPlayerDeltaPublisher(publisher PlayerDeltaPublisher) {
+	if o != nil {
+		o.players = publisher
+	}
+}
+
 // Start registers the owner action handler. EventBus owns consumer lifecycle;
 // its context should be cancelled during process shutdown.
 func (o *Owner) Start(ctx context.Context) error {
@@ -131,12 +146,15 @@ func (o *Owner) handleAction(_ string, payload []byte) error {
 		return o.publishResult(cached)
 	}
 
-	result, delta, stealable, refreshHint := o.decide(action)
+	result, delta, playerDelta, stealable, refreshHint := o.decide(action)
 	o.cacheResult(action.OwnerUID, result)
 	o.mu.Unlock()
 
 	if delta != nil && o.deltas != nil {
 		_ = o.deltas.Publish(context.Background(), *delta, 0)
+	}
+	if playerDelta != nil && o.players != nil {
+		_ = o.players.PublishPlayerDelta(context.Background(), action.OwnerUID, *playerDelta)
 	}
 	if refreshHint {
 		o.writeStealHint(action.OwnerUID, stealable)
@@ -151,7 +169,7 @@ func (o *Owner) writeStealHint(uid uint64, hasStealable bool) {
 	_ = o.hints.SetStealHint(context.Background(), uid, hasStealable)
 }
 
-func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta, bool, bool) {
+func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta, *farm.PlayerDelta, bool, bool) {
 	result := CrossResult{
 		ReqID:      action.ReqID,
 		VisitorUID: action.VisitorUID,
@@ -159,32 +177,32 @@ func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta, bool, 
 		Code:       pkgerr.BadRequest,
 	}
 	if action.ReqID == 0 || action.VisitorUID == 0 || action.OwnerUID == 0 || action.VisitorUID == action.OwnerUID {
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
 	var kind farm.PlotActionKind
 	if action.Kind != Steal {
 		var ok bool
 		kind, ok = ownerPlotActionKind(action.Kind)
 		if !ok {
-			return result, nil, false, false
+			return result, nil, nil, false, false
 		}
 	}
 	if o.friends == nil {
 		result.Code = pkgerr.NotFriend
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
 	friends, err := o.friends.AreFriends(context.Background(), action.VisitorUID, action.OwnerUID)
 	if err != nil {
 		result.Code = pkgerr.Internal
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
 	if !friends {
 		result.Code = pkgerr.NotFriend
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
 	if o.runtime == nil {
 		result.Code = pkgerr.Internal
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
 	if action.Kind == Steal {
 		return o.decideSteal(action, result)
@@ -214,13 +232,14 @@ func (o *Owner) decide(action CrossAction) (CrossResult, *farm.FarmDelta, bool, 
 	})
 	if err != nil {
 		result.Code = pkgerr.Internal
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
-	return result, delta, false, false
+	return result, delta, nil, false, false
 }
 
-func (o *Owner) decideSteal(action CrossAction, result CrossResult) (CrossResult, *farm.FarmDelta, bool, bool) {
+func (o *Owner) decideSteal(action CrossAction, result CrossResult) (CrossResult, *farm.FarmDelta, *farm.PlayerDelta, bool, bool) {
 	var delta *farm.FarmDelta
+	var playerDelta *farm.PlayerDelta
 	var stealable bool
 	var refreshHint bool
 	err := o.runtime.Do(action.OwnerUID, func(owner *actor.FarmActor) error {
@@ -258,6 +277,8 @@ func (o *Owner) decideSteal(action CrossAction, result CrossResult) (CrossResult
 			result.DogType = owner.Aggregate.Pet.ActiveDog
 			owner.Aggregate.ReceiveStealCompensation(action.Compensation)
 			owner.Aggregate.RecordPetIntercept()
+			emitted := owner.Aggregate.PlayerDelta()
+			playerDelta = &emitted
 		}
 		if owner.Aggregate.FarmSeq != beforeSeq {
 			emitted := farm.FarmDelta{
@@ -274,9 +295,9 @@ func (o *Owner) decideSteal(action CrossAction, result CrossResult) (CrossResult
 	})
 	if err != nil {
 		result.Code = pkgerr.Internal
-		return result, nil, false, false
+		return result, nil, nil, false, false
 	}
-	return result, delta, stealable, refreshHint
+	return result, delta, playerDelta, stealable, refreshHint
 }
 
 func ownerPlotActionKind(kind ActionKind) (farm.PlotActionKind, bool) {

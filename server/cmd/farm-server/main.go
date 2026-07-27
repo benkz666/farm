@@ -88,6 +88,7 @@ func run() error {
 		transport := newGateway(config, storage, runtime, gateway.WithCrossEventBus(eventBus))
 		owner := cross.NewOwner(runtime, storage, eventBus, transport.Now, transport, nil)
 		owner.SetStealHintWriter(storage)
+		owner.SetPlayerDeltaPublisher(transport)
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}
@@ -126,8 +127,13 @@ func run() error {
 			storage.ConnectionRegistry(),
 			farmrpc.NewHTTPDeltaPusher(config.gatewayURLs, config.internalToken),
 		)
+		playerDeltaPublisher := farmrpc.NewPlayerFanoutPublisher(
+			storage.ConnectionRegistry(),
+			farmrpc.NewHTTPPlayerDeltaPusher(config.gatewayURLs, config.internalToken),
+		)
 		owner := cross.NewOwner(runtime, storage, eventBus, nil, deltaPublisher, owns)
 		owner.SetStealHintWriter(storage)
+		owner.SetPlayerDeltaPublisher(playerDeltaPublisher)
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}

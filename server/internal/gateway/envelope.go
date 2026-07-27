@@ -42,7 +42,8 @@ const (
 	CommandMailClaim       uint32 = 608
 	CommandClaimDailyLogin uint32 = 614
 
-	CommandFarmDelta uint32 = 9000
+	CommandFarmDelta   uint32 = 9000
+	CommandPlayerDelta uint32 = 9002
 
 	JSONSubprotocol = "farm.v1.json"
 )

@@ -303,6 +303,7 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 
 	code := result.Code
 	var reward crossActionResponse
+	var playerDelta *farm.PlayerDelta
 	if err := g.runtime.Do(result.VisitorUID, func(visitor *actor.FarmActor) error {
 		if visitor == nil || visitor.Aggregate == nil {
 			return errors.New("gateway: visitor actor aggregate is nil")
@@ -325,6 +326,8 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 			default:
 				visitor.Aggregate.ReleaseStealCompensation(pending.frozenCoin)
 			}
+			emitted := visitor.Aggregate.PlayerDelta()
+			playerDelta = &emitted
 			return nil
 		}
 		if result.Code == pkgerr.OK {
@@ -334,6 +337,8 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 				if pending.kind == farm.Weed || pending.kind == farm.Pest {
 					reward.CoinGained = 5
 				}
+				emitted := visitor.Aggregate.PlayerDelta()
+				playerDelta = &emitted
 			}
 		} else {
 			visitor.Aggregate.RollbackMaintenance(pending.dayID, pending.rewarded)
@@ -346,6 +351,9 @@ func (g *Gateway) finishCrossResult(result cross.CrossResult) {
 
 	if pending.connection == nil {
 		return
+	}
+	if playerDelta != nil {
+		pending.connection.pushPlayerDelta(*playerDelta)
 	}
 	reward.ReqID = result.ReqID
 	response := Envelope{

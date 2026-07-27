@@ -12,6 +12,7 @@ export const CMD_REMOVE_FRIEND = 406
 export const CMD_ADD_FRIEND_BY_UID = 408
 export const CMD_SEARCH_USER = 410
 export const CMD_FARM_DELTA = 9000
+export const CMD_PLAYER_DELTA = 9002
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -224,6 +225,15 @@ export class NetClient {
    */
   onDelta(handler) {
     return this.onPush(CMD_FARM_DELTA, handler)
+  }
+
+  /**
+   * 订阅自己的金币、经验与背包变化（cmd 9002）。
+   * @param {(envelope: Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onPlayerDelta(handler) {
+    return this.onPush(CMD_PLAYER_DELTA, handler)
   }
 
   /**

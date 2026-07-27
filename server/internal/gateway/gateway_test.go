@@ -453,16 +453,24 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 		ClientSeq: 3,
 		Payload:   json.RawMessage(`{"owner_uid":42,"plot_index":0,"arg":0}`),
 	})
+	if err := visitor.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set PlayerDelta read deadline: %v", err)
+	}
 	first := readEnvelope(t, visitor)
 	second := readEnvelope(t, visitor)
+	third := readEnvelope(t, visitor)
 	var response Envelope
 	var delta Envelope
-	for _, message := range []Envelope{first, second} {
+	var playerDelta Envelope
+	for _, message := range []Envelope{first, second, third} {
 		if message.Cmd == CommandWater {
 			response = message
 		}
 		if message.Cmd == CommandFarmDelta {
 			delta = message
+		}
+		if message.Cmd == 9002 {
+			playerDelta = message
 		}
 	}
 	if response.Err != pkgerr.OK || response.ClientSeq != 3 {
@@ -470,6 +478,18 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 	}
 	if delta.Err != pkgerr.OK {
 		t.Fatalf("FarmDelta = %#v", delta)
+	}
+	var playerPayload struct {
+		Coin      int64             `json:"coin"`
+		Exp       uint32            `json:"exp"`
+		Level     uint16            `json:"level"`
+		Warehouse map[string]uint32 `json:"warehouse"`
+	}
+	if err := json.Unmarshal(playerDelta.Payload, &playerPayload); err != nil {
+		t.Fatalf("decode PlayerDelta: %v", err)
+	}
+	if playerDelta.ClientSeq != 0 || playerDelta.Err != pkgerr.OK || playerPayload.Exp != 2 || playerPayload.Coin != 1_000 {
+		t.Fatalf("PlayerDelta = %#v, payload = %#v", playerDelta, playerPayload)
 	}
 	if ownerAggregate.FarmSeq != 1 || ownerAggregate.Plots[0].LastWaterAt != 40_000 {
 		t.Fatalf("owner aggregate after Water = %#v", ownerAggregate)

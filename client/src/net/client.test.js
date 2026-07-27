@@ -60,6 +60,31 @@ test('FarmDelta 主动推送交给 delta 订阅者', () => {
   assert.deepEqual(received.payload, { owner_uid: 9, farm_seq: 3, plots: [] })
 })
 
+test('PlayerDelta 主动推送交给个人状态订阅者', () => {
+  const client = new NetClient()
+  let received
+  client.onPlayerDelta((envelope) => {
+    received = envelope
+  })
+
+  client._onMessage({
+    data: JSON.stringify({
+      cmd: 9002,
+      client_seq: 0,
+      err: 0,
+      payload: { coin: 1170, exp: 2, level: 0, bag: {}, warehouse: { 'fruit:1': 3 } },
+    }),
+  })
+
+  assert.deepEqual(received.payload, {
+    coin: 1170,
+    exp: 2,
+    level: 0,
+    bag: {},
+    warehouse: { 'fruit:1': 3 },
+  })
+})
+
 test('HTTP 鉴权失败保留协议错误码', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => ({
