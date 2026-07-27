@@ -75,6 +75,12 @@ type Handler struct {
 	owns           func(uint64) bool
 	now            func() int64
 	deltaPublisher DeltaPublisher
+	stealHints     StealHintWriter
+}
+
+// StealHintWriter updates the weak-consistent FriendList stealable hint.
+type StealHintWriter interface {
+	SetStealHint(ctx context.Context, uid uint64, hasStealable bool) error
 }
 
 // Option configures optional Farm RPC behavior.
@@ -84,6 +90,13 @@ type Option func(*Handler)
 func WithDeltaPublisher(publisher DeltaPublisher) Option {
 	return func(handler *Handler) {
 		handler.deltaPublisher = publisher
+	}
+}
+
+// WithStealHintWriter refreshes Redis stealable hints after farm mutations.
+func WithStealHintWriter(hints StealHintWriter) Option {
+	return func(handler *Handler) {
+		handler.stealHints = hints
 	}
 }
 
@@ -162,6 +175,8 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	var response EnterFarmResponse
 	var delta *farm.FarmDelta
+	var stealable bool
+	var refreshHint bool
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
@@ -180,12 +195,17 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 			}
 			farmActor.Deltas.Append(emitted)
 			delta = &emitted
+			stealable = farmActor.Aggregate.HasStealable()
+			refreshHint = true
 		}
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
 	}
 	h.publishDelta(delta, command.OriginatorConnID)
+	if refreshHint {
+		h.writeStealHint(command.FarmUID, stealable)
+	}
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
@@ -243,6 +263,13 @@ func (h *Handler) publishDelta(delta *farm.FarmDelta, originatorConnID uint64) {
 		// Delta delivery is best effort; SyncFarm recovers a missed callback.
 		_ = publisher.Publish(context.Background(), emitted, originatorConnID)
 	}()
+}
+
+func (h *Handler) writeStealHint(uid uint64, hasStealable bool) {
+	if h == nil || h.stealHints == nil || uid == 0 {
+		return
+	}
+	_ = h.stealHints.SetStealHint(context.Background(), uid, hasStealable)
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

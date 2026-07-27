@@ -95,6 +95,8 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		var result farm.ActionResult
 		var farmSeq uint64
 		var delta *farm.FarmDelta
+		var stealable bool
+		var stoleHint bool
 		if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
@@ -125,6 +127,8 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				}
 				farmActor.Deltas.Append(emitted)
 				delta = &emitted
+				stealable = farmActor.Aggregate.HasStealable()
+				stoleHint = true
 			}
 			return nil
 		}); err != nil {
@@ -134,6 +138,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		response.Err = result.Err
 		if delta != nil {
 			g.rooms.BroadcastExcept(*delta, connection.id)
+		}
+		if stoleHint {
+			g.writeStealHint(connection.uid, stealable)
 		}
 		return response
 

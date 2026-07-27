@@ -1828,3 +1828,153 @@ func friendPair(a, b uint64) [2]uint64 {
 	}
 	return [2]uint64{b, a}
 }
+
+type stealHintStub struct {
+	mu       sync.Mutex
+	hints    map[uint64]bool
+	setCalls []stealHintSetCall
+	err      error
+}
+
+type stealHintSetCall struct {
+	UID          uint64
+	HasStealable bool
+}
+
+func newStealHintStub() *stealHintStub {
+	return &stealHintStub{hints: make(map[uint64]bool)}
+}
+
+func (s *stealHintStub) SetStealHint(_ context.Context, uid uint64, hasStealable bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	s.setCalls = append(s.setCalls, stealHintSetCall{UID: uid, HasStealable: hasStealable})
+	if hasStealable {
+		s.hints[uid] = true
+	} else {
+		delete(s.hints, uid)
+	}
+	return nil
+}
+
+func (s *stealHintStub) GetStealHints(_ context.Context, uids []uint64) (map[uint64]bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make(map[uint64]bool, len(uids))
+	for _, uid := range uids {
+		if s.hints[uid] {
+			out[uid] = true
+		}
+	}
+	return out, nil
+}
+
+func (s *stealHintStub) setCallsSnapshot() []stealHintSetCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]stealHintSetCall(nil), s.setCalls...)
+}
+
+// TestFriendListSurfacesStealableHint 覆盖 Task 12 Step 1：
+// 写入 steal hint 后，FriendList 必须在对应好友上返回 has_stealable=true。
+func TestFriendListSurfacesStealableHint(t *testing.T) {
+	t.Parallel()
+
+	const (
+		selfUID      = uint64(42)
+		stealableUID = uint64(7)
+		plainUID     = uint64(8)
+	)
+	friends := newFriendStoreStub()
+	friends.add(selfUID, stealableUID)
+	friends.add(selfUID, plainUID)
+	friends.nicknames[stealableUID] = "stealable"
+	friends.nicknames[plainUID] = "plain"
+
+	hints := newStealHintStub()
+	if err := hints.SetStealHint(context.Background(), stealableUID, true); err != nil {
+		t.Fatalf("SetStealHint: %v", err)
+	}
+
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{},
+		WithFriendStore(friends),
+		WithStealHintStore(hints),
+	)
+
+	response := gateway.handleWSRequest(&wsConnection{uid: selfUID, authed: true}, Envelope{
+		Cmd:     CommandFriendList,
+		Payload: emptyPayload,
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("FriendList err = %d, want OK", response.Err)
+	}
+	var payload friendListResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode FriendList: %v", err)
+	}
+	byUID := make(map[uint64]bool, len(payload.Friends))
+	for _, f := range payload.Friends {
+		byUID[f.UID] = f.HasStealable
+	}
+	if !byUID[stealableUID] {
+		t.Fatalf("FriendList = %#v, want stealableUID has_stealable=true", payload)
+	}
+	if byUID[plainUID] {
+		t.Fatalf("FriendList = %#v, want plainUID has_stealable=false", payload)
+	}
+}
+
+// TestHarvestWritesStealableHint 验证本地动作后异步写 hint：
+// 成熟地块被收获后，主人 hint 应被写为 false。
+func TestHarvestWritesStealableHint(t *testing.T) {
+	t.Parallel()
+
+	const selfUID = uint64(42)
+	agg := farm.NewAggregate(selfUID, "alice")
+	agg.UnlockedPlots = 1
+	agg.Plots[0] = farm.Plot{
+		State:          farm.StateMature,
+		CropID:         1,
+		FinalYield:     10,
+		HarvestRound:   1,
+		SeasonDuration: 60_000,
+		MatureAt:       1_000,
+	}
+
+	hints := newStealHintStub()
+	gateway := New(
+		authStub{},
+		sessionStub{uid: selfUID},
+		runtimeStub{aggregate: agg},
+		WithStealHintStore(hints),
+	)
+	gateway.SetClock(func() int64 { return 1_000 })
+
+	resp := gateway.handleWSRequest(&wsConnection{uid: selfUID, authed: true}, Envelope{
+		Cmd:     CommandHarvest,
+		Payload: marshalPayload(plotActionRequest{PlotIndex: 0}),
+	})
+	if resp.Err != pkgerr.OK {
+		t.Fatalf("Harvest err = %d, want OK", resp.Err)
+	}
+	calls := hints.setCallsSnapshot()
+	var sawFalse bool
+	for _, c := range calls {
+		if c.UID == selfUID && !c.HasStealable {
+			sawFalse = true
+		}
+	}
+	if !sawFalse {
+		t.Fatalf("harvest did not write has_stealable=false; calls = %#v", calls)
+	}
+}
+

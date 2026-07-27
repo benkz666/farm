@@ -58,6 +58,7 @@ type Gateway struct {
 	crossPending      sync.Map
 	nextCrossReqID    atomic.Uint64
 	crossSubscribeErr error
+	stealHints        store.StealHintStore
 }
 
 // Option configures optional Gateway boundaries.
@@ -67,6 +68,13 @@ type Option func(*Gateway)
 func WithFriendStore(friends store.FriendStore) Option {
 	return func(gateway *Gateway) {
 		gateway.friends = friends
+	}
+}
+
+// WithStealHintStore configures the weak-consistent stealable-farm hint store.
+func WithStealHintStore(hints store.StealHintStore) Option {
+	return func(gateway *Gateway) {
+		gateway.stealHints = hints
 	}
 }
 

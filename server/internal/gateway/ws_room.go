@@ -89,6 +89,8 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	}
 
 	var enter enterFarmResponse
+	var stealable bool
+	var refreshHint bool
 	if err := g.runtime.Do(ownerUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("gateway: actor aggregate is nil")
@@ -121,6 +123,8 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			}
 			farmActor.Deltas.Append(delta)
 			g.rooms.BroadcastExcept(delta, connection.id)
+			stealable = farmActor.Aggregate.HasStealable()
+			refreshHint = true
 		}
 		return nil
 	}); err != nil {
@@ -130,6 +134,9 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		}
 		response.Err = pkgerr.Internal
 		return response
+	}
+	if refreshHint {
+		g.writeStealHint(ownerUID, stealable)
 	}
 
 	response.Payload = marshalPayload(enter)

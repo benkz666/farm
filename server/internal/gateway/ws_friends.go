@@ -18,8 +18,17 @@ type friendPeerRequest struct {
 }
 
 type friendJSON struct {
-	UID      uint64 `json:"uid"`
-	Nickname string `json:"nickname"`
+	UID          uint64 `json:"uid"`
+	Nickname     string `json:"nickname"`
+	HasStealable bool   `json:"has_stealable"`
+}
+
+// writeStealHint 刷新弱一致可偷摘要；失败可忽略（下次成熟/动作会再写）。
+func (g *Gateway) writeStealHint(uid uint64, hasStealable bool) {
+	if g == nil || g.stealHints == nil || uid == 0 {
+		return
+	}
+	_ = g.stealHints.SetStealHint(context.Background(), uid, hasStealable)
 }
 
 type friendListResponse struct {
@@ -52,9 +61,25 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			response.Err = pkgerr.Internal
 			return response
 		}
+		uids := make([]uint64, 0, len(friends))
+		for _, friend := range friends {
+			uids = append(uids, friend.UID)
+		}
+		hints := map[uint64]bool{}
+		if g.stealHints != nil && len(uids) > 0 {
+			hints, err = g.stealHints.GetStealHints(context.Background(), uids)
+			if err != nil {
+				response.Err = pkgerr.Internal
+				return response
+			}
+		}
 		list := make([]friendJSON, 0, len(friends))
 		for _, friend := range friends {
-			list = append(list, friendJSON{UID: friend.UID, Nickname: friend.Nickname})
+			list = append(list, friendJSON{
+				UID:          friend.UID,
+				Nickname:     friend.Nickname,
+				HasStealable: hints[friend.UID],
+			})
 		}
 		response.Payload = marshalPayload(friendListResponse{Friends: list})
 		return response

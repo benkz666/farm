@@ -87,6 +87,7 @@ func run() error {
 		runtime := actor.NewRuntime(storage, 0)
 		transport := newGateway(config, storage, runtime, gateway.WithCrossEventBus(eventBus))
 		owner := cross.NewOwner(runtime, storage, eventBus, transport.Now, transport, nil)
+		owner.SetStealHintWriter(storage)
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}
@@ -126,12 +127,13 @@ func run() error {
 			farmrpc.NewHTTPDeltaPusher(config.gatewayURLs, config.internalToken),
 		)
 		owner := cross.NewOwner(runtime, storage, eventBus, nil, deltaPublisher, owns)
+		owner.SetStealHintWriter(storage)
 		if err := owner.Start(ctx); err != nil {
 			return fmt.Errorf("start cross owner: %w", err)
 		}
 		handler = farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uid uint64) bool {
 			return owns(uid)
-		}, nil, farmrpc.WithDeltaPublisher(deltaPublisher))
+		}, nil, farmrpc.WithDeltaPublisher(deltaPublisher), farmrpc.WithStealHintWriter(storage))
 	default:
 		return fmt.Errorf("unsupported FARM_ROLE %q", config.role)
 	}
@@ -169,6 +171,7 @@ func run() error {
 func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime, options ...gateway.Option) *gateway.Gateway {
 	baseOptions := []gateway.Option{
 		gateway.WithFriendStore(storage),
+		gateway.WithStealHintStore(storage),
 		gateway.WithInviteSecret([]byte(config.inviteSecret)),
 		gateway.WithConnectionRegistry(storage.ConnectionRegistry(), config.instanceID),
 		gateway.WithInternalPushToken(config.internalToken),

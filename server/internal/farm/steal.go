@@ -91,3 +91,25 @@ func (a *Aggregate) ApplySteal(action StealAction, now int64) StealResult {
 		Patch:  a.patchOf(action.PlotIndex),
 	}
 }
+
+// HasStealable 报告是否仍存在「成熟且 40% 额度未耗尽」的地块（FriendList 弱摘要）。
+func (a *Aggregate) HasStealable() bool {
+	if a == nil {
+		return false
+	}
+	limit := int(a.UnlockedPlots)
+	if limit > len(a.Plots) {
+		limit = len(a.Plots)
+	}
+	for i := 0; i < limit; i++ {
+		p := a.Plots[i]
+		if p.State != StateMature || p.FinalYield == 0 {
+			continue
+		}
+		cap := uint32(p.FinalYield) * stealCapNumerator / stealCapDenominator
+		if uint32(p.StolenCount) < cap {
+			return true
+		}
+	}
+	return false
+}
