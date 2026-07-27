@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"farm/server/internal/bus"
+)
 
 func TestLoadConfigRejectsInvalidRole(t *testing.T) {
 	t.Setenv("FARM_ROLE", "worker")
@@ -39,5 +43,16 @@ func TestLoadConfigRequiresFarmGatewayPushSettings(t *testing.T) {
 	t.Setenv("FARM_GATEWAY_URLS", `{"gateway-0":"http://127.0.0.1:9200"}`)
 	if _, err := loadConfig(); err != nil {
 		t.Fatalf("loadConfig with Gateway push settings: %v", err)
+	}
+}
+
+func TestNewCrossBusUsesMemoryForAllRole(t *testing.T) {
+	eventBus, err := newCrossBus(config{role: roleAll, busKind: "kafka"})
+	if err != nil {
+		t.Fatalf("newCrossBus: %v", err)
+	}
+	t.Cleanup(func() { _ = eventBus.Close() })
+	if _, ok := eventBus.(*bus.MemoryBus); !ok {
+		t.Fatalf("event bus = %T, want *bus.MemoryBus", eventBus)
 	}
 }

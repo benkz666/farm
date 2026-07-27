@@ -16,6 +16,8 @@ import (
 
 	"farm/server/internal/actor"
 	"farm/server/internal/auth"
+	"farm/server/internal/bus"
+	"farm/server/internal/cross"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/gateway"
 	"farm/server/internal/routing"
@@ -40,6 +42,8 @@ type config struct {
 	internalToken string
 	farmURLs      map[string]string
 	gatewayURLs   map[string]string
+	busKind       string
+	kafkaBrokers  []string
 }
 
 func main() {
@@ -67,12 +71,25 @@ func run() error {
 			log.Printf("close storage: %v", closeErr)
 		}
 	}()
+	eventBus, err := newCrossBus(config)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := eventBus.Close(); closeErr != nil {
+			log.Printf("close event bus: %v", closeErr)
+		}
+	}()
 
 	var handler http.Handler
 	switch config.role {
 	case roleAll:
 		runtime := actor.NewRuntime(storage, 0)
-		transport := newGateway(config, storage, runtime)
+		transport := newGateway(config, storage, runtime, gateway.WithCrossEventBus(eventBus))
+		owner := cross.NewOwner(runtime, storage, eventBus, transport.Now, transport, nil)
+		if err := owner.Start(ctx); err != nil {
+			return fmt.Errorf("start cross owner: %w", err)
+		}
 		if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
 			transport.EnableDebugTime()
 			log.Printf("debug time advance enabled (FARM_ALLOW_DEBUG_TIME=1)")
@@ -91,6 +108,7 @@ func run() error {
 			storage,
 			nil,
 			gateway.WithFarmRPC(farmrpc.NewHTTPClient(config.farmURLs, config.internalToken), routes),
+			gateway.WithCrossEventBus(eventBus),
 		)
 		handler = transport.Handler()
 	case roleFarm:
@@ -99,13 +117,21 @@ func run() error {
 			return err
 		}
 		runtime := actor.NewRuntime(storage, 0)
-		handler = farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uid uint64) bool {
+		owns := func(uid uint64) bool {
 			farmID, err := routes.FarmID(uid)
 			return err == nil && farmID == config.instanceID
-		}, nil, farmrpc.WithDeltaPublisher(farmrpc.NewFanoutPublisher(
+		}
+		deltaPublisher := farmrpc.NewFanoutPublisher(
 			storage.ConnectionRegistry(),
 			farmrpc.NewHTTPDeltaPusher(config.gatewayURLs, config.internalToken),
-		)))
+		)
+		owner := cross.NewOwner(runtime, storage, eventBus, nil, deltaPublisher, owns)
+		if err := owner.Start(ctx); err != nil {
+			return fmt.Errorf("start cross owner: %w", err)
+		}
+		handler = farmrpc.NewHandler(runtime, []byte(config.internalToken), func(uid uint64) bool {
+			return owns(uid)
+		}, nil, farmrpc.WithDeltaPublisher(deltaPublisher))
 	default:
 		return fmt.Errorf("unsupported FARM_ROLE %q", config.role)
 	}
@@ -199,6 +225,8 @@ func loadConfig() (config, error) {
 		internalToken: strings.TrimSpace(os.Getenv("FARM_INTERNAL_TOKEN")),
 		farmURLs:      farmURLs,
 		gatewayURLs:   gatewayURLs,
+		busKind:       strings.ToLower(getenv("FARM_BUS", "kafka")),
+		kafkaBrokers:  splitCSV(getenv("FARM_KAFKA_BROKERS", "127.0.0.1:9094")),
 	}
 	switch cfg.role {
 	case roleAll:
@@ -217,6 +245,23 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
+func newCrossBus(config config) (bus.EventBus, error) {
+	if config.role == roleAll || config.busKind == "memory" {
+		return bus.NewMemoryBus(), nil
+	}
+	if config.busKind != "kafka" {
+		return nil, fmt.Errorf("unsupported FARM_BUS %q (want kafka or memory)", config.busKind)
+	}
+	eventBus, err := bus.NewKafkaBus(bus.KafkaConfig{
+		Brokers: config.kafkaBrokers,
+		GroupID: "farm-cross-" + config.role + "-" + config.instanceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create Kafka event bus: %w", err)
+	}
+	return eventBus, nil
+}
+
 func parseFarmURLs(value string) (map[string]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -231,6 +276,16 @@ func parseFarmURLs(value string) (map[string]string, error) {
 		}
 	}
 	return endpoints, nil
+}
+
+func splitCSV(value string) []string {
+	var values []string
+	for _, part := range strings.Split(value, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			values = append(values, part)
+		}
+	}
+	return values
 }
 
 func getenv(name, fallback string) string {

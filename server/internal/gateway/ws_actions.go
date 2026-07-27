@@ -36,6 +36,10 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 	visiting := connection.roomUID != 0 && connection.roomUID != connection.uid
 	connection.roomMu.Unlock()
 	if visiting {
+		switch request.Cmd {
+		case CommandWater, CommandRemoveWeed, CommandRemovePest:
+			return g.handleVisitorMutualAid(connection, request)
+		}
 		response.Err = pkgerr.NotOwner
 		return response
 	}

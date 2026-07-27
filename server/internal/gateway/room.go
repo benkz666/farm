@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"sync"
 
 	"farm/server/internal/farm"
@@ -83,6 +85,16 @@ func (h *RoomHub) RevokeViewer(ownerUID, viewerUID uint64) {
 	if len(subscribers) == 0 {
 		delete(h.rooms, ownerUID)
 	}
+}
+
+// Publish broadcasts a cross-farm owner commit to every local room viewer.
+// It implements cross.DeltaPublisher for the single-process development role.
+func (g *Gateway) Publish(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+	if g == nil || g.rooms == nil {
+		return errors.New("gateway: room hub is not configured")
+	}
+	g.rooms.Broadcast(delta)
+	return nil
 }
 
 // Broadcast 向 delta.OwnerUID 房间中当前的全部订阅者推送增量。

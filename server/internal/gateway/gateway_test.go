@@ -17,7 +17,9 @@ import (
 	"github.com/gorilla/websocket"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/bus"
 	"farm/server/internal/connreg"
+	"farm/server/internal/cross"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
@@ -386,6 +388,95 @@ func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 	}
 	if _, _, err := friend.ReadMessage(); err == nil {
 		t.Fatal("received FarmDelta after LeaveFarm")
+	}
+}
+
+func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
+	const (
+		ownerUID   = uint64(42)
+		visitorUID = uint64(7)
+	)
+	eventBus := bus.NewMemoryBus()
+	t.Cleanup(func() { _ = eventBus.Close() })
+
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, visitorUID)
+	ownerAggregate := farm.NewAggregate(ownerUID, "owner")
+	ownerAggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		SeasonDuration: 60_000,
+		MatureAt:       70_000,
+		LastSettleAt:   1,
+		LastWaterAt:    1,
+	}
+	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
+		ownerUID:   {Aggregate: ownerAggregate},
+		visitorUID: {Aggregate: farm.NewAggregate(visitorUID, "visitor")},
+	}}
+	gateway := New(
+		authStub{},
+		sessionMapStub{"visitor-token": visitorUID},
+		runtime,
+		WithFriendStore(friends),
+		WithCrossEventBus(eventBus),
+	)
+	gateway.SetClock(func() int64 { return 40_000 })
+	owner := cross.NewOwner(
+		runtime,
+		friends,
+		eventBus,
+		gateway.Now,
+		cross.DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ uint64) error {
+			gateway.rooms.Broadcast(delta)
+			return nil
+		}),
+		nil,
+	)
+	if err := owner.Start(t.Context()); err != nil {
+		t.Fatalf("start owner: %v", err)
+	}
+
+	visitor := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, visitor, "visitor-token")
+	writeEnvelope(t, visitor, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":42}`),
+	})
+	if got := readEnvelope(t, visitor); got.Err != pkgerr.OK {
+		t.Fatalf("EnterFarm = %#v", got)
+	}
+
+	writeEnvelope(t, visitor, Envelope{
+		Cmd:       CommandWater,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":42,"plot_index":0,"arg":0}`),
+	})
+	first := readEnvelope(t, visitor)
+	second := readEnvelope(t, visitor)
+	var response Envelope
+	var delta Envelope
+	for _, message := range []Envelope{first, second} {
+		if message.Cmd == CommandWater {
+			response = message
+		}
+		if message.Cmd == CommandFarmDelta {
+			delta = message
+		}
+	}
+	if response.Err != pkgerr.OK || response.ClientSeq != 3 {
+		t.Fatalf("Water response = %#v", response)
+	}
+	if delta.Err != pkgerr.OK {
+		t.Fatalf("FarmDelta = %#v", delta)
+	}
+	if ownerAggregate.FarmSeq != 1 || ownerAggregate.Plots[0].LastWaterAt != 40_000 {
+		t.Fatalf("owner aggregate after Water = %#v", ownerAggregate)
+	}
+	visitorAggregate := runtime.actors[visitorUID].Aggregate
+	if visitorAggregate.Exp != 2 || visitorAggregate.Daily.MaintainCnt != 1 {
+		t.Fatalf("visitor reward = exp:%d daily:%#v", visitorAggregate.Exp, visitorAggregate.Daily)
 	}
 }
 

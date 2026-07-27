@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -39,6 +40,10 @@ func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordH
 	}
 
 	agg := farm.NewAggregate(uid, username)
+	dailyBlob, err := json.Marshal(agg.Daily)
+	if err != nil {
+		return fmt.Errorf("store: encode daily state: %w", err)
+	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO player (
@@ -47,7 +52,7 @@ func (s *Store) SaveAccount(ctx context.Context, uid uint64, username, passwordH
 			farm_seq, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agg.UID, agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots,
-		make([]byte, 8), []byte{}, []byte{}, []byte{},
+		make([]byte, 8), []byte{}, dailyBlob, []byte{},
 		agg.FarmSeq, now, now,
 	); err != nil {
 		return fmt.Errorf("store: insert player: %w", err)
@@ -92,14 +97,20 @@ func (s *Store) GetAccountByUsername(ctx context.Context, username string) (uint
 func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	agg := &farm.Aggregate{UID: uid}
 
+	var dailyBlob []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT nickname, level, exp, coin, unlocked_plots, farm_seq FROM player WHERE uid = ?`, uid,
-	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &agg.FarmSeq)
+		`SELECT nickname, level, exp, coin, unlocked_plots, daily_blob, farm_seq FROM player WHERE uid = ?`, uid,
+	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &dailyBlob, &agg.FarmSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFarmNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: query player: %w", err)
+	}
+	if len(dailyBlob) > 0 {
+		if err := json.Unmarshal(dailyBlob, &agg.Daily); err != nil {
+			return nil, fmt.Errorf("store: decode daily state: %w", err)
+		}
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -190,11 +201,15 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 	defer tx.Rollback()
 
 	now := time.Now().UnixMilli()
+	dailyBlob, err := json.Marshal(agg.Daily)
+	if err != nil {
+		return fmt.Errorf("store: encode daily state: %w", err)
+	}
 	// 不做 RowsAffected==0 → ErrFarmNotFound：MySQL 默认 RowsAffected 只计「实际改动的行」，
 	// 无脏写时会误判；注册路径已保证 player 行存在，缺行由后续业务/读路径暴露。
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
-		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, agg.FarmSeq, now, agg.UID,
+		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, daily_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
+		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, dailyBlob, agg.FarmSeq, now, agg.UID,
 	); err != nil {
 		return fmt.Errorf("store: update player: %w", err)
 	}

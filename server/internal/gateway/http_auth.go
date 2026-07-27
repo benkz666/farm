@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,7 +15,9 @@ import (
 	"time"
 
 	"farm/server/internal/actor"
+	"farm/server/internal/bus"
 	"farm/server/internal/connreg"
+	"farm/server/internal/cross"
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/routing"
@@ -33,22 +37,27 @@ type FarmRuntime interface {
 
 // Gateway owns the HTTP and WebSocket transport adapters.
 type Gateway struct {
-	auth         Authenticator
-	sessions     store.SessionStore
-	runtime      FarmRuntime
-	farmRPC      farmrpc.Client
-	routes       *routing.RouteTable
-	friends      store.FriendStore
-	inviteSecret []byte
-	now          func() int64
-	offsetMs     atomic.Int64
-	rooms        *RoomHub
-	nextConnID   atomic.Uint64
-	connRegistry *connreg.Registry
-	gatewayID    string
-	connections  sync.Map
-	pushToken    []byte
-	allowDebug   bool
+	auth              Authenticator
+	sessions          store.SessionStore
+	runtime           FarmRuntime
+	farmRPC           farmrpc.Client
+	routes            *routing.RouteTable
+	friends           store.FriendStore
+	inviteSecret      []byte
+	now               func() int64
+	offsetMs          atomic.Int64
+	rooms             *RoomHub
+	nextConnID        atomic.Uint64
+	connRegistry      *connreg.Registry
+	gatewayID         string
+	connections       sync.Map
+	pushToken         []byte
+	allowDebug        bool
+	crossBus          bus.EventBus
+	crossVisitor      *cross.Visitor
+	crossPending      sync.Map
+	nextCrossReqID    atomic.Uint64
+	crossSubscribeErr error
 }
 
 // Option configures optional Gateway boundaries.
@@ -110,7 +119,19 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, o
 			option(gateway)
 		}
 	}
+	gateway.nextCrossReqID.Store(crossRequestSeed())
+	gateway.startCrossResultConsumer()
 	return gateway
+}
+
+func crossRequestSeed() uint64 {
+	var seed [8]byte
+	if _, err := cryptorand.Read(seed[:]); err == nil {
+		return binary.LittleEndian.Uint64(seed[:])
+	}
+	// crypto/rand failures are exceptional. A time-based fallback preserves
+	// availability; the per-Gateway sequence still prevents local collisions.
+	return uint64(time.Now().UnixNano())
 }
 
 // EnableDebugTime 打开 /api/debug/advance（仅非生产冒烟；由 FARM_ALLOW_DEBUG_TIME 门控）。

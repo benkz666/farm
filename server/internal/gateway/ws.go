@@ -136,6 +136,11 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		response := g.handleWSRequest(&connection, request)
+		if response.Cmd == 0 {
+			// Cross-farm actions respond only after CrossResult settles the
+			// visitor reservation; emitting here would acknowledge too early.
+			continue
+		}
 		var respondErr error
 		if request.Cmd == CommandEnterFarm && response.Err == pkgerr.OK {
 			respondErr = connection.respondEnterFarm(response)

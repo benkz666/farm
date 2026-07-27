@@ -42,6 +42,7 @@ type Aggregate struct {
 	UnlockedPlots uint8                   `json:"unlocked_plots"`
 	Plots         [gameconf.MaxPlots]Plot `json:"plots"`
 	Items         map[ItemKey]uint32      `json:"items"`
+	Daily         DailyState              `json:"daily"`
 	FarmSeq       uint64                  `json:"farm_seq"`
 }
 
