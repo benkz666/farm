@@ -49,6 +49,7 @@
 - 会改变 Aggregate 的操作必须调用 `FarmActor.RequireFlush()`；失败时不得留下局部写入。
 - 禁止通过 `Store.LoadFarm()` 后直接保存在线玩家，避免覆盖驻留 Actor 的权威内存。
 - GM 视图授权是短期、单次、绑定 GM session 与目标 UID 的 grant；不可用好友权限或普通 session 越权进入任意农场。
+- 一次 GM mutation 只能修改一个数据域：农场 Aggregate、好友、任务或邮件。控制台必须将跨域目标拆成多次独立操作，不实现跨域账本或补偿。
 
 ## 4. GM HTTP 与视图协议
 
@@ -69,12 +70,12 @@
 | `POST /api/gm/v1/players/{uid}/mutations` | 执行一个具名 GM 操作，返回目标、最新快照与 `farm_seq` |
 | `POST /api/gm/v1/players/{uid}/view-grants` | 创建一次性查看 grant |
 
-GM 变更请求必须使用具名 `kind` 和受类型约束的 `payload`，禁止通用“任意字段 patch”。每次 mutation 携带客户端生成的 `request_id`；服务端返回目标的完整快照以驱动 GM 面板立即刷新。
+GM 变更请求必须使用具名 `kind` 和受类型约束的 `payload`，禁止通用“任意字段 patch”或在同一请求中混合多个数据域。每次 mutation 携带客户端生成的 `request_id`；服务端返回目标的完整快照以驱动 GM 面板立即刷新。
 
 ### 4.2 目标农场切换
 
 1. 面板按用户名解析目标 UID，并创建目标 view grant。
-2. 客户端使用 GM 专用 WS 进入命令携带 grant；Gateway 校验后订阅目标农场房间。
+2. 客户端在现有 `EnterFarm` 请求中携带仅开发环境识别的可选 `gm_view_grant`；Gateway 校验后订阅目标农场房间。
 3. WS 返回的 `EnterFarmResponse` 必须复用 `applyAuthoritativeFarmEnter()`，覆盖本地镜像、更新 `setFarmView()`、递增视图 generation，并刷新界面。
 4. 离开 GM 目标时，客户端重新进入自己的农场；在途 SyncFarm/Delta 由现有视图 generation 规则丢弃。
 
