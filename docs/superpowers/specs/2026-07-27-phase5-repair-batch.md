@@ -1,4 +1,4 @@
-# 经典农场 · 已完成修复批次规格
+# 经典农场 · 期 5 规格：已完成修复批次
 
 > 状态：历史修复已完成，待按本规格重构为可审查提交
 > 工程规范：`docs/superpowers/specs/2026-07-26-engineering-standards.md`

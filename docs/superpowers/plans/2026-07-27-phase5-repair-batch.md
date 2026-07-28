@@ -1,16 +1,16 @@
-# 已完成修复批次整合提交计划
+# 期 5 已完成修复批次整合提交计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:verification-before-completion before declaring this historical integration complete. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 `d35a4f0` 之后已经完成的修复，以一条完整、可验证的代码提交落库。
 
-**Architecture:** 本计划是历史修复的整合记录，不重新实现功能。`2026-07-27-repair-batch.md` 规格逐项定义已存在的行为与验收；代码提交保留当前工作树中所有对应源代码、测试、生成器、生成物、迁移、文档和 `demo/`，以全量验证保证整合状态正确。
+**Architecture:** 本计划是历史修复的整合记录，不重新实现功能。`2026-07-27-phase5-repair-batch.md` 规格逐项定义已存在的行为与验收；代码提交保留当前工作树中所有对应源代码、测试、生成器、生成物、迁移、文档和 `demo/`，以全量验证保证整合状态正确。
 
 **Tech Stack:** Go 1.22+、MySQL、Redis、Prometheus、Three.js、Node.js、Git。
 
 ## Global Constraints
 
-- 规格：`docs/superpowers/specs/2026-07-27-repair-batch.md`。
+- 规格：`docs/superpowers/specs/2026-07-27-phase5-repair-batch.md`。
 - 基线固定为 `d35a4f0`；不得改写更早历史，且不得用 reset/checkout 丢弃工作树内容。
 - 历史中允许有规格/计划文档提交；所有**代码修复**只创建一条整合提交。
 - 整合提交使用中文 Conventional Commit，且不使用 `--no-verify`。
@@ -22,8 +22,8 @@
 ## File Structure
 
 ```text
-docs/superpowers/specs/2026-07-27-repair-batch.md  # 修复范围、边界与验收
-docs/superpowers/plans/2026-07-27-repair-batch.md  # 本整合流程
+docs/superpowers/specs/2026-07-27-phase5-repair-batch.md  # 修复范围、边界与验收
+docs/superpowers/plans/2026-07-27-phase5-repair-batch.md  # 本整合流程
 server/...                                         # P0–P3 服务端修复与测试
 client/...                                         # 配置、重连、资源释放与测试
 config/crops.csv + tools/gen-config/...            # 作物配置源、生成器与生成物
@@ -37,7 +37,7 @@ demo/...                                           # 独立静态演示资源，
 - Exclude: `.superpowers/sdd/progress.md`、已删除的临时审查工作稿、未在规格范围内的新增功能。
 
 **Interfaces:**
-- Consumes: `docs/superpowers/specs/2026-07-27-repair-batch.md` 的 P0-1 至 P3-4 验收定义。
+- Consumes: `docs/superpowers/specs/2026-07-27-phase5-repair-batch.md` 的 P0-1 至 P3-4 验收定义。
 - Produces: 一条包含完整已修复状态的整合提交。
 
 - [ ] **Step 1: 审查完整提交边界**
