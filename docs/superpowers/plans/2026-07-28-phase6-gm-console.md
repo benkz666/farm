@@ -18,7 +18,7 @@
 - 不直接 patch `farm.Aggregate` 导出字段；GM 写入必须通过本计划定义的领域命令并维护 `FarmSeq`、snapshot 和 Delta。
 - GM 视图只扩展现有 `EnterFarm` 的开发可选 grant；不新增正式 WS 命令号或普通客户端协议。
 - 画面预览不请求服务端、不调用 `/api/debug/advance`，也不改变作物进度。
-- 提交使用中文 Conventional Commit；浏览器验证使用 ego-lite。
+- 提交使用中文 Conventional Commit。
 
 ---
 
@@ -572,7 +572,7 @@ cd client && node --test src/**/*.test.js && npm run build
 
 Expected: PASS。
 
-- [ ] **Step 3: 使用 ego-lite 完成开发环境冒烟**
+- [ ] **Step 3: 使用浏览器完成开发环境冒烟**
 
 以 `FARM_ENV=dev`、`FARM_ENABLE_GM=1` 和本地 GM secret 启动服务与客户端；在独立浏览器 task space 登录 A，展开 GM，搜索并切换到 B，修改金币和一块地，确认页面刷新后数据保留；选择夜晚后确认场景变暗，再恢复跟随；确认 Net 诊断仅存在于 GM 抽屉。
 

@@ -15,7 +15,7 @@
 - 提交：约定式前缀 + **中文**主题（`AGENTS.md`）
 - 子阶段顺序：**4a → 4b → 4c → 4d**；未完成 4a 不得开始依赖 Kafka 的玩法联调
 - 分支：自当前 `main` 开 `feat/phase4-social-loop`
-- 浏览器验证默认 ego-lite；子代理模型按 `AGENTS.md` 显式指定
+- 子代理模型按 `AGENTS.md` 显式指定
 - 期 4 **不**做：分片热迁移、狗升级树、模糊搜用户、压测报告
 
 ---
@@ -296,7 +296,7 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `main.js`/`ui.js`/`onlineActions.js`/`FriendsPanel` 或内联 UI
 - 拜访开放 Water/Weed/Pest/Steal；等 Rsp；可偷标记；搜索；任务/邮件/每日登录入口；狗面板
 
-- [x] **Step 1:** `npm run build` + ego-lite 冒烟关键路径
+- [x] **Step 1:** `npm run build` + 冒烟关键路径
 
 - [x] **Step 2:** Commit `feat: 客户端接入互助偷菜与日常面板`
 
@@ -309,7 +309,7 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 
 - [x] **Step 1:** 文档：双实例启动、演示剧本（搜好友→拜访→互助→偷菜→每日登录）
 
-- [x] **Step 2:** ego-lite 或双浏览器按规格 §9 勾验；写报告
+- [x] **Step 2:** 双浏览器按规格 §9 勾验；写报告
 
 - [x] **Step 3:** Commit `docs: 更新 README 期 4 双分片社交演示步骤`
 

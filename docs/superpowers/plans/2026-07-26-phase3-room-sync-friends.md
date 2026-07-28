@@ -17,7 +17,7 @@
 - 子阶段：3a → 3b → 3c
 - 好友上限测试可用 `gameconf.FriendLimit`（默认 200，单测可注入更小）
 - 分支：从当前期 2 HEAD 开 `feat/phase3-room-friends`
-- 浏览器验证默认 ego-lite；登录页 UI 遵循 frontend 规则（非紫渐变模板）
+- 登录页 UI 遵循 frontend 规则（非紫渐变模板）
 
 ---
 
@@ -270,7 +270,7 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 
 **Files:** 无强制代码；更新 `README.md` 期 3 演示步骤
 
-- [x] **Step 1:** ego-lite 或双浏览器：注册两号 → 加好友 → 拜访 → 主人种植 → 访客看到变化
+- [x] **Step 1:** 双浏览器：注册两号 → 加好友 → 拜访 → 主人种植 → 访客看到变化
 
 - [x] **Step 2:** 记录结果到报告；Commit `docs: 更新 README 期 3 双客户端演示步骤`
 

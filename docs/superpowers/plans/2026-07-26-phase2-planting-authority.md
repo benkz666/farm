@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS item (
 
 - [x] **Step 4: 未登录保持本地 doTill 等路径不变**
 
-- [x] **Step 5: 浏览器/ego-lite 或 Vite proxy 脚本验证一轮种收；Commit** `feat: 游戏主逻辑接入 online 种植意图`
+- [x] **Step 5: Vite proxy 脚本验证一轮种收；Commit** `feat: 游戏主逻辑接入 online 种植意图`
 
 ---
 
