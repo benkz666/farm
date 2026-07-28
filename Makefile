@@ -1,6 +1,27 @@
 COMPOSE_FILE := deploy/compose.yml
 
-.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-help smoke-steal smoke-all run-all run-shards stop-all
+.PHONY: compose-up compose-down compose-shards migrate run run-gateway run-farm client-dev test smoke smoke-friends smoke-room smoke-shards smoke-help smoke-steal smoke-all run-all run-shards stop-all gen gen-check
+
+# 从 config/*.csv 生成 Go/JS 配置（当前仅 crops）。
+gen:
+	cd tools && go run ./gen-config -root ..
+	gofmt -w server/internal/gameconf/gen_crops.go
+
+# CI 漂移检查：生成两次字节一致，且与工作树已提交生成物一致。
+gen-check:
+	@set -e; \
+	ROOT="$$(pwd)"; \
+	TMP=$$(mktemp -d); \
+	trap 'rm -rf "$$TMP"' EXIT; \
+	(cd "$$ROOT/tools" && go run ./gen-config -root "$$ROOT" -out-go "$$TMP/a.go" -out-js "$$TMP/a.js"); \
+	(cd "$$ROOT/tools" && go run ./gen-config -root "$$ROOT" -out-go "$$TMP/b.go" -out-js "$$TMP/b.js"); \
+	gofmt -w "$$TMP/a.go" "$$TMP/b.go"; \
+	cmp -s "$$TMP/a.go" "$$TMP/b.go"; \
+	cmp -s "$$TMP/a.js" "$$TMP/b.js"; \
+	cmp -s "$$TMP/a.go" "$$ROOT/server/internal/gameconf/gen_crops.go"; \
+	cmp -s "$$TMP/a.js" "$$ROOT/client/src/game/gen/crops.js"; \
+	(cd "$$ROOT/tools" && go test ./gen-config/ -count=1); \
+	echo "gen-check: OK (deterministic + in-sync)"
 
 compose-up:
 	docker compose -f $(COMPOSE_FILE) up -d
@@ -13,12 +34,11 @@ compose-shards:
 	docker compose -f $(COMPOSE_FILE) --profile shards up -d --build
 
 migrate:
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/001_init.sql
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/002_items.sql
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/003_friendship.sql
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/004_pet.sql
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/005_task_mail.sql
-	docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < server/migrations/006_account_uid_auto_increment.sql
+	@set -e; \
+	for f in server/migrations/*.sql; do \
+		echo "applying $$f"; \
+		docker compose -f $(COMPOSE_FILE) exec -T mysql mysql -ufarm -pfarm farm < $$f; \
+	done
 
 # 本地联调默认打开 debug 调时，供 make smoke 的 /api/debug/advance 使用；生产切勿导出。
 run:

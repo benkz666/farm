@@ -22,6 +22,7 @@ import (
 	"farm/server/internal/cross"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/routing"
 	"farm/server/internal/social"
@@ -405,10 +406,13 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 	ownerAggregate.Plots[0] = farm.Plot{
 		State:          farm.StateGrowing,
 		CropID:         1,
+		SeasonStartAt:  1,
 		SeasonDuration: 60_000,
 		MatureAt:       70_000,
-		LastSettleAt:   1,
+		LastSettleAt:   40_000,
 		LastWaterAt:    1,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
 	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
 		ownerUID:   {Aggregate: ownerAggregate},
@@ -516,10 +520,13 @@ func TestClearOnGrowingPlotBroadcastsFarmDeltaDespitePlotNotCleanable(t *testing
 		State:          farm.StateGrowing,
 		CropID:         1,
 		StageCount:     3,
+		SeasonStartAt:  10_000,
 		SeasonDuration: 60_000,
 		MatureAt:       70_000,
 		LastSettleAt:   10_000,
 		LastWaterAt:    10_000,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
 	runtime := multiRuntimeStub{actors: map[uint64]*actor.FarmActor{
 		ownerUID:  {Aggregate: ownerAggregate},
@@ -603,10 +610,13 @@ func TestEnterFarmAdvancesExpiredGrowingPlotBeforeSnapshot(t *testing.T) {
 	aggregate.Plots[0] = farm.Plot{
 		State:          farm.StateGrowing,
 		CropID:         1,
+		SeasonStartAt:  19_000,
 		SeasonDuration: 1_000,
 		MatureAt:       20_000,
 		LastSettleAt:   19_000,
 		LastWaterAt:    19_000,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
 	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
 	gateway.SetClock(func() int64 { return 20_000 })
@@ -655,10 +665,13 @@ func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
 	aggregate.Plots[0] = farm.Plot{
 		State:          farm.StateGrowing,
 		CropID:         1,
+		SeasonStartAt:  19_000,
 		SeasonDuration: 1_000,
 		MatureAt:       20_000,
-		LastSettleAt:   19_000,
-		LastWaterAt:    19_000,
+		LastSettleAt:   19_999,
+		LastWaterAt:    19_999,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
 	friends := newFriendStoreStub()
 	friends.add(ownerUID, friendUID)
@@ -1188,10 +1201,7 @@ func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
 	t.Cleanup(func() { _ = eventBus.Close() })
 	friends := newFriendStoreStub()
 	friends.add(7, 42)
-	client := &farmRPCStub{responses: []farmrpc.CommandResponse{{
-		Err:     pkgerr.OK,
-		Payload: marshalPayload(farmrpc.CrossReserveResponse{Rewarded: true}),
-	}}}
+	client := &farmRPCStub{responses: []farmrpc.CommandResponse{{Err: pkgerr.OK}}}
 	gateway := New(
 		authStub{},
 		sessionStub{uid: 7},
@@ -1229,10 +1239,13 @@ func TestWebSocketFertilizeReturnsUpdatedPatch(t *testing.T) {
 		State:          farm.StateGrowing,
 		CropID:         1,
 		StageCount:     3,
+		SeasonStartAt:  10_000,
 		SeasonDuration: 60_000,
 		MatureAt:       70_000,
 		LastSettleAt:   10_000,
 		LastWaterAt:    10_000,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
 	gw := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
 	gw.SetClock(func() int64 { return 11_000 })
@@ -1534,10 +1547,10 @@ func TestRemoveFriendRevokesBothRoomDirections(t *testing.T) {
 		WithFriendStore(friends),
 	)
 	var selfReceives, peerReceives int
-	gateway.rooms.SubscribeViewer(peerUID, 1, selfUID, func(farm.FarmDelta) {
+	gateway.rooms.SubscribeViewer(peerUID, 1, selfUID, func(farm.FarmDelta, []byte) {
 		selfReceives++
 	})
-	gateway.rooms.SubscribeViewer(selfUID, 2, peerUID, func(farm.FarmDelta) {
+	gateway.rooms.SubscribeViewer(selfUID, 2, peerUID, func(farm.FarmDelta, []byte) {
 		peerReceives++
 	})
 
@@ -1750,39 +1763,48 @@ func handshakeWebSocket(t *testing.T, conn *websocket.Conn, token string) {
 }
 
 type connectionRegistryBackend struct {
-	mu     sync.Mutex
-	hashes map[string]map[string]string
+	mu    sync.Mutex
+	zsets map[string]map[string]int64
 }
 
 func newConnectionRegistryBackend() *connectionRegistryBackend {
-	return &connectionRegistryBackend{hashes: make(map[string]map[string]string)}
+	return &connectionRegistryBackend{zsets: make(map[string]map[string]int64)}
 }
 
-func (b *connectionRegistryBackend) Set(_ context.Context, key, field, value string) error {
+func (b *connectionRegistryBackend) Upsert(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, _ time.Duration) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.hashes[key] == nil {
-		b.hashes[key] = make(map[string]string)
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
 	}
-	b.hashes[key][field] = value
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
 	return nil
 }
 
-func (b *connectionRegistryBackend) Delete(_ context.Context, key, field string) error {
+func (b *connectionRegistryBackend) Delete(_ context.Context, key, member string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	delete(b.hashes[key], field)
+	delete(b.zsets[key], member)
 	return nil
 }
 
-func (b *connectionRegistryBackend) Values(_ context.Context, key string) (map[string]string, error) {
+func (b *connectionRegistryBackend) AliveMembers(_ context.Context, key string, nowUnixMilli int64) ([]string, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	values := make(map[string]string, len(b.hashes[key]))
-	for field, value := range b.hashes[key] {
-		values[field] = value
+	alive := make([]string, 0, len(b.zsets[key]))
+	for member, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], member)
+			continue
+		}
+		alive = append(alive, member)
 	}
-	return values, nil
+	return alive, nil
 }
 
 type authStub struct {

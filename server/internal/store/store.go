@@ -162,6 +162,20 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 	return New(db, rdb, farmTTL), closeFn, nil
 }
 
+// Ping 检查 MySQL 与 Redis 是否仍可响应，供 /readyz 使用。
+func (s *Store) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil || s.rdb == nil {
+		return errors.New("store: not open")
+	}
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("mysql: %w", err)
+	}
+	if err := s.rdb.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis: %w", err)
+	}
+	return nil
+}
+
 var (
 	_ SessionStore  = (*Store)(nil)
 	_ AccountStore  = (*Store)(nil)

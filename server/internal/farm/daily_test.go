@@ -15,11 +15,11 @@ func TestMaintenanceReservationRewardsOnlyWithinDailyLimit(t *testing.T) {
 		t.Fatal("reservation beyond limit must not earn a reward")
 	}
 
-	aggregate.SettleMaintenance(dayID, true, Weed)
+	aggregate.SettleMaintenance(true, Weed)
 	if aggregate.Exp != 2 || aggregate.Coin != 1_005 {
 		t.Fatalf("reward = exp:%d coin:%d, want exp:2 coin:1005", aggregate.Exp, aggregate.Coin)
 	}
-	aggregate.SettleMaintenance(dayID, false, Pest)
+	aggregate.SettleMaintenance(false, Pest)
 	if aggregate.Exp != 2 || aggregate.Coin != 1_005 {
 		t.Fatalf("over-limit action gave reward = exp:%d coin:%d", aggregate.Exp, aggregate.Coin)
 	}

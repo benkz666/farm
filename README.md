@@ -30,6 +30,11 @@ chmod +x scripts/run.sh scripts/stop.sh   # 只需一次
 - 登录页：http://127.0.0.1:9001/login（**正式入口**：注册 / 登录后进入农场）
 - 前端根路径会按会话跳到登录或农场：http://127.0.0.1:9001/
 - 后端：http://127.0.0.1:9002/
+- Admin（默认仅 loopback，与业务端口隔离）：http://127.0.0.1:9300/
+  - `/healthz` 进程存活；`/readyz` 就绪（draining 或依赖不可用 → 503）
+  - `/metrics` Prometheus 文本；`/debug/pprof/*` 性能分析
+  - 关闭：`FARM_ADMIN_ADDR=off`；改端口：`FARM_ADMIN_ADDR=127.0.0.1:19300`
+  - 指标要点：`farm_delta_broadcast_batches_total` 按 PushBatch 计数（跨 Gateway 拆分时每个 Gateway +1；本地 RoomHub 一次广播 +1）；`farm_delta_broadcast_targets` 为单次 publish 的目标连接总数
 
 未登录不能进入 `/farm`。开发态右下角「Net 诊断」仅作联调诊断，**不是**注册/进房入口。日志在 `.run/logs/`。
 
@@ -175,7 +180,7 @@ make smoke-all       # 种植 + 好友 + 房间 + 互助 + 偷菜 全链路（al
 | `make compose-up` | 启动 MySQL + Redis + Kafka |
 | `make compose-shards` | 启动双分片 farm-0/1 + gateway-0/1（compose profile） |
 | `make compose-down` | 停止 compose（含 shards profile） |
-| `make migrate` | 顺序执行 `server/migrations/001_init.sql` 至 `006_account_uid_auto_increment.sql` |
+| `make migrate` | 按文件名顺序执行 `server/migrations/` 下全部迁移（当前 001 至 008） |
 | `make run` | 前台启动 `farm-server`（默认 `FARM_ALLOW_DEBUG_TIME=1`，供 smoke 调时） |
 | `make run-gateway` | 独立 Gateway 进程（`FARM_ROLE=gateway`） |
 | `make run-farm` | 独立 Farm 进程（`FARM_ROLE=farm`，`FARM_INSTANCE_ID` 需在路由表中） |

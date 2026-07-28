@@ -16,6 +16,7 @@ import (
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
+	"farm/server/internal/wireenv"
 )
 
 var wsUpgrader = websocket.Upgrader{
@@ -27,7 +28,15 @@ var wsUpgrader = websocket.Upgrader{
 const (
 	maxWSMessageSize = 64 << 10
 	wsReadTimeout    = 90 * time.Second
+	// wsWriteTimeout 防止慢客户端的 TCP 接收窗口被写阻塞：WriteMessage 持有 writeMu，
+	// 一旦卡住会连带阻塞房间广播循环与上游 Actor 的串行区。
+	wsWriteTimeout = 10 * time.Second
 )
+
+// Lease renewal is driven by this read loop (no per-connection goroutine):
+// after each authenticated request, Gateway renews connreg lifecycle + room
+// leases. Each renew refreshes the Redis key fallback TTL (2*leaseTTL); members
+// still expire by score at 1*leaseTTL. Unrenewed keys self-delete afterward.
 
 type wsConnection struct {
 	conn    *websocket.Conn
@@ -92,9 +101,14 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWSMessageSize)
 
+	if g.metrics != nil {
+		g.metrics.WSConnections.Inc()
+		defer g.metrics.WSConnections.Dec()
+	}
+
 	connection := wsConnection{
 		conn:    conn,
-		id:      g.nextConnID.Add(1),
+		id:      allocateConnID(&g.nextConnID),
 		limiter: newConnectionLimiter(),
 	}
 	defer func() {
@@ -135,7 +149,20 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		handledAt := time.Now()
 		response := g.handleWSRequest(&connection, request)
+		// Renew after handling so a transient Redis blip cannot rewrite a
+		// successful command into Internal. No per-connection renewer goroutine.
+		if connection.authed {
+			g.renewConnectionLease(context.Background(), &connection)
+		}
+		if g.metrics != nil {
+			code := uint32(response.Err)
+			if response.Cmd == 0 {
+				code = 0
+			}
+			g.metrics.ObserveWSRequest(request.Cmd, code, time.Since(handledAt))
+		}
 		if response.Cmd == 0 {
 			// Cross-farm actions respond only after CrossResult settles the
 			// visitor reservation; emitting here would acknowledge too early.
@@ -266,11 +293,13 @@ func (connection *wsConnection) respondEnterFarm(envelope Envelope) error {
 	connection.roomMu.Unlock()
 
 	for _, delta := range held {
-		if err := connection.respondLocked(Envelope{
-			Cmd:       CommandFarmDelta,
-			ClientSeq: 0,
-			Payload:   marshalPayload(delta),
-		}); err != nil {
+		// Hold release encodes per buffered delta; normal broadcasts reuse
+		// pre-encoded bytes and must not marshal per connection.
+		data, err := wireenv.EncodeFarmDelta(delta)
+		if err != nil {
+			return err
+		}
+		if err := connection.writeEncodedLocked(data); err != nil {
 			return err
 		}
 	}
@@ -282,10 +311,20 @@ func (connection *wsConnection) respondLocked(envelope Envelope) error {
 	if err != nil {
 		return err
 	}
+	return connection.writeEncodedLocked(data)
+}
+
+func (connection *wsConnection) writeEncodedLocked(data []byte) error {
+	if err := connection.conn.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+		return err
+	}
 	return connection.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDelta) {
+// pushFarmDelta delivers a room delta. encoded must be the once-encoded public
+// Envelope; active connections WriteMessage it directly. Connections in hold
+// cache the structured delta and encode only when the EnterFarm Rsp is flushed.
+func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDelta, encoded []byte) {
 	connection.writeMu.Lock()
 	defer connection.writeMu.Unlock()
 
@@ -299,11 +338,14 @@ func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDe
 	if !receiving || holding {
 		return
 	}
-	_ = connection.respondLocked(Envelope{
-		Cmd:       CommandFarmDelta,
-		ClientSeq: 0,
-		Payload:   marshalPayload(delta),
-	})
+	if len(encoded) == 0 {
+		var err error
+		encoded, err = wireenv.EncodeFarmDelta(delta)
+		if err != nil {
+			return
+		}
+	}
+	_ = connection.writeEncodedLocked(encoded)
 }
 
 // pushPlayerDelta delivers state owned by this connection's authenticated
@@ -316,6 +358,15 @@ func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) {
 		ClientSeq: 0,
 		Payload:   marshalPayload(delta),
 	})
+}
+
+func (connection *wsConnection) subscribedTo(ownerUID uint64) bool {
+	if connection == nil || ownerUID == 0 {
+		return false
+	}
+	connection.roomMu.Lock()
+	defer connection.roomMu.Unlock()
+	return connection.roomUID == ownerUID
 }
 
 func unmarshalPayload(payload json.RawMessage, target any) error {

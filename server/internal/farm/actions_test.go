@@ -45,6 +45,9 @@ func TestApplyPlotActionMainPath(t *testing.T) {
 				if got.Items[SeedItem(1)] != 0 {
 					t.Fatalf("white radish seed count = %d, want 0", got.Items[SeedItem(1)])
 				}
+				// 本用例只验证浇水保满产；跳过草/虫窗口，避免概率事件干扰产量断言。
+				got.Plots[0].WeedNextWin = gameconf.RiskWindowsPerSeason
+				got.Plots[0].PestNextWin = gameconf.RiskWindowsPerSeason
 			},
 		},
 		{
@@ -344,9 +347,10 @@ func TestAdvanceAllVisibleChangeIncrementsFarmSeqAndReturnsPlotChange(t *testing
 
 func TestApplyPlotActionHarvestMovesMultiSeasonCropToNextGrowingSeason(t *testing.T) {
 	agg := NewAggregate(1, "alice")
+	const appleID uint16 = 4 // 历史持久化 numeric ID：苹果
 	agg.Plots[0] = Plot{
 		State:           StateMature,
-		CropID:          4,
+		CropID:          appleID,
 		SeasonIndex:     0,
 		SeasonTotal:     2,
 		StageCount:      4,
@@ -381,7 +385,7 @@ func TestApplyPlotActionHarvestMovesMultiSeasonCropToNextGrowingSeason(t *testin
 	if got.FertMask != 0 || got.AccruedWeighted != 0 || got.WeedSince != 0 || got.PestSince != 0 || got.LastWaterAt != now {
 		t.Fatalf("next season fields not reset: %#v", got)
 	}
-	if agg.Items[FruitItem(4)] != 21 {
-		t.Fatalf("apple harvest = %d, want 21", agg.Items[FruitItem(4)])
+	if agg.Items[FruitItem(appleID)] != 21 {
+		t.Fatalf("apple harvest = %d, want 21", agg.Items[FruitItem(appleID)])
 	}
 }

@@ -11,13 +11,19 @@ import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks, applyMailClaimR
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
-import { enterOnline, isOnline, session, setFarmView } from '../net/session.js';
+import { enterOnline, isOnline, leaveOnline, session, setFarmView } from '../net/session.js';
 import { CMD_FERTILIZE, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
 import { createFarmMirror } from './farmMirror.js';
 import { plotCmdForTool, isVisitTool } from './onlineActions.js';
 import { shouldApplyPatchFromError } from './onlineResponse.js';
+import {
+  applyAuthoritativeFarmEnter,
+  bindFarmReconnectRestore,
+} from './reconnectRestore.js';
+import { cropOf, stageOf, computePlotInfo } from './plotInfo.js';
+import { bindPageUnload } from './pageLifecycle.js';
 
 // ---------------- 初始化（期 3：无本地权威存档；状态由 snapshot/Rsp 驱动） ----------------
 clearSave(); // 清理遗留 farm3d_save_v1，避免误以为本地仍可玩
@@ -40,6 +46,8 @@ let netClient = null;
 let farmMirror = null;
 let stopDeltaSubscription = null;
 let stopPlayerDeltaSubscription = null;
+/** @type {{ dispose: () => void }|null} */
+let reconnectBinding = null;
 /** 等 Rsp 期间防连点 */
 let onlineBusy = false;
 
@@ -64,8 +72,6 @@ const TOOLS_VISIT = [
 ];
 const DOG_TYPE_TO_ID = Object.freeze({ 1: 'tugou' });
 // ---------------- 通用辅助 ----------------
-const cropOf = (plot) => CROP_MAP[plot.cropId];
-
 function currentFarm() {
   return {
     plots: state.plots,
@@ -101,13 +107,6 @@ function refreshFarmMirror() {
 const healthOf = (plot) => Math.max(0, Math.min(100, 100 - plot.penalty));
 const yieldFactor = (h) => YIELD_FLOOR + (1 - YIELD_FLOOR) * (h / 100);
 const actualYield = (crop, h) => Math.floor(crop.yield * yieldFactor(h));
-
-function stageOf(plot, now) {
-  const crop = cropOf(plot);
-  const total = stageCount(crop);
-  const progress = Math.max(0, Math.min(0.9999, (now - plot.plantTime) / plot.seasonMs));
-  return { stage: Math.floor(progress * total), total };
-}
 
 function stageName(crop, stage) {
   return (stageCount(crop) === 3 ? STAGE_NAMES_3 : STAGE_NAMES_4)[stage] || '';
@@ -191,6 +190,37 @@ function fail(msg) { sfx.error(); ui.toast(msg, 'err'); }
 function ok(msg, type = 'ok') { ui.toast(msg, type); }
 
 // ---------------- online 入口（登录页 authFlow / DEV 诊断） ----------------
+function reconnectRestoreDeps(client) {
+  return {
+    client,
+    session,
+    state,
+    applyPatch,
+    setFarmView,
+    leaveOnline,
+    setOnlineBusy: (busy) => {
+      onlineBusy = busy;
+    },
+    getSelfUid: () => client?.uid ?? netClient?.uid,
+    refreshUI: () => {
+      refreshFarmMirror();
+      if (!isVisitingFriend()) void refreshPetStatus();
+    },
+    toast: (msg, type) => ui.toast(msg, type),
+    fail,
+    errText,
+    onOfflineCleanup: () => {
+      stopDeltaSubscription?.();
+      stopDeltaSubscription = null;
+      stopPlayerDeltaSubscription?.();
+      stopPlayerDeltaSubscription = null;
+      farmMirror = null;
+      netClient = null;
+      reconnectBinding = null;
+    },
+  };
+}
+
 /**
  * 登录 + Handshake + EnterFarm 成功后切入 online：applyPatch 快照并记录会话。
  * @param {import('../net/client.js').NetClient} client
@@ -203,18 +233,9 @@ function enterOnlineFromNet(client, enterEnv) {
   if (!enterEnv || enterEnv.err !== 0) {
     throw new Error(`enterOnlineFromNet: enterFarm err=${enterEnv?.err}`);
   }
-  const payload = enterEnv.payload || {};
-  const snapshot = payload.snapshot || {};
-  const ownerUid = Number(snapshot.owner_uid) || client.uid;
-  const relation = payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF';
-  applyPatch(state, payload);
   enterOnline({ uid: client.uid, token: client.token });
   netClient = client;
-  setFarmView({
-    ownerUid,
-    farmSeq: Number(payload.farm_seq) || 0,
-    relation,
-  });
+  reconnectBinding = bindFarmReconnectRestore(reconnectRestoreDeps(client));
   stopDeltaSubscription?.();
   farmMirror = createFarmMirror({
     state,
@@ -237,9 +258,9 @@ function enterOnlineFromNet(client, enterEnv) {
     ui.updateHUD(state);
     refreshSubBar();
   });
-  refreshFarmMirror();
-  void refreshPetStatus();
-  ui.toast('已进入 online 模式：操作将发往服务端', 'ok');
+  applyAuthoritativeFarmEnter(reconnectRestoreDeps(client), enterEnv, {
+    toast: '已进入 online 模式：操作将发往服务端',
+  });
 }
 
 async function enterFarm(ownerUid, nickname = '') {
@@ -251,16 +272,11 @@ async function enterFarm(ownerUid, nickname = '') {
       fail(errText(response.err));
       return;
     }
-    const payload = response.payload || {};
-    const snapshot = payload.snapshot || {};
-    applyPatch(state, payload);
-    setFarmView({
-      ownerUid: Number(snapshot.owner_uid) || (ownerUid || netClient.uid),
-      farmSeq: Number(payload.farm_seq) || 0,
-      relation: payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF',
+    applyAuthoritativeFarmEnter(reconnectRestoreDeps(netClient), response, {
+      fallbackOwnerUid: ownerUid || netClient.uid,
     });
-    refreshFarmMirror();
     if (isVisitingFriend()) {
+      const snapshot = response.payload?.snapshot || {};
       ui.setVisitor?.(nickname || snapshot.nickname || `UID ${session.viewingOwnerUid}`);
       ui.toast('已进入好友农场，可浇水/除草/除虫/偷菜', 'info');
     }
@@ -549,7 +565,8 @@ function tooltipHTML(plotId) {
     case PLOT.RESIDUE: return `<h4>待清理</h4><div class="row"><span>状态</span><b>残株待清理</b></div>`;
     case PLOT.WITHERED: {
       const c = cropOf(plot);
-      return `<h4>🥀 ${c.name}（枯萎）</h4><div class="row"><span>状态</span><b>产量全失，需清理</b></div>`;
+      const name = c?.name ?? '作物';
+      return `<h4>🥀 ${name}（枯萎）</h4><div class="row"><span>状态</span><b>产量全失，需清理</b></div>`;
     }
     case PLOT.GROWING:
     case PLOT.MATURE: {
@@ -583,23 +600,8 @@ function syncAllPlots() {
   const now = Date.now();
   const farm = currentFarm();
   scene.forEachPlot((g, i) => {
-    const unlocked = i < farm.unlocked;
     const plot = farm.plots[i];
-    if (!plot) { scene.updatePlot(g, { unlocked: false, lockText: '', state: PLOT.WASTELAND }); return; }
-    let info = { unlocked, lockText: '', state: plot.state, cropDef: null, stage: 0, totalStages: 3, dry: false, weed: false, pest: false };
-    if (!unlocked) {
-      const expDef = EXPANSION.find(x => x[0] === i + 1);
-      info.lockText = expDef ? `Lv.${expDef[1]}` : '';
-    } else if (plot.state === PLOT.GROWING || plot.state === PLOT.MATURE || plot.state === PLOT.WITHERED) {
-      const crop = cropOf(plot);
-      const { stage, total } = stageOf(plot, now);
-      info.cropDef = crop;
-      info.stage = stage;
-      info.totalStages = total;
-      info.dry = plot.state === PLOT.GROWING && now > plot.waterUntil;
-      info.weed = !!plot.weedSince && plot.state === PLOT.GROWING;
-      info.pest = !!plot.pestSince && plot.state === PLOT.GROWING;
-    }
+    const info = computePlotInfo(plot, { unlocked: i < farm.unlocked, index: i, now });
     scene.updatePlot(g, info);
   });
 }
@@ -1135,7 +1137,8 @@ function tick() {
 }
 
 const lastMouse = [0, 0];
-addEventListener('pointermove', (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; });
+const onGlobalPointerMove = (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; };
+addEventListener('pointermove', onGlobalPointerMove);
 
 // ---------------- 启动 ----------------
 // 登录页 authFlow / DEV 诊断：暴露 online 切入与状态
@@ -1149,7 +1152,20 @@ window.__farm = {
 refreshToolbar();
 syncAllPlots();
 scene.start();
-setInterval(tick, 300);
+const tickIntervalId = setInterval(tick, 300);
 tick();
+
+// 页面卸载：清 tick / pointermove / scene，并保留网络关闭与 reconnect cleanup
+bindPageUnload({
+  addEventListener,
+  removeEventListener,
+  clearInterval,
+  tickIntervalId,
+  onPointerMove: onGlobalPointerMove,
+  getReconnectBinding: () => reconnectBinding,
+  setReconnectBinding: (v) => { reconnectBinding = v; },
+  scene,
+  getNetClient: () => netClient,
+});
 
 // 未 online 时不提示本地开局指引（须登录）；online 后由 enterOnlineFromNet toast

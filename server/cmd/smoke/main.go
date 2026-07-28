@@ -201,7 +201,7 @@ func runPlanting(baseURL string) error {
 	}
 
 	// 水分窗边界各浇一次，保证满产；再推进到成熟。
-	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	seasonMS := gameconf.SeasonDurationMs(crop, 0, gameconf.TimeProfileDemo)
 	waterSpan := seasonMS * 35 / 100
 	if err := debugAdvance(baseURL, waterSpan); err != nil {
 		return fmt.Errorf("advance to first water: %w", err)
@@ -971,7 +971,7 @@ func runHelp(baseURL string) error {
 	if !ok {
 		return fmt.Errorf("missing white radish crop config")
 	}
-	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	seasonMS := gameconf.SeasonDurationMs(crop, 0, gameconf.TimeProfileDemo)
 	waterSpan := seasonMS * 35 / 100
 	if err := debugAdvance(baseURL, waterSpan); err != nil {
 		return fmt.Errorf("advance to water window: %w", err)
@@ -1212,7 +1212,7 @@ func runShards(gw0, gw1 string) error {
 	if !ok {
 		return fmt.Errorf("missing white radish crop config")
 	}
-	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	seasonMS := gameconf.SeasonDurationMs(crop, 0, gameconf.TimeProfileDemo)
 	waterSpan := seasonMS * 35 / 100
 	sleepUntilElapsed(plantedBAt, waterSpan+250)
 	waterEnv, farmDeltaEnv, err := exchangeResponseWithPush(connA, gateway.Envelope{
@@ -1305,7 +1305,7 @@ func runShardedDogIntercept(owner, visitor *smokePlayer, debugBaseURL string) er
 	if !ok {
 		return fmt.Errorf("missing crop %d", stealCropID)
 	}
-	compensation := int64(crop.FruitPrice) * 10
+	compensation := gameconf.StealCompensation(crop)
 	if err := ownerEarnForDog(owner, debugBaseURL, crop); err != nil {
 		return fmt.Errorf("earn for dog: %w", err)
 	}

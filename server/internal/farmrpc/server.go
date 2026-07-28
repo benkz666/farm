@@ -17,6 +17,7 @@ import (
 	"farm/server/internal/cross"
 	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
 )
@@ -111,11 +112,6 @@ type PetRequest struct {
 	Kind    PetOperation `json:"kind"`
 	DogType farm.DogType `json:"dog_type,omitempty"`
 	Grams   uint32       `json:"grams,omitempty"`
-}
-
-// CrossReserveResponse reports whether maintenance remains rewardable.
-type CrossReserveResponse struct {
-	Rewarded bool `json:"rewarded"`
 }
 
 // CrossSettleResponse returns the client reward and authoritative player state.
@@ -426,8 +422,15 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
 	if result.Err == pkgerr.OK {
+		// 任务计数是旁路副作用：动作已在 Actor 里提交、Delta 已广播给房间，此时把
+		// 响应改成 ERR_INTERNAL 会让发起者回滚一次真实发生的变更，比丢一次任务
+		// 进度更糟。失败只记日志，不污染动作结果。
 		if err := h.advanceGameplayTask(command.FarmUID, request.Kind); err != nil {
-			return CommandResponse{Err: pkgerr.Internal}
+			obs.L().Error("farmrpc advance task failed",
+				"component", "farmrpc",
+				"op", "advance_task",
+				"err", err.Error(),
+			)
 		}
 	}
 	return CommandResponse{Err: result.Err, Payload: marshalPayload(response)}
@@ -458,6 +461,8 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			})
 		}
 		if result.Err == pkgerr.OK {
+			// 同 Gateway 侧买卖：金币改动按 A 档同步落盘（架构 5.3 节）。
+			farmActor.RequireFlush()
 			response = ActionResponse{
 				FarmSeq: farmActor.Aggregate.FarmSeq,
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -555,24 +560,29 @@ func (h *Handler) crossReserve(command CommandRequest) CommandResponse {
 		reservation.Action.VisitorUID != command.FarmUID {
 		return CommandResponse{Err: pkgerr.BadRequest}
 	}
-	var rewarded bool
 	var code pkgerr.Code
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		rewarded, code = cross.ReserveVisitor(farmActor.Aggregate, reservation)
+		now := h.now()
+		code = cross.ReserveVisitor(farmActor.Aggregate, reservation, now)
+		obs.L().Debug("farmrpc cross reserve",
+			"component", "farmrpc",
+			"op", "cross_reserve",
+			"code", int(code),
+		)
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
 	}
-	return CommandResponse{Err: code, Payload: marshalPayload(CrossReserveResponse{Rewarded: rewarded})}
+	return CommandResponse{Err: code}
 }
 
 func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
-	var settlement cross.VisitorSettlement
-	if err := decodeJSON(bytes.NewReader(command.Payload), &settlement); err != nil ||
-		settlement.Result.VisitorUID != command.FarmUID {
+	var result cross.CrossResult
+	if err := decodeJSON(bytes.NewReader(command.Payload), &result); err != nil ||
+		result.VisitorUID != command.FarmUID {
 		return CommandResponse{Err: pkgerr.BadRequest}
 	}
 	var response CrossSettleResponse
@@ -581,7 +591,14 @@ func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		response.Reward, response.PlayerDelta, code = cross.SettleVisitor(farmActor.Aggregate, settlement)
+		now := h.now()
+		response.Reward, response.PlayerDelta, code = cross.SettleVisitor(farmActor.Aggregate, result, now)
+		obs.L().Debug("farmrpc cross settle",
+			"component", "farmrpc",
+			"op", "cross_settle",
+			"result_code", int(result.Code),
+			"settle_code", int(code),
+		)
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
@@ -637,7 +654,7 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 	default:
 		return nil
 	}
-	logicDay := h.now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+	logicDay := int64(gameconf.LogicDayID(gameconf.TimeProfileDemo, h.now()))
 	return h.taskProgress.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
 }
 
@@ -672,7 +689,13 @@ func (h *Handler) publishDelta(delta *farm.FarmDelta, originator connreg.ConnRef
 	emitted := *delta
 	go func() {
 		// Delta delivery is best effort; SyncFarm recovers a missed callback.
-		_ = publisher.Publish(context.Background(), emitted, originator)
+		if err := publisher.Publish(context.Background(), emitted, originator); err != nil {
+			obs.L().Error("farmrpc delta publish failed",
+				"component", "farmrpc",
+				"op", "publish_delta",
+				"err", err.Error(),
+			)
+		}
 	}()
 }
 
@@ -684,20 +707,7 @@ func (h *Handler) writeStealHint(uid uint64, hasStealable bool) {
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {
-	snapshot := farm.PlotSnapshotOf(index, plot)
-	return farm.PlotChange{
-		Index:          snapshot.Index,
-		State:          snapshot.State,
-		CropID:         snapshot.CropID,
-		SeasonIndex:    snapshot.SeasonIndex,
-		SeasonTotal:    snapshot.SeasonTotal,
-		MatureAt:       snapshot.MatureAt,
-		SeasonDuration: snapshot.SeasonDuration,
-		FinalYield:     snapshot.FinalYield,
-		LastWaterAt:    snapshot.LastWaterAt,
-		WeedSince:      snapshot.WeedSince,
-		PestSince:      snapshot.PestSince,
-	}
+	return farm.PlotChangeOf(index, plot)
 }
 
 func decodeJSON(reader io.Reader, target any) error {

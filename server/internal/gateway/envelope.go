@@ -2,11 +2,10 @@
 package gateway
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
+	"errors"
+	"strings"
 
-	"farm/server/internal/pkgerr"
+	"farm/server/internal/wireenv"
 )
 
 const (
@@ -42,58 +41,38 @@ const (
 	CommandMailClaim       uint32 = 608
 	CommandClaimDailyLogin uint32 = 614
 
-	CommandFarmDelta   uint32 = 9000
-	CommandPlayerDelta uint32 = 9002
+	CommandFarmDelta   = wireenv.CommandFarmDelta
+	CommandPlayerDelta = wireenv.CommandPlayerDelta
 
 	JSONSubprotocol = "farm.v1.json"
 )
 
 // Envelope is the JSON representation of protocol Envelope.
-// Payload must be a JSON object; protocol messages never use scalar payloads.
-type Envelope struct {
-	Cmd       uint32          `json:"cmd"`
-	ClientSeq uint32          `json:"client_seq"`
-	Err       pkgerr.Code     `json:"err"`
-	Payload   json.RawMessage `json:"payload"`
-}
+// Alias keeps the public gateway API stable while sharing wireenv's codec type.
+type Envelope = wireenv.Envelope
 
 // EncodeEnvelope serializes an envelope for a single WebSocket frame.
 func EncodeEnvelope(envelope Envelope) ([]byte, error) {
-	if err := validatePayload(envelope.Payload); err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(envelope)
+	encoded, err := wireenv.EncodeEnvelope(envelope)
 	if err != nil {
-		return nil, fmt.Errorf("gateway: encode envelope: %w", err)
+		return nil, remapWireenvError(err)
 	}
 	return encoded, nil
 }
 
 // DecodeEnvelope decodes one client WebSocket frame.
+// Exactly one JSON value is accepted; trailing values/garbage are rejected via wireenv.
 func DecodeEnvelope(data []byte) (Envelope, error) {
-	var envelope Envelope
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return Envelope{}, fmt.Errorf("gateway: decode envelope: %w", err)
-	}
-	if decoder.More() {
-		return Envelope{}, fmt.Errorf("gateway: decode envelope: trailing JSON value")
-	}
-	if err := validatePayload(envelope.Payload); err != nil {
-		return Envelope{}, err
+	envelope, err := wireenv.DecodeEnvelope(data)
+	if err != nil {
+		return Envelope{}, remapWireenvError(err)
 	}
 	return envelope, nil
 }
 
-func validatePayload(payload json.RawMessage) error {
-	payload = bytes.TrimSpace(payload)
-	if len(payload) == 0 || payload[0] != '{' {
-		return fmt.Errorf("gateway: envelope payload must be a JSON object")
+func remapWireenvError(err error) error {
+	if err == nil {
+		return nil
 	}
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &object); err != nil {
-		return fmt.Errorf("gateway: invalid envelope payload: %w", err)
-	}
-	return nil
+	return errors.New(strings.ReplaceAll(err.Error(), "wireenv:", "gateway:"))
 }

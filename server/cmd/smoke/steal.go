@@ -52,7 +52,7 @@ func runSteal(baseURL string) error {
 	if !ok {
 		return fmt.Errorf("missing crop %d", stealCropID)
 	}
-	compensation := int64(crop.FruitPrice) * 10
+	compensation := gameconf.StealCompensation(crop)
 
 	owner, err := openSmokePlayer(baseURL, routes, "farm-0")
 	if err != nil {
@@ -287,6 +287,11 @@ func runSteal(baseURL string) error {
 	intercepted := false
 	var interceptReward stealRewardResponse
 	var coinBefore, coinAfter int64
+	if dbg, err := ownerSnapshotCoin(owner); err == nil {
+		fmt.Printf("DEBUG intercept loop start: owner coin=%d\n", dbg)
+	} else {
+		fmt.Printf("DEBUG intercept loop start: snapshot err=%v\n", err)
+	}
 	for attempt := 0; attempt < stealMaxIntercept && !intercepted; attempt++ {
 		if attempt > 0 {
 			plotIdx = (plotIdx + 1) % uint32(gameconf.InitialUnlockedPlots)
@@ -298,6 +303,9 @@ func runSteal(baseURL string) error {
 		if _, err := mustOwnerAction(owner, gateway.CommandBuy, map[string]any{
 			"item_id": stealDogFoodItem, "quantity": 80,
 		}); err != nil {
+			if dbg, e2 := ownerSnapshotCoin(owner); e2 == nil {
+				fmt.Printf("DEBUG intercept buy food failed: owner coin=%d (need 80) attempt=%d\n", dbg, attempt)
+			}
 			return fmt.Errorf("intercept buy food: %w", err)
 		}
 		if env, err := ownerExchange(owner, gateway.CommandPetFeed, map[string]any{"grams": 80}); err != nil {
@@ -557,7 +565,7 @@ func ownerAdvanceToMature(owner *smokePlayer, baseURL string, plotIndex uint32) 
 	if !ok {
 		return fmt.Errorf("missing crop")
 	}
-	seasonMS := int64(crop.CycleHours) * gameconf.HourMs(gameconf.TimeProfileDemo)
+	seasonMS := gameconf.SeasonDurationMs(crop, 0, gameconf.TimeProfileDemo)
 	waterSpan := seasonMS * 35 / 100
 	if err := debugAdvance(baseURL, waterSpan); err != nil {
 		return fmt.Errorf("advance water1: %w", err)

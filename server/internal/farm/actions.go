@@ -1,6 +1,10 @@
 package farm
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"time"
+
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
@@ -80,9 +84,12 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	if int(act.PlotIndex) >= int(a.UnlockedPlots) || int(act.PlotIndex) >= len(a.Plots) {
 		return ActionResult{Err: pkgerr.PlotNotFound}
 	}
+	// 与地块推进同批惰性回滚超时预占：任何一次动作都会把冻结的金币放回账面，
+	// 返回的 Patch 已携带 Coin，客户端无需额外一轮同步。
+	a.ExpireCrossPending(now)
 
 	work := a.Plots[act.PlotIndex]
-	advancePlot(&work, now)
+	a.advancePlot(&work, now, act.PlotIndex)
 
 	switch act.Kind {
 	case Till:
@@ -106,14 +113,25 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	}
 }
 
-func advancePlot(p *Plot, now int64) {
-	if p.CropID != 0 {
-		if crop, ok := gameconf.CropByID(p.CropID); ok {
-			Advance(p, now, NewAdvanceConfig(crop))
-			return
+func (a *Aggregate) advancePlot(p *Plot, now int64, plotIndex uint8) {
+	cfg := a.plotAdvanceConfig(p.CropID)
+	cfg.PlotIndex = plotIndex
+	Advance(p, now, cfg)
+}
+
+// plotAdvanceConfig 组装地块推进配置，并从聚合注入非持久化 HazardSalt。
+func (a *Aggregate) plotAdvanceConfig(cropID uint16) AdvanceConfig {
+	cfg := AdvanceConfig{}
+	if cropID != 0 {
+		if crop, ok := gameconf.CropByID(cropID); ok {
+			cfg = NewAdvanceConfig(crop)
 		}
 	}
-	Advance(p, now, AdvanceConfig{})
+	if a != nil {
+		cfg.OwnerUID = a.UID
+		cfg.HazardSalt = a.HazardSalt
+	}
+	return cfg
 }
 
 // AdvanceAll 将所有已种植地块惰性推进到 now，并返回发生可见变化的地块。
@@ -121,27 +139,18 @@ func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
 	if a == nil {
 		return nil
 	}
+	// EnterFarm / SyncFarm 都经这里，是玩家重新上线后回滚超时预占的主要时机。
+	a.ExpireCrossPending(now)
+
 	changes := make([]PlotChange, 0)
 	for i := range a.Plots {
 		p := &a.Plots[i]
 		if p.State == StateGrowing || p.State == StateMature {
 			before := PlotSnapshotOf(uint8(i), *p)
-			advancePlot(p, now)
+			a.advancePlot(p, now, uint8(i))
 			after := PlotSnapshotOf(uint8(i), *p)
 			if before != after {
-				changes = append(changes, PlotChange{
-					Index:          after.Index,
-					State:          after.State,
-					CropID:         after.CropID,
-					SeasonIndex:    after.SeasonIndex,
-					SeasonTotal:    after.SeasonTotal,
-					MatureAt:       after.MatureAt,
-					SeasonDuration: after.SeasonDuration,
-					FinalYield:     after.FinalYield,
-					LastWaterAt:    after.LastWaterAt,
-					WeedSince:      after.WeedSince,
-					PestSince:      after.PestSince,
-				})
+				changes = append(changes, plotChangeFromSnapshot(after))
 			}
 		}
 	}
@@ -149,6 +158,30 @@ func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
 		a.FarmSeq++
 	}
 	return changes
+}
+
+func plotChangeFromSnapshot(s PlotSnapshot) PlotChange {
+	return PlotChange{
+		Index:          s.Index,
+		State:          s.State,
+		CropID:         s.CropID,
+		SeasonIndex:    s.SeasonIndex,
+		SeasonTotal:    s.SeasonTotal,
+		MatureAt:       s.MatureAt,
+		SeasonDuration: s.SeasonDuration,
+		FinalYield:     s.FinalYield,
+		LastWaterAt:    s.LastWaterAt,
+		WeedSince:      s.WeedSince,
+		PestSince:      s.PestSince,
+		Health:         s.Health,
+		StolenCount:    s.StolenCount,
+		FertMask:       s.FertMask,
+	}
+}
+
+// PlotChangeOf 将地块投影为 FarmDelta 用的 PlotChange（字段与 PlotSnapshot 对齐）。
+func PlotChangeOf(index uint8, p Plot) PlotChange {
+	return plotChangeFromSnapshot(PlotSnapshotOf(index, p))
 }
 
 func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {
@@ -216,6 +249,7 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64)
 		SeasonTotal:    crop.Seasons,
 		StageCount:     stageCount(crop),
 		CropID:         cropID,
+		PlantNonce:     newPlantNonce(),
 		SeasonStartAt:  now,
 		SeasonDuration: duration,
 		MatureAt:       now + duration,
@@ -237,7 +271,8 @@ func (a *Aggregate) commitWater(idx uint8, work *Plot, now int64) ActionResult {
 		if work.CropID == 0 {
 			return ActionResult{Err: pkgerr.PlotEmpty}
 		}
-		cfg := NewAdvanceConfig(mustCrop(work.CropID))
+		cfg := a.plotAdvanceConfig(work.CropID)
+		cfg.PlotIndex = idx
 		if waterFull(work, now, cfg) {
 			return ActionResult{Err: pkgerr.AlreadyWatered}
 		}
@@ -264,9 +299,10 @@ func (a *Aggregate) commitWeed(idx uint8, work *Plot, now int64) ActionResult {
 		if work.WeedSince == 0 {
 			return ActionResult{Err: pkgerr.NoWeed}
 		}
-		cfg := NewAdvanceConfig(mustCrop(work.CropID))
+		cfg := a.plotAdvanceConfig(work.CropID)
+		cfg.PlotIndex = idx
 		settleTo(work, now, cfg)
-		work.WeedSince = 0
+		clearHazard(work, &work.WeedSince, &work.WeedNextWin, now, cfg)
 		a.Plots[idx] = *work
 		a.Exp += 2
 		a.RecalcLevel()
@@ -288,9 +324,10 @@ func (a *Aggregate) commitPest(idx uint8, work *Plot, now int64) ActionResult {
 		if work.PestSince == 0 {
 			return ActionResult{Err: pkgerr.NoPest}
 		}
-		cfg := NewAdvanceConfig(mustCrop(work.CropID))
+		cfg := a.plotAdvanceConfig(work.CropID)
+		cfg.PlotIndex = idx
 		settleTo(work, now, cfg)
-		work.PestSince = 0
+		clearHazard(work, &work.PestSince, &work.PestNextWin, now, cfg)
 		a.Plots[idx] = *work
 		a.Exp += 2
 		a.RecalcLevel()
@@ -409,7 +446,7 @@ func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64) {
 }
 
 func seasonDuration(crop gameconf.CropConf, seasonIndex uint8) int64 {
-	return int64(gameconf.SeasonHours(crop, seasonIndex)) * gameconf.HourMs(defaultTimeProfile)
+	return gameconf.SeasonDurationMs(crop, seasonIndex, defaultTimeProfile)
 }
 
 func stageCount(crop gameconf.CropConf) uint8 {
@@ -446,9 +483,30 @@ func (a *Aggregate) patchOf(idx uint8) ActionPatch {
 	}
 	return ActionPatch{
 		PlotIndex: idx,
-		Plot:      a.Plots[idx],
+		Plot:      clonePlot(a.Plots[idx]),
 		Coin:      a.Coin,
 		Exp:       a.Exp,
 		Items:     items,
 	}
+}
+
+// clonePlot 深拷贝可变切片，避免 ActionPatch 逃出 Actor 串行区后与地块共享底层数组。
+func clonePlot(p Plot) Plot {
+	if len(p.Stealers) > 0 {
+		p.Stealers = append([]uint64(nil), p.Stealers...)
+	}
+	return p
+}
+
+func newPlantNonce() uint32 {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// CSPRNG 不可用时退化为非零时间混合，仍保证同农场轮次不完全撞车。
+		return uint32(time.Now().UnixNano() | 1)
+	}
+	n := binary.LittleEndian.Uint32(b[:])
+	if n == 0 {
+		return 1
+	}
+	return n
 }

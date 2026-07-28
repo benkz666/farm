@@ -4,6 +4,7 @@
  */
 import { PLOT, makePlot } from './state.js'
 import { WATER_SPAN } from './config.js'
+import { CROP_ID_TO_KEY as GEN_CROP_ID_TO_KEY, CROP_KEY_TO_ID as GEN_CROP_KEY_TO_ID } from './gen/crops.js'
 
 /** 服务端地块状态枚举 → 本地 PLOT 字符串（与 farm.State* 一致）。 */
 export const PLOT_STATE_BY_NUM = Object.freeze([
@@ -15,21 +16,11 @@ export const PLOT_STATE_BY_NUM = Object.freeze([
   PLOT.WITHERED,
 ])
 
-/** 服务端作物 ID → 客户端字符串 id（期 2 子集）。 */
-export const CROP_ID_TO_KEY = Object.freeze({
-  1: 'bailuobo',
-  2: 'huluobo',
-  3: 'dabaicai',
-  4: 'pingguo',
-})
+/** 服务端作物 ID → 客户端字符串 id（由 config/crops.csv 生成）。 */
+export const CROP_ID_TO_KEY = GEN_CROP_ID_TO_KEY
 
 /** 客户端字符串 id → 服务端作物 ID。 */
-export const CROP_KEY_TO_ID = Object.freeze({
-  bailuobo: 1,
-  huluobo: 2,
-  dabaicai: 3,
-  pingguo: 4,
-})
+export const CROP_KEY_TO_ID = GEN_CROP_KEY_TO_ID
 
 const FERTILIZER_ID_TO_KEY = Object.freeze({
   1: 'normal',

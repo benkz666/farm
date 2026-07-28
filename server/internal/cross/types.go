@@ -2,6 +2,8 @@
 package cross
 
 import (
+	"time"
+
 	"farm/server/internal/farm"
 	"farm/server/internal/pkgerr"
 )
@@ -42,11 +44,9 @@ type CrossResult struct {
 	DogType      farm.DogType `json:"dog_type,omitempty"`
 }
 
-// PendingState describes the terminal or in-flight state of a visitor reservation.
-type PendingState string
-
-const (
-	Reserved   PendingState = "reserved"
-	Settled    PendingState = "settled"
-	RolledBack PendingState = "rolled_back"
-)
+// PendingTimeout 是 Gateway 等待主人侧回执后应答客户端的时限。
+//
+// 到点只应答客户端，不回滚访客预占——预占的回滚责任在访客聚合里，由
+// farm.CrossPendingTimeout 兜底。这样 5 到 10 秒之间迟到的回执依然能正确结算，
+// 而不是先退款再收到「主人侧其实已经扣了果实」。
+const PendingTimeout = 5 * time.Second

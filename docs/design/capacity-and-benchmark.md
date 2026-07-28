@@ -284,12 +284,15 @@ go test -bench='BenchmarkAdvance|BenchmarkSettle|BenchmarkHazard|BenchmarkYield'
         -benchmem ./internal/farm/
 ```
 
-| 函数 | 目标 | 为什么 |
+| 函数（实现名） | 目标 | 为什么 |
 | --- | --- | --- |
-| `advance()` | < 500 ns/op，**0 allocs/op** | 每个请求都调用，是全系统最热的函数 |
-| `scanHazard()` | < 200 ns/op，0 allocs | 每次结算调用两次，含最多 10 次哈希 |
-| `hazardHit()` | < 10 ns/op | xxhash64 单次的理论值约 5 ns |
-| `computeYield()` | < 20 ns/op | 纯整数运算，不应有任何分配 |
+| `Advance`（`BenchmarkAdvance`） | < 500 ns/op，**0 allocs/op** | 每个请求都调用，是全系统最热的函数 |
+| `settleTo`（`BenchmarkSettle`） | 随 `Advance` 热路径，**0 allocs/op** | 健康度结算主体，被 `Advance` 调用 |
+| `scanHazard`（`BenchmarkHazard`） | < 200 ns/op，0 allocs | 每次结算调用两次，含最多 10 次哈希 |
+| `hazardHit`（`BenchmarkHazardHit`） | < 10 ns/op，0 allocs | xxhash64 单次的理论值约 5 ns |
+| `computeFinalYield`（`BenchmarkYield`） | < 20 ns/op，0 allocs | 纯整数运算，不应有任何分配 |
+
+纳秒阈值为人工读 benchmark 输出时的参考（机器相关）；仓库内可证伪验收只断言 **0 allocs/op**（见 `advance_alloc_test.go`）。
 
 `0 allocs/op` 比纳秒数更重要。它是 3.6 节 GC 优化的前提条件，而且是一个二元的、不会因机器不同而漂移的判据。
 

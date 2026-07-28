@@ -2,6 +2,7 @@ package cross
 
 import (
 	"farm/server/internal/farm"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
 
@@ -10,17 +11,6 @@ import (
 type VisitorReservation struct {
 	Action CrossAction `json:"action"`
 	DayID  uint32      `json:"day_id,omitempty"`
-}
-
-// VisitorSettlement carries the reservation metadata needed to commit or roll
-// back the visitor Actor after the owner's CrossResult arrives.
-type VisitorSettlement struct {
-	Result          CrossResult         `json:"result"`
-	DayID           uint32              `json:"day_id,omitempty"`
-	Rewarded        bool                `json:"rewarded,omitempty"`
-	MaintenanceKind farm.PlotActionKind `json:"maintenance_kind,omitempty"`
-	Steal           bool                `json:"steal,omitempty"`
-	FrozenCoin      int64               `json:"frozen_coin,omitempty"`
 }
 
 // VisitorReward is returned to the original client after authoritative
@@ -35,67 +25,118 @@ type VisitorReward struct {
 	DogType      farm.DogType `json:"dog_type,omitempty"`
 }
 
-// ReserveVisitor mutates only the visitor aggregate. The Gateway retains the
-// transport pending state, while this function works in both all-in-one and
-// sharded Farm processes.
-func ReserveVisitor(aggregate *farm.Aggregate, reservation VisitorReservation) (bool, pkgerr.Code) {
+// ReserveVisitor 在访客自己的聚合里扣减代价并登记预占。
+//
+// 预占登记在聚合内而非 Gateway 内存里，所以它随聚合落盘：Gateway 崩溃只会让
+// 客户端收不到这一次的回执，不会让冻结的金币失去回滚的责任人。
+func ReserveVisitor(aggregate *farm.Aggregate, reservation VisitorReservation, now int64) pkgerr.Code {
 	if aggregate == nil || reservation.Action.VisitorUID != aggregate.UID {
-		return false, pkgerr.BadRequest
+		return pkgerr.BadRequest
+	}
+
+	entry := farm.CrossReservation{
+		ReqID:    reservation.Action.ReqID,
+		OwnerUID: reservation.Action.OwnerUID,
 	}
 	if reservation.Action.Kind == Steal {
-		return false, aggregate.FreezeStealCompensation(reservation.Action.Compensation)
+		crop, ok := gameconf.CropByID(reservation.Action.CropID)
+		if !ok {
+			return pkgerr.BadRequest
+		}
+		// 赔付额按本地配置重算，不采信请求里带来的数字：这是访客自己要掏的钱，
+		// 让上游声明金额等于把解冻额度的决定权交出去。
+		entry.Steal = true
+		entry.FrozenCoin = gameconf.StealCompensation(crop)
+	} else {
+		kind, ok := ownerPlotActionKind(reservation.Action.Kind)
+		if !ok {
+			return pkgerr.BadRequest
+		}
+		entry.MaintainKind = kind
+		entry.DayID = reservation.DayID
 	}
-	if _, ok := ownerPlotActionKind(reservation.Action.Kind); !ok {
-		return false, pkgerr.BadRequest
-	}
-	return aggregate.ReserveMaintenance(reservation.DayID), pkgerr.OK
+
+	_, code := aggregate.ReserveCross(entry, now)
+	return code
 }
 
-// SettleVisitor commits rewards or rolls back reservations on the visitor
-// aggregate and returns the authoritative personal-state delta when changed.
+// SettleVisitor 按主人侧回执结算访客预占，返回收益与个人状态增量。
+//
+// 预占从聚合里取走后即删除，因此重复投递的同一条回执会落到「取不到」分支，
+// 天然幂等；返回 pkgerr.Timeout 表示该预占已被超时回滚，收益不再补发。
 func SettleVisitor(
 	aggregate *farm.Aggregate,
-	settlement VisitorSettlement,
+	result CrossResult,
+	now int64,
 ) (VisitorReward, *farm.PlayerDelta, pkgerr.Code) {
-	reward := VisitorReward{ReqID: settlement.Result.ReqID}
-	if aggregate == nil || settlement.Result.VisitorUID != aggregate.UID {
+	reward := VisitorReward{ReqID: result.ReqID}
+	if aggregate == nil || result.VisitorUID != aggregate.UID {
 		return reward, nil, pkgerr.BadRequest
 	}
-	code := settlement.Result.Code
-	if settlement.Steal {
-		switch settlement.Result.Code {
-		case pkgerr.OK:
-			if settlement.Result.CropID == 0 || settlement.Result.Amount == 0 {
-				aggregate.ReleaseStealCompensation(settlement.FrozenCoin)
-				code = pkgerr.Internal
-				break
-			}
-			aggregate.ReleaseStealCompensation(settlement.FrozenCoin)
-			aggregate.Items[farm.FruitItem(settlement.Result.CropID)] += uint32(settlement.Result.Amount)
-			reward.CropID = settlement.Result.CropID
-			reward.Amount = settlement.Result.Amount
-		case pkgerr.StealIntercepted:
-			reward.Compensation = settlement.Result.Compensation
-			reward.DogType = settlement.Result.DogType
-		default:
-			aggregate.ReleaseStealCompensation(settlement.FrozenCoin)
-		}
-		delta := aggregate.PlayerDelta()
-		return reward, &delta, code
+
+	aggregate.ExpireCrossPending(now)
+	reservation, ok := aggregate.TakeCrossReservation(result.ReqID, result.OwnerUID)
+	if !ok {
+		return reward, nil, pkgerr.Timeout
 	}
 
-	if settlement.Result.Code == pkgerr.OK {
-		aggregate.SettleMaintenance(settlement.DayID, settlement.Rewarded, settlement.MaintenanceKind)
-		if settlement.Rewarded {
-			reward.ExpGained = 2
-			if settlement.MaintenanceKind == farm.Weed || settlement.MaintenanceKind == farm.Pest {
-				reward.CoinGained = 5
-			}
-			delta := aggregate.PlayerDelta()
-			return reward, &delta, code
-		}
-		return reward, nil, code
+	if reservation.Steal {
+		return settleVisitorSteal(aggregate, result, reservation)
 	}
-	aggregate.RollbackMaintenance(settlement.DayID, settlement.Rewarded)
-	return reward, nil, code
+	return settleVisitorMaintenance(aggregate, result, reservation)
+}
+
+func settleVisitorSteal(
+	aggregate *farm.Aggregate,
+	result CrossResult,
+	reservation farm.CrossReservation,
+) (VisitorReward, *farm.PlayerDelta, pkgerr.Code) {
+	reward := VisitorReward{ReqID: result.ReqID}
+	code := result.Code
+
+	switch result.Code {
+	case pkgerr.OK:
+		if result.CropID == 0 || result.Amount == 0 {
+			// 主人侧报成功却没给果实：按内部错误解冻，宁可不赚也不错扣。
+			aggregate.RollbackCross(reservation)
+			code = pkgerr.Internal
+			break
+		}
+		aggregate.RollbackCross(reservation)
+		aggregate.AddItem(farm.FruitItem(result.CropID), uint32(result.Amount))
+		reward.CropID = result.CropID
+		reward.Amount = result.Amount
+	case pkgerr.StealIntercepted:
+		// 冻结额转为赔付，主人侧已同额入账，这里不解冻。金额取自本地预占记录，
+		// 与主人侧收到的是同一个数（都由 gameconf.StealCompensation 算出）。
+		reward.Compensation = reservation.FrozenCoin
+		reward.DogType = result.DogType
+	default:
+		aggregate.RollbackCross(reservation)
+	}
+
+	delta := aggregate.PlayerDelta()
+	return reward, &delta, code
+}
+
+func settleVisitorMaintenance(
+	aggregate *farm.Aggregate,
+	result CrossResult,
+	reservation farm.CrossReservation,
+) (VisitorReward, *farm.PlayerDelta, pkgerr.Code) {
+	reward := VisitorReward{ReqID: result.ReqID}
+	if result.Code != pkgerr.OK {
+		aggregate.RollbackCross(reservation)
+		return reward, nil, result.Code
+	}
+
+	exp, coin := aggregate.SettleMaintenance(reservation.Rewarded, reservation.MaintainKind)
+	if !reservation.Rewarded {
+		// 动作在主人侧已生效，但当日 150 次奖励额度已用尽，不产生个人状态变化。
+		return reward, nil, pkgerr.OK
+	}
+	reward.ExpGained, reward.CoinGained = exp, coin
+
+	delta := aggregate.PlayerDelta()
+	return reward, &delta, pkgerr.OK
 }

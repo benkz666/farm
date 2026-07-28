@@ -143,10 +143,10 @@ func (s *Store) GetAccountByUsername(ctx context.Context, username string) (uint
 func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	agg := &farm.Aggregate{UID: uid}
 
-	var dailyBlob, petBlob []byte
+	var dailyBlob, petBlob, crossBlob []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT nickname, level, exp, coin, unlocked_plots, daily_blob, pet_blob, farm_seq FROM player WHERE uid = ?`, uid,
-	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &dailyBlob, &petBlob, &agg.FarmSeq)
+		`SELECT nickname, level, exp, coin, unlocked_plots, daily_blob, pet_blob, cross_blob, farm_seq FROM player WHERE uid = ?`, uid,
+	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &dailyBlob, &petBlob, &crossBlob, &agg.FarmSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFarmNotFound
 	}
@@ -161,6 +161,11 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 	if len(petBlob) > 0 {
 		if err := json.Unmarshal(petBlob, &agg.Pet); err != nil {
 			return nil, fmt.Errorf("store: decode pet state: %w", err)
+		}
+	}
+	if len(crossBlob) > 0 {
+		if err := json.Unmarshal(crossBlob, &agg.CrossPending); err != nil {
+			return nil, fmt.Errorf("store: decode cross pending: %w", err)
 		}
 	}
 
@@ -260,11 +265,19 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 	if err != nil {
 		return fmt.Errorf("store: encode pet state: %w", err)
 	}
+	// 无在途预占时写空串而非 "null"，让 cross_blob 的稳定态与列默认值一致。
+	// 必须是非 nil 的空切片：nil []byte 会被驱动当成 SQL NULL，而该列是 NOT NULL。
+	crossBlob := []byte{}
+	if len(agg.CrossPending) > 0 {
+		if crossBlob, err = json.Marshal(agg.CrossPending); err != nil {
+			return fmt.Errorf("store: encode cross pending: %w", err)
+		}
+	}
 	// 不做 RowsAffected==0 → ErrFarmNotFound：MySQL 默认 RowsAffected 只计「实际改动的行」，
 	// 无脏写时会误判；注册路径已保证 player 行存在，缺行由后续业务/读路径暴露。
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, daily_blob = ?, pet_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
-		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, dailyBlob, petBlob, agg.FarmSeq, now, agg.UID,
+		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, daily_blob = ?, pet_blob = ?, cross_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
+		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, dailyBlob, petBlob, crossBlob, agg.FarmSeq, now, agg.UID,
 	); err != nil {
 		return fmt.Errorf("store: update player: %w", err)
 	}

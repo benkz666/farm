@@ -38,3 +38,15 @@ func LogicDayMs(profile string) int64 {
 	}
 	return d
 }
+
+// LogicDayID 返回 now 所属逻辑日的编号。
+//
+// 每日重置类状态（维护额度、登录奖励、任务进度）判断「是否换天」必须只认这一个
+// 口径。各模块自行用常量除法会在非 demo 档上算出不同的天：demo 档下 24 缩放小时
+// 只有 144 秒，被 LogicDayMinMs 抬到 5 分钟，而 fast 档是实打实的 24 分钟。
+func LogicDayID(profile string, now int64) uint32 {
+	if now <= 0 {
+		return 0
+	}
+	return uint32(now / LogicDayMs(profile))
+}

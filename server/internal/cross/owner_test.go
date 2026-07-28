@@ -136,10 +136,10 @@ func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
 		9: {Aggregate: ownerAggregate},
 	}}
 	owner := NewOwner(runtime, ownerFriends{allowed: true}, nil, func() int64 { return 40_000 }, nil, nil)
-	owner.stealRoll = func() uint16 { return 1 }
-	owner.interceptRoll = func() uint8 { return 0 }
+	owner.stealRoll = func(CrossAction) uint16 { return 1 }
+	owner.interceptRoll = func(CrossAction) uint8 { return 0 }
 
-	result, _, _, _, _ := owner.decide(CrossAction{
+	action := CrossAction{
 		ReqID:        4,
 		Kind:         Steal,
 		VisitorUID:   7,
@@ -147,7 +147,15 @@ func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
 		PlotIndex:    0,
 		CropID:       1,
 		Compensation: 170,
-	})
+	}
+	if _, ok := owner.validate(action); !ok {
+		t.Fatal("action must pass owner validation")
+	}
+	outcome, err := owner.commit(action)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	result := outcome.result
 
 	if result.Code != pkgerr.StealIntercepted || result.Compensation != 170 || result.DogType != farm.DogMutt {
 		t.Fatalf("result = %#v", result)
@@ -189,10 +197,13 @@ func growingAggregate(uid uint64) *farm.Aggregate {
 	aggregate.Plots[0] = farm.Plot{
 		State:          farm.StateGrowing,
 		CropID:         1,
+		SeasonStartAt:  1,
 		SeasonDuration: 60_000,
 		MatureAt:       70_000,
-		LastSettleAt:   1,
+		LastSettleAt:   40_000,
 		LastWaterAt:    1,
+		WeedNextWin:    10,
+		PestNextWin:    10,
 	}
 	return aggregate
 }

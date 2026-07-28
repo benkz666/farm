@@ -84,51 +84,30 @@ export const TASK_POOL = [
 export const DAILY_TASK_COUNT = 3;
 
 // ============================================================
-// 作物表（6.2 / 6.3 / 6.5 节）
-// body 为 3D 体型类别，colors 用于模型与 UI 徽章
+// 作物表 —— 由 config/crops.csv 经 make gen 生成，此处仅重导出以保持 import 兼容
 // ============================================================
-export const CROPS = [
-  // ---- 单季 ----
-  { id: 'bailuobo', name: '白萝卜', unlock: 0,  seedPrice: 125, seasons: 1, cycleH: 10, yield: 16, fruitPrice: 17, harvestExp: 15, body: 'root',    color: '#f5f0e1', fruit: 0xf5f0e1, leaf: 0x5aa54a },
-  { id: 'huluobo',  name: '胡萝卜', unlock: 0,  seedPrice: 163, seasons: 1, cycleH: 13, yield: 17, fruitPrice: 21, harvestExp: 18, body: 'root',    color: '#ff8c42', fruit: 0xff8c42, leaf: 0x4e9b47 },
-  { id: 'dabaicai', name: '大白菜', unlock: 1,  seedPrice: 168, seasons: 1, cycleH: 14, yield: 17, fruitPrice: 22, harvestExp: 19, body: 'cabbage', color: '#a8d5a2', fruit: 0xcdeac0, leaf: 0x6fbf63 },
-  { id: 'xiaomai',  name: '小麦',   unlock: 2,  seedPrice: 168, seasons: 1, cycleH: 14, yield: 18, fruitPrice: 21, harvestExp: 19, body: 'cereal',  color: '#e8c96a', fruit: 0xe8c96a, leaf: 0x9db85c },
-  { id: 'shuidao',  name: '水稻',   unlock: 2,  seedPrice: 168, seasons: 1, cycleH: 14, yield: 18, fruitPrice: 21, harvestExp: 19, body: 'cereal',  color: '#d9c25e', fruit: 0xd9c25e, leaf: 0x7fb069 },
-  { id: 'yumi',     name: '玉米',   unlock: 3,  seedPrice: 175, seasons: 1, cycleH: 14, yield: 17, fruitPrice: 23, harvestExp: 19, body: 'corn',    color: '#ffd54a', fruit: 0xffd54a, leaf: 0x5da352 },
-  { id: 'tudou',    name: '土豆',   unlock: 4,  seedPrice: 188, seasons: 1, cycleH: 15, yield: 18, fruitPrice: 24, harvestExp: 20, body: 'bush',    color: '#d9b382', fruit: 0xd9b382, leaf: 0x5aa54a },
-  { id: 'hongzao',  name: '红枣',   unlock: 5,  seedPrice: 237, seasons: 1, cycleH: 16, yield: 20, fruitPrice: 25, harvestExp: 21, body: 'tree',    color: '#c0392b', fruit: 0xc0392b, leaf: 0x4e8f43 },
-  { id: 'qiezi',    name: '茄子',   unlock: 5,  seedPrice: 237, seasons: 1, cycleH: 16, yield: 20, fruitPrice: 25, harvestExp: 21, body: 'bush',    color: '#8e44ad', fruit: 0x8e44ad, leaf: 0x5aa54a },
-  { id: 'fanqie',   name: '番茄',   unlock: 6,  seedPrice: 251, seasons: 1, cycleH: 17, yield: 21, fruitPrice: 26, harvestExp: 22, body: 'bush',    color: '#e74c3c', fruit: 0xe74c3c, leaf: 0x55a04a },
-  { id: 'wandou',   name: '豌豆',   unlock: 7,  seedPrice: 266, seasons: 1, cycleH: 18, yield: 22, fruitPrice: 27, harvestExp: 23, body: 'bush',    color: '#7dc95e', fruit: 0x7dc95e, leaf: 0x4e9b47 },
-  { id: 'hongmeigui', name: '红玫瑰', unlock: 7, seedPrice: 266, seasons: 1, cycleH: 18, yield: 22, fruitPrice: 27, harvestExp: 23, body: 'rose',   color: '#e5386d', fruit: 0xe5386d, leaf: 0x4a8f43 },
-  { id: 'lajiao',   name: '辣椒',   unlock: 8,  seedPrice: 296, seasons: 1, cycleH: 20, yield: 24, fruitPrice: 28, harvestExp: 25, body: 'bush',    color: '#d7263d', fruit: 0xd7263d, leaf: 0x55a04a },
-  { id: 'nangua',   name: '南瓜',   unlock: 9,  seedPrice: 325, seasons: 1, cycleH: 22, yield: 25, fruitPrice: 30, harvestExp: 27, body: 'ground',  color: '#ff9f1c', fruit: 0xff9f1c, leaf: 0x5aa54a },
-  // ---- 多季 ----
-  { id: 'pingguo',  name: '苹果',   unlock: 10, seedPrice: 578,  seasons: 2, cycleH: 30,  yield: 23, fruitPrice: 24, harvestExp: 18, body: 'tree',  color: '#e63946', fruit: 0xe63946, leaf: 0x4e8f43 },
-  { id: 'caomei',   name: '草莓',   unlock: 10, seedPrice: 605,  seasons: 2, cycleH: 35,  yield: 24, fruitPrice: 27, harvestExp: 20, body: 'low',   color: '#ff4d6d', fruit: 0xff4d6d, leaf: 0x5aa54a },
-  { id: 'xigua',    name: '西瓜',   unlock: 11, seedPrice: 708,  seasons: 2, cycleH: 41,  yield: 27, fruitPrice: 29, harvestExp: 23, body: 'ground',color: '#2e933c', fruit: 0x3d9970, leaf: 0x5aa54a },
-  { id: 'xiangjiao',name: '香蕉',   unlock: 12, seedPrice: 900,  seasons: 2, cycleH: 45,  yield: 29, fruitPrice: 32, harvestExp: 25, body: 'palm',  color: '#ffe066', fruit: 0xffe066, leaf: 0x6fbf63 },
-  { id: 'taozi',    name: '桃子',   unlock: 13, seedPrice: 1200, seasons: 2, cycleH: 60,  yield: 32, fruitPrice: 40, harvestExp: 33, body: 'tree',  color: '#ffb3c1', fruit: 0xffa8b8, leaf: 0x4e8f43 },
-  { id: 'chengzi',  name: '橙子',   unlock: 14, seedPrice: 1587, seasons: 3, cycleH: 59,  yield: 26, fruitPrice: 41, harvestExp: 25, body: 'tree',  color: '#ff9f1c', fruit: 0xff9f1c, leaf: 0x4e8f43 },
-  { id: 'putao',    name: '葡萄',   unlock: 15, seedPrice: 1978, seasons: 3, cycleH: 86,  yield: 29, fruitPrice: 47, harvestExp: 30, body: 'vine',  color: '#9b5de5', fruit: 0x9b5de5, leaf: 0x55a04a },
-  { id: 'shiliu',   name: '石榴',   unlock: 16, seedPrice: 2425, seasons: 3, cycleH: 96,  yield: 30, fruitPrice: 54, harvestExp: 34, body: 'tree',  color: '#d90429', fruit: 0xd90429, leaf: 0x4e8f43 },
-  { id: 'youzi',    name: '柚子',   unlock: 17, seedPrice: 2855, seasons: 3, cycleH: 113, yield: 33, fruitPrice: 58, harvestExp: 39, body: 'tree',  color: '#f4d35e', fruit: 0xf4d35e, leaf: 0x4e8f43 },
-  { id: 'boluo',    name: '菠萝',   unlock: 18, seedPrice: 3480, seasons: 3, cycleH: 116, yield: 35, fruitPrice: 62, harvestExp: 40, body: 'pineapple', color: '#f6bd60', fruit: 0xf6bd60, leaf: 0x6fbf63 },
-  { id: 'yezi',     name: '椰子',   unlock: 19, seedPrice: 3720, seasons: 4, cycleH: 124, yield: 27, fruitPrice: 65, harvestExp: 32, body: 'palm',  color: '#a0785a', fruit: 0x8d6e63, leaf: 0x5da352 },
-  { id: 'hulu',     name: '葫芦',   unlock: 20, seedPrice: 4742, seasons: 4, cycleH: 139, yield: 30, fruitPrice: 71, harvestExp: 36, body: 'vine',  color: '#a7c957', fruit: 0xa7c957, leaf: 0x55a04a },
-  // ---- 隐藏作物（种子价 0，不掉落于商店）----
-  { id: 'renshen',  name: '人参',   unlock: 0,  seedPrice: 0, seasons: 1, cycleH: 40,  yield: 22, fruitPrice: 41, harvestExp: 60,  body: 'root',   color: '#e8d8b9', fruit: 0xe8d8b9, leaf: 0x6a994e, hidden: true, dropLevel: 0 },
-  { id: 'lingzhi',  name: '灵芝',   unlock: 10, seedPrice: 0, seasons: 1, cycleH: 60,  yield: 30, fruitPrice: 60, harvestExp: 80,  body: 'fungus',color: '#9c6644', fruit: 0x9c6644, leaf: 0x7f5539, hidden: true, dropLevel: 10 },
-  { id: 'yaoqianshu', name: '摇钱树', unlock: 20, seedPrice: 0, seasons: 3, cycleH: 100, yield: 25, fruitPrice: 55, harvestExp: 100, body: 'money', color: '#ffd700', fruit: 0xffd700, leaf: 0xd4af37, hidden: true, dropLevel: 20 },
-];
+export { CROPS } from './gen/crops.js';
+import { CROPS } from './gen/crops.js';
 
 export const CROP_MAP = Object.fromEntries(CROPS.map(c => [c.id, c]));
 
-// 多季拆分规则（6.3）：后续每季 = 全周期/(季数+1)，首季 = 2 倍
-export function seasonHours(crop, seasonIndex) {
-  if (crop.seasons === 1) return crop.cycleH;
-  const later = crop.cycleH / (crop.seasons + 1);
+// 多季拆分规则（6.3）：权威单位为整数分钟；后续每季 = cycleMinutes/(seasons+1)，首季 = 2 倍。
+export function seasonMinutes(crop, seasonIndex) {
+  if (crop.seasons <= 1) return crop.cycleMinutes;
+  const later = crop.cycleMinutes / (crop.seasons + 1);
   return seasonIndex === 0 ? later * 2 : later;
+}
+
+/** @deprecated 兼容旧名；内部转调 seasonMinutes（可能含分数小时，勿用于权威时长）。 */
+export function seasonHours(crop, seasonIndex) {
+  return seasonMinutes(crop, seasonIndex) / 60;
+}
+
+/** 本季时长真实毫秒；与服务端 SeasonDurationMs 同公式：minutes * hourMs / 60。 */
+export function seasonDurationMs(crop, seasonIndex, timeScaleKey = 'demo') {
+  const hourMs = TIME_SCALES[timeScaleKey]?.hourMs;
+  if (!hourMs || hourMs % 60 !== 0) return 0;
+  return (seasonMinutes(crop, seasonIndex) * hourMs) / 60;
 }
 
 // 生长阶段数（6.4）：解锁 <3 级 3 阶段，≥3 级 4 阶段

@@ -7,7 +7,6 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
-	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
 )
@@ -40,7 +39,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 	}
 
 	ctx := context.Background()
-	logicDay := g.Now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+	logicDay := int64(g.logicDayID())
 	switch request.Cmd {
 	case CommandTaskList:
 		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {

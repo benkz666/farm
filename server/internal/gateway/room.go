@@ -4,38 +4,44 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
+	"farm/server/internal/obs"
+	"farm/server/internal/wireenv"
 )
 
 // RoomHub 按农场主 uid 管理当前房间的连接订阅。
 // 广播时在锁外调用推送函数，避免慢连接阻塞订阅表变更。
 type RoomHub struct {
-	mu    sync.RWMutex
-	rooms map[uint64]map[uint64]roomSubscription
+	mu              sync.RWMutex
+	rooms           map[uint64]map[uint64]roomSubscription
+	encodeFarmDelta func(farm.FarmDelta) ([]byte, error)
+	metrics         *obs.Metrics
 }
 
 type roomSubscription struct {
 	viewerUID uint64
-	push      func(farm.FarmDelta)
+	push      func(delta farm.FarmDelta, encoded []byte)
 }
 
 // NewRoomHub 创建一个可供 Gateway 共享的房间订阅中心。
 func NewRoomHub() *RoomHub {
 	return &RoomHub{
-		rooms: make(map[uint64]map[uint64]roomSubscription),
+		rooms:           make(map[uint64]map[uint64]roomSubscription),
+		encodeFarmDelta: wireenv.EncodeFarmDelta,
 	}
 }
 
 // Subscribe 将 connectionID 的推送函数登记到 ownerUID 对应的农场房间。
 // 同一连接重复订阅同一房间时，后一次登记替换前一次。
-func (h *RoomHub) Subscribe(ownerUID, connectionID uint64, push func(farm.FarmDelta)) {
+func (h *RoomHub) Subscribe(ownerUID, connectionID uint64, push func(farm.FarmDelta, []byte)) {
 	h.SubscribeViewer(ownerUID, connectionID, 0, push)
 }
 
 // SubscribeViewer 将观看者身份与连接一起登记，供解除好友关系时撤销订阅。
-func (h *RoomHub) SubscribeViewer(ownerUID, connectionID, viewerUID uint64, push func(farm.FarmDelta)) {
+func (h *RoomHub) SubscribeViewer(ownerUID, connectionID, viewerUID uint64, push func(farm.FarmDelta, []byte)) {
 	if h == nil || push == nil {
 		return
 	}
@@ -122,14 +128,26 @@ func (h *RoomHub) Broadcast(delta farm.FarmDelta) {
 
 // BroadcastExcept 向房间内除 excludedConnectionID 外的订阅者推送增量。
 // 写请求的发起方已获得同步 Rsp，跳过它可避免 Delta 抢在该 Rsp 前抵达。
+// Envelope 只编码一次；各连接复用同一 []byte（正常路径禁止逐连接 marshal）。
 func (h *RoomHub) BroadcastExcept(delta farm.FarmDelta, excludedConnectionID uint64) {
 	if h == nil {
 		return
 	}
 
+	encode := h.encodeFarmDelta
+	if encode == nil {
+		encode = wireenv.EncodeFarmDelta
+	}
+	encodeStart := time.Now()
+	encoded, err := encode(delta)
+	encodeDur := time.Since(encodeStart)
+	if err != nil {
+		return
+	}
+
 	h.mu.RLock()
 	subscribers := h.rooms[delta.OwnerUID]
-	pushes := make([]func(farm.FarmDelta), 0, len(subscribers))
+	pushes := make([]func(farm.FarmDelta, []byte), 0, len(subscribers))
 	for connectionID, subscription := range subscribers {
 		if connectionID == excludedConnectionID {
 			continue
@@ -138,8 +156,14 @@ func (h *RoomHub) BroadcastExcept(delta farm.FarmDelta, excludedConnectionID uin
 	}
 	h.mu.RUnlock()
 
+	copied := copyFarmDelta(delta)
+	pushStart := time.Now()
 	for _, push := range pushes {
-		push(copyFarmDelta(delta))
+		push(copied, encoded)
+	}
+	if m := h.metrics; m != nil && len(pushes) > 0 {
+		// 本地房间一次广播 = 1 个 batch（无跨 Gateway 拆分）。
+		m.ObserveDeltaBroadcast(1, len(pushes), encodeDur, time.Since(pushStart))
 	}
 }
 

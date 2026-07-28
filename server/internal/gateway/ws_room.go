@@ -7,6 +7,7 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
 )
 
@@ -86,8 +87,13 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			Relation:   relation,
 		})
 		if relation == "FRIEND" {
+			// 已经拿到快照并组好响应，串门任务计数失败不能让玩家进不去好友农场。
 			if err := g.advanceVisitTask(connection.uid); err != nil {
-				response.Err = pkgerr.Internal
+				obs.L().Error("gateway advance visit task failed",
+					"component", "gateway",
+					"op", "advance_visit_task",
+					"err", err.Error(),
+				)
 			}
 		}
 		return response
@@ -147,7 +153,11 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	response.Payload = marshalPayload(enter)
 	if relation == "FRIEND" {
 		if err := g.advanceVisitTask(connection.uid); err != nil {
-			response.Err = pkgerr.Internal
+			obs.L().Error("gateway advance visit task failed",
+				"component", "gateway",
+				"op", "advance_visit_task",
+				"err", err.Error(),
+			)
 		}
 	}
 	return response
@@ -268,8 +278,8 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 			_ = g.connRegistry.Unsubscribe(context.Background(), previousOwnerUID, connection.id, g.gatewayID)
 		}
 	}
-	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta) {
-		connection.pushFarmDelta(ownerUID, delta)
+	g.rooms.SubscribeViewer(ownerUID, connection.id, connection.uid, func(delta farm.FarmDelta, encoded []byte) {
+		connection.pushFarmDelta(ownerUID, delta, encoded)
 	})
 	return nil
 }

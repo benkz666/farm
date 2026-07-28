@@ -199,7 +199,9 @@ func TestFriendEnterAdvancesDailyVisitTask(t *testing.T) {
 	}
 }
 
-func TestSuccessfulPlantReportsTaskProgressFailure(t *testing.T) {
+// 任务计数是旁路副作用：种植已经在 Actor 里提交、Delta 已经广播给房间，此时把响应
+// 改成失败会让客户端回滚一次真实发生的变更，违反「失败无副作用」。
+func TestTaskProgressFailureDoesNotFailCommittedPlant(t *testing.T) {
 	storage := newTaskMailStoreStub()
 	storage.advanceErr = errors.New("task storage unavailable")
 	aggregate := farm.NewAggregate(42, "alice")
@@ -217,8 +219,14 @@ func TestSuccessfulPlantReportsTaskProgressFailure(t *testing.T) {
 		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
 	})
 
-	if response.Err != pkgerr.Internal {
-		t.Fatalf("Plant err = %d, want %d when task progress fails", response.Err, pkgerr.Internal)
+	if response.Err != pkgerr.OK {
+		t.Fatalf("Plant err = %d, want OK despite task progress failure", response.Err)
+	}
+	if aggregate.Plots[0].State != farm.StateGrowing {
+		t.Fatalf("plot state = %d, want growing", aggregate.Plots[0].State)
+	}
+	if got := aggregate.Items[farm.SeedItem(1)]; got != 0 {
+		t.Fatalf("seed still in bag = %d, want 0", got)
 	}
 }
 

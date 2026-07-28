@@ -3,8 +3,11 @@
 // ============================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { mat, createCropModel, createWeedModel, createPestModel, createResidueModel, createDogModel } from './crops.js';
+import { mat, isSharedMaterial, createCropModel, createWeedModel, createPestModel, createResidueModel, createDogModel } from './crops.js';
+import { clearAndDispose, disposeExclusiveMaterial, disposeObject3D } from './dispose3d.js';
 import { PLOT } from './state.js';
+
+const disposeOpts = { isSharedMaterial };
 
 const COLS = 6, ROWS = 3, GAP = 5;
 export const plotPos = (id) => ({
@@ -34,14 +37,16 @@ function lerpKey(phase) {
   return { sky: lerpC(a.sky, b.sky), sun: lerpC(a.sun, b.sun), sunI: a.sunI + (b.sunI - a.sunI) * f, hemi: a.hemi + (b.hemi - a.hemi) * f };
 }
 
-function makeGrassTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
+function makeGrassTexture(createElement) {
+  const c = createElement('canvas'); c.width = c.height = 256;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#7cbc66'; ctx.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 900; i++) {
-    const g = 150 + Math.random() * 60;
-    ctx.fillStyle = `rgba(${100 + Math.random() * 40 | 0},${g},${70 + Math.random() * 40 | 0},0.35)`;
-    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2 + Math.random() * 3);
+  if (ctx) {
+    ctx.fillStyle = '#7cbc66'; ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 900; i++) {
+      const g = 150 + Math.random() * 60;
+      ctx.fillStyle = `rgba(${100 + Math.random() * 40 | 0},${g},${70 + Math.random() * 40 | 0},0.35)`;
+      ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2 + Math.random() * 3);
+    }
   }
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(8, 8);
@@ -49,12 +54,35 @@ function makeGrassTexture() {
   return tex;
 }
 
+function defaultEnv() {
+  return {
+    createRenderer: () => new THREE.WebGLRenderer({ antialias: true }),
+    createControls: (camera, dom) => new OrbitControls(camera, dom),
+    requestAnimationFrame: (cb) => requestAnimationFrame(cb),
+    cancelAnimationFrame: (id) => cancelAnimationFrame(id),
+    addEventListener: (type, fn) => addEventListener(type, fn),
+    removeEventListener: (type, fn) => removeEventListener(type, fn),
+    createElement: (tag) => document.createElement(tag),
+    getViewport: () => ({
+      width: innerWidth,
+      height: innerHeight,
+      pixelRatio: typeof devicePixelRatio === 'number' ? devicePixelRatio : 1,
+    }),
+  };
+}
+
 export class FarmScene {
-  constructor(container) {
+  constructor(container, env = {}) {
     this.container = container;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.env = { ...defaultEnv(), ...env };
+    this._disposed = false;
+    this._running = false;
+    this._rafId = null;
+
+    const vp = this.env.getViewport();
+    this.renderer = this.env.createRenderer();
+    this.renderer.setPixelRatio(Math.min(vp.pixelRatio, 2));
+    this.renderer.setSize(vp.width, vp.height);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -65,10 +93,10 @@ export class FarmScene {
     this.scene.background = new THREE.Color(0x8fd3ff);
     this.scene.fog = new THREE.Fog(0x8fd3ff, 55, 130);
 
-    this.camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 300);
+    this.camera = new THREE.PerspectiveCamera(42, vp.width / vp.height, 0.1, 300);
     this.camera.position.set(2, 24, 26);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = this.env.createControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 0.5, 0);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -100,11 +128,14 @@ export class FarmScene {
     this.buildPlotsBase();
     this.setupPicking();
 
-    addEventListener('resize', () => {
-      this.camera.aspect = innerWidth / innerHeight;
+    this._onResize = () => {
+      if (this._disposed || !this.renderer) return;
+      const size = this.env.getViewport();
+      this.camera.aspect = size.width / size.height;
       this.camera.updateProjectionMatrix();
-      this.renderer.setSize(innerWidth, innerHeight);
-    });
+      this.renderer.setSize(size.width, size.height);
+    };
+    this.env.addEventListener('resize', this._onResize);
   }
 
   // ---------------- 环境 ----------------
@@ -112,7 +143,7 @@ export class FarmScene {
     // 地面
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(160, 160),
-      new THREE.MeshLambertMaterial({ map: makeGrassTexture() })
+      new THREE.MeshLambertMaterial({ map: makeGrassTexture(this.env.createElement) })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -337,12 +368,14 @@ export class FarmScene {
   }
 
   signTexture(text) {
-    const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+    const c = this.env.createElement('canvas'); c.width = 128; c.height = 64;
     const ctx = c.getContext('2d');
-    ctx.fillStyle = '#bd9268'; ctx.fillRect(0, 0, 128, 64);
-    ctx.fillStyle = '#5d4023'; ctx.font = 'bold 34px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(text, 64, 34);
+    if (ctx) {
+      ctx.fillStyle = '#bd9268'; ctx.fillRect(0, 0, 128, 64);
+      ctx.fillStyle = '#5d4023'; ctx.font = 'bold 34px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, 64, 34);
+    }
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     return tex;
@@ -363,11 +396,15 @@ export class FarmScene {
     if (!info.unlocked) {
       if (info.lockText && u.signText !== info.lockText) {
         u.signText = info.lockText;
+        const prev = u.signBoard.material;
         u.signBoard.material = new THREE.MeshLambertMaterial({ map: this.signTexture(info.lockText) });
+        disposeExclusiveMaterial(prev, disposeOpts);
       }
       u.base.material = mat(0x9db98a);
       u.base.scale.y = 0.6;
-      u.furrows.visible = false; u.content.clear(); u.halo.visible = false;
+      u.furrows.visible = false;
+      clearAndDispose(u.content, disposeOpts);
+      u.halo.visible = false;
       return;
     }
     u.base.scale.y = 1;
@@ -379,7 +416,7 @@ export class FarmScene {
     u.furrows.visible = info.state !== PLOT.WASTELAND;
 
     // 内容重建
-    u.content.clear();
+    clearAndDispose(u.content, disposeOpts);
     u.halo.visible = false;
     if (info.state === PLOT.GROWING || info.state === PLOT.MATURE) {
       const crop = createCropModel(info.cropDef, {
@@ -393,8 +430,13 @@ export class FarmScene {
       else u.pestGroup = null;
       if (info.state === PLOT.MATURE) u.halo.visible = true;
     } else if (info.state === PLOT.WITHERED) {
-      const dead = createCropModel(info.cropDef, { stage: 2, totalStages: 3, mature: true, withered: true });
-      u.content.add(dead);
+      if (info.cropDef) {
+        const dead = createCropModel(info.cropDef, { stage: 2, totalStages: 3, mature: true, withered: true });
+        u.content.add(dead);
+      } else {
+        // 服务端清空 crop_id 的枯萎地块：无作物定义，渲染为通用枯萎残株，不伪造具体作物
+        u.content.add(createResidueModel());
+      }
     } else if (info.state === PLOT.RESIDUE) {
       u.content.add(createResidueModel());
     } else if (info.state === PLOT.WASTELAND) {
@@ -410,11 +452,11 @@ export class FarmScene {
   // ---------------- 狗 ----------------
   setDog(dogDef, hungry) {
     if (!dogDef) {
-      if (this.dogGroup) { this.scene.remove(this.dogGroup); this.dogGroup = null; }
+      this._disposeDog();
       return;
     }
     if (!this.dogGroup || this.dogGroup.userData.dogId !== dogDef.id) {
-      if (this.dogGroup) this.scene.remove(this.dogGroup);
+      this._disposeDog();
       this.dogGroup = createDogModel(dogDef.color);
       this.dogGroup.userData.dogId = dogDef.id;
       this.dogGroup.userData.angle = 0;
@@ -423,32 +465,44 @@ export class FarmScene {
     this.dogGroup.userData.hungry = hungry;
   }
 
+  _disposeDog() {
+    if (!this.dogGroup) return;
+    this.scene.remove(this.dogGroup);
+    disposeObject3D(this.dogGroup, disposeOpts);
+    this.dogGroup = null;
+  }
+
   // ---------------- 拾取 ----------------
   setupPicking() {
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
     this.clickCb = null; this.hoverCb = null;
     let downPos = null;
+    const el = this.renderer.domElement;
 
-    this.renderer.domElement.addEventListener('pointerdown', (e) => { downPos = [e.clientX, e.clientY]; });
-    this.renderer.domElement.addEventListener('pointerup', (e) => {
+    this._onPointerDown = (e) => { downPos = [e.clientX, e.clientY]; };
+    this._onPointerUp = (e) => {
       if (!downPos) return;
       const moved = Math.hypot(e.clientX - downPos[0], e.clientY - downPos[1]);
       downPos = null;
       if (moved > 6) return;  // 拖拽视角不触发点击
       const hit = this.pick(e);
       if (hit !== null && this.clickCb) this.clickCb(hit);
-    });
-    this.renderer.domElement.addEventListener('pointermove', (e) => {
+    };
+    this._onPointerMove = (e) => {
       const hit = this.pick(e);
       this.plotGroups.forEach(g => { g.userData.ring.visible = g.userData.base.userData.plotId === hit; });
-      this.renderer.domElement.style.cursor = hit !== null ? 'pointer' : 'grab';
+      el.style.cursor = hit !== null ? 'pointer' : 'grab';
       if (this.hoverCb) this.hoverCb(hit, e.clientX, e.clientY);
-    });
+    };
+    el.addEventListener('pointerdown', this._onPointerDown);
+    el.addEventListener('pointerup', this._onPointerUp);
+    el.addEventListener('pointermove', this._onPointerMove);
   }
 
   pick(e) {
-    this.pointer.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    const vp = this.env.getViewport();
+    this.pointer.set((e.clientX / vp.width) * 2 - 1, -(e.clientY / vp.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const bases = this.plotGroups.map(g => g.userData.base);
     const hits = this.raycaster.intersectObjects(bases, false);
@@ -498,9 +552,15 @@ export class FarmScene {
 
   // ---------------- 主循环 ----------------
   start() {
+    if (this._disposed || this._running) return;
+    this._running = true;
     const clock = new THREE.Clock();
     const loop = () => {
-      requestAnimationFrame(loop);
+      if (this._disposed || !this._running) {
+        this._rafId = null;
+        return;
+      }
+      this._rafId = this.env.requestAnimationFrame(loop);
       const dt = Math.min(clock.getDelta(), 0.05);
       const t = clock.elapsedTime;
 
@@ -570,6 +630,79 @@ export class FarmScene {
 
       this.renderer.render(this.scene, this.camera);
     };
-    loop();
+    this._rafId = this.env.requestAnimationFrame(loop);
+  }
+
+  /**
+   * 幂等释放：停 RAF、卸监听、释放 controls/renderer 与场景独占 GPU 资源。
+   * 不 dispose crops.mat() 共享材质。
+   */
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._running = false;
+    if (this._rafId != null) {
+      this.env.cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+
+    if (this._onResize) {
+      this.env.removeEventListener('resize', this._onResize);
+      this._onResize = null;
+    }
+    const el = this.renderer?.domElement;
+    if (el) {
+      if (this._onPointerDown) el.removeEventListener('pointerdown', this._onPointerDown);
+      if (this._onPointerUp) el.removeEventListener('pointerup', this._onPointerUp);
+      if (this._onPointerMove) el.removeEventListener('pointermove', this._onPointerMove);
+    }
+    this._onPointerDown = this._onPointerUp = this._onPointerMove = null;
+
+    if (this.controls) {
+      this.controls.dispose?.();
+      this.controls = null;
+    }
+
+    for (const p of this.particles) {
+      this.scene?.remove(p);
+      disposeObject3D(p, disposeOpts);
+    }
+    this.particles = [];
+    this._disposeDog();
+
+    if (this.scene) {
+      disposeObject3D(this.scene, disposeOpts);
+      while (this.scene.children.length) this.scene.remove(this.scene.children[0]);
+    }
+
+    if (this.renderer) {
+      if (this.container?.contains?.(this.renderer.domElement)) {
+        this.container.removeChild(this.renderer.domElement);
+      } else if (this.renderer.domElement?.parentNode === this.container) {
+        this.container.removeChild(this.renderer.domElement);
+      }
+      this.renderer.renderLists?.dispose?.();
+      this.renderer.dispose?.();
+      this.renderer = null;
+    }
+
+    this.plotGroups = [];
+    this.animated = [];
+    this.clouds = [];
+    this.butterflies = [];
+    this.stars = null;
+    this.dust = null;
+    this.blades = null;
+    this.houseWindow = null;
+    this.hoverRing = null;
+    this.scene = null;
+    this.camera = null;
+    this.hemi = null;
+    this.sun = null;
+    this.raycaster = null;
+    this.pointer = null;
+    this.clickCb = null;
+    this.hoverCb = null;
+    this.container = null;
   }
 }

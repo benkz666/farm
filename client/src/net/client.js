@@ -44,13 +44,39 @@ export const CMD_CLAIM_DAILY_LOGIN = 614
 export const WS_SUBPROTOCOL = 'farm.v1.json'
 export const CLIENT_CONFIG_VER = 1
 
+/** 默认请求超时（毫秒）。 */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000
+/** 重连初始退避（毫秒）。 */
+export const DEFAULT_RECONNECT_BASE_MS = 500
+/** 重连最大退避（毫秒）。 */
+export const DEFAULT_RECONNECT_MAX_MS = 30_000
+
+/** 停止自动重连的致命错误（鉴权 / 配置过期）。 */
+const FATAL_RECONNECT_ERRS = new Set([1007, 1101, 1102, 1105])
+/** 非好友，EnterFarm 好友农场时回退自己。 */
+const ERR_NOT_FRIEND = 1401
+
 /**
  * @typedef {{ uid: number, token: string, ws_url: string }} AuthResult
  * @typedef {{ cmd: number, client_seq: number, err: number, payload: object }} Envelope
+ * @typedef {{ resume_farm_uid: number, resume_farm_seq: number }} ResumeContext
+ * @typedef {{
+ *   WebSocket?: typeof WebSocket,
+ *   setTimeout?: typeof setTimeout,
+ *   clearTimeout?: typeof clearTimeout,
+ *   random?: () => number,
+ *   requestTimeoutMs?: number,
+ *   reconnectBaseMs?: number,
+ *   reconnectMaxMs?: number,
+ *   getResumeContext?: () => ResumeContext,
+ * }} NetClientOptions
  */
 
 export class NetClient {
-  constructor() {
+  /**
+   * @param {NetClientOptions} [options]
+   */
+  constructor(options = {}) {
     /** @type {string|null} */
     this.token = null
     /** @type {number|null} */
@@ -60,10 +86,42 @@ export class NetClient {
     /** @type {WebSocket|null} */
     this._ws = null
     this._clientSeq = 0
-    /** @type {Map<number, { resolve: (e: Envelope) => void, reject: (e: Error) => void, cmd: number }>} */
+    /** @type {Map<number, { resolve: (e: Envelope) => void, reject: (e: Error) => void, cmd: number, timer: ReturnType<typeof setTimeout>|null, settled: boolean }>} */
     this._pending = new Map()
     /** @type {Map<number, Set<(envelope: Envelope) => void>>} */
     this._pushHandlers = new Map()
+    /** @type {Set<(envelope: Envelope) => void>} */
+    this._farmRestoredHandlers = new Set()
+    /** @type {Set<(reason: Error|Envelope) => void>} */
+    this._farmRestoreFailedHandlers = new Set()
+
+    this._WebSocket = options.WebSocket ?? globalThis.WebSocket
+    this._setTimeout = options.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms))
+    this._clearTimeout = options.clearTimeout ?? ((id) => globalThis.clearTimeout(id))
+    this._random = options.random ?? Math.random.bind(Math)
+    this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    this.reconnectBaseMs = options.reconnectBaseMs ?? DEFAULT_RECONNECT_BASE_MS
+    this.reconnectMaxMs = options.reconnectMaxMs ?? DEFAULT_RECONNECT_MAX_MS
+    /** @type {() => ResumeContext} */
+    this.getResumeContext =
+      options.getResumeContext ??
+      (() => ({ resume_farm_uid: 0, resume_farm_seq: 0 }))
+
+    /** 显式 connect 成功后启用；主动 close 关闭。 */
+    this._autoReconnect = false
+    /** 曾成功 open 过：仅此后意外断线才自动重连（初次 connect 失败不重试）。 */
+    this._hadOpenConnection = false
+    this._connecting = false
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._reconnectTimer = null
+    this._reconnectAttempt = 0
+    /** 防止重入恢复流程。 */
+    this._restoring = false
+    this._restoreGeneration = 0
+    /** @type {WebSocket|null} 已调用 open、尚未赋值给 _ws 的连接中 socket */
+    this._openingWs = null
+    /** 致命恢复失败后的终止态；显式 connect 可清除。 */
+    this._fatalStopped = false
   }
 
   /**
@@ -86,6 +144,7 @@ export class NetClient {
 
   /**
    * 建立 WebSocket；需已持有 token。优先用登录返回的 ws_url。
+   * 初次连接失败不自动重试；成功 open 后意外断线才会退避重连。
    * @param {string} [wsUrl]
    * @returns {Promise<void>}
    */
@@ -94,57 +153,45 @@ export class NetClient {
     if (!this.token) {
       return Promise.reject(new Error('net: missing token; register/login first'))
     }
-    this.close()
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url, WS_SUBPROTOCOL)
-      let settled = false
-
-      ws.onopen = () => {
-        settled = true
-        this._ws = ws
-        resolve()
-      }
-      ws.onerror = () => {
-        if (!settled) {
-          settled = true
-          reject(new Error(`net: websocket error connecting to ${url}`))
-        }
-      }
-      ws.onclose = () => {
-        this._failAllPending(new Error('net: websocket closed'))
-        if (this._ws === ws) this._ws = null
-        if (!settled) {
-          settled = true
-          reject(new Error(`net: websocket closed before open (${url})`))
-        }
-      }
-      ws.onmessage = (event) => this._onMessage(event)
-    })
+    this._fatalStopped = false
+    this._autoReconnect = true
+    this._cancelReconnectTimer()
+    this._reconnectAttempt = 0
+    this._restoreGeneration++
+    this._restoring = false
+    this._connecting = false
+    this._detachSocket()
+    this._failAllPending(new Error('net: connection closed'))
+    return this._openSocket(url, { manual: true })
   }
 
+  /**
+   * 主动关闭：取消重连、拒绝在途请求。后续显式 connect 可重新启用自动重连。
+   */
   close() {
-    if (this._ws) {
-      this._ws.onopen = null
-      this._ws.onmessage = null
-      this._ws.onerror = null
-      this._ws.onclose = null
-      this._ws.close()
-      this._ws = null
-    }
+    this._autoReconnect = false
+    this._cancelReconnectTimer()
+    this._restoreGeneration++
+    this._restoring = false
+    this._connecting = false
+    this._detachSocket()
     this._failAllPending(new Error('net: connection closed'))
   }
 
   /**
-   * Handshake（cmd 100）。resume_* 可省略。
+   * Handshake（cmd 100）。自动附带 getResumeContext() 的 resume_*。
    * @returns {Promise<Envelope>}
    */
   handshake() {
     if (!this.token) {
       return Promise.reject(new Error('net: missing token'))
     }
+    const resume = this._resumeContext()
     return this.request(CMD_HANDSHAKE, {
       token: this.token,
       client_config_ver: CLIENT_CONFIG_VER,
+      resume_farm_uid: resume.resume_farm_uid,
+      resume_farm_seq: resume.resume_farm_seq,
     })
   }
 
@@ -321,6 +368,26 @@ export class NetClient {
   }
 
   /**
+   * 重连并完成 EnterFarm 权威恢复后通知（全量快照）。返回取消订阅函数。
+   * @param {(envelope: Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onFarmRestored(handler) {
+    this._farmRestoredHandlers.add(handler)
+    return () => this._farmRestoredHandlers.delete(handler)
+  }
+
+  /**
+   * 恢复失败且停止自动重连时通知（如鉴权失效）。返回取消订阅函数。
+   * @param {(reason: Error|Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onFarmRestoreFailed(handler) {
+    this._farmRestoreFailedHandlers.add(handler)
+    return () => this._farmRestoreFailedHandlers.delete(handler)
+  }
+
+  /**
    * 地块动作（Till/Clear/Plant/…）。返回完整 Envelope；err≠0 由调用方处理。
    * @param {number} cmd CMD_TILL 等
    * @param {number} plotIndex
@@ -357,25 +424,51 @@ export class NetClient {
   }
 
   /**
-   * 发送 Envelope，按 client_seq 匹配应答。
+   * 发送 Envelope，按 client_seq 匹配应答。默认超时；超时/关闭时清 timer，不二次 reject。
    * @param {number} cmd
    * @param {object} payload
    * @returns {Promise<Envelope>}
    */
   request(cmd, payload = {}) {
-    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) {
+    if (!this._ws || this._ws.readyState !== this._WebSocket.OPEN) {
       return Promise.reject(new Error('net: websocket not open'))
     }
     const client_seq = ++this._clientSeq
     /** @type {Envelope} */
     const envelope = { cmd, client_seq, err: 0, payload }
+    const ws = this._ws
     return new Promise((resolve, reject) => {
-      this._pending.set(client_seq, { resolve, reject, cmd })
+      /** @type {{ resolve: (e: Envelope) => void, reject: (e: Error) => void, cmd: number, timer: ReturnType<typeof setTimeout>|null, settled: boolean }} */
+      const entry = {
+        cmd,
+        timer: null,
+        settled: false,
+        resolve: (env) => {
+          if (entry.settled) return
+          entry.settled = true
+          if (entry.timer != null) this._clearTimeout(entry.timer)
+          entry.timer = null
+          resolve(env)
+        },
+        reject: (err) => {
+          if (entry.settled) return
+          entry.settled = true
+          if (entry.timer != null) this._clearTimeout(entry.timer)
+          entry.timer = null
+          reject(err)
+        },
+      }
+      entry.timer = this._setTimeout(() => {
+        if (entry.settled) return
+        this._pending.delete(client_seq)
+        entry.reject(new Error(`net: request timeout cmd=${cmd} seq=${client_seq}`))
+      }, this.requestTimeoutMs)
+      this._pending.set(client_seq, entry)
       try {
-        this._ws.send(JSON.stringify(envelope))
+        ws.send(JSON.stringify(envelope))
       } catch (err) {
         this._pending.delete(client_seq)
-        reject(err instanceof Error ? err : new Error(String(err)))
+        entry.reject(err instanceof Error ? err : new Error(String(err)))
       }
     })
   }
@@ -408,8 +501,262 @@ export class NetClient {
     return { uid: body.uid, token: body.token, ws_url: body.ws_url }
   }
 
-  /** @param {MessageEvent} event */
-  _onMessage(event) {
+  /**
+   * @param {string} url
+   * @param {{ manual?: boolean, afterReconnect?: boolean }} [opts]
+   * @returns {Promise<void>}
+   */
+  _openSocket(url, opts = {}) {
+    if (this._connecting) {
+      return Promise.reject(new Error('net: connection already in progress'))
+    }
+    this._connecting = true
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let ws
+      try {
+        ws = new this._WebSocket(url, WS_SUBPROTOCOL)
+      } catch (err) {
+        this._connecting = false
+        reject(err instanceof Error ? err : new Error(String(err)))
+        return
+      }
+      this._openingWs = ws
+
+      ws.onopen = () => {
+        if (settled) return
+        if (this._openingWs !== ws && this._ws !== ws) return
+        settled = true
+        this._connecting = false
+        this._openingWs = null
+        this._ws = ws
+        this._hadOpenConnection = true
+        resolve()
+        if (opts.afterReconnect) {
+          void this._restoreAfterReconnect()
+        }
+      }
+      ws.onerror = () => {
+        if (settled) return
+        // 等 onclose 统一处理，避免与 close 双 settle
+      }
+      ws.onclose = () => {
+        if (this._openingWs === ws) this._openingWs = null
+        this._handleSocketClose(ws, {
+          beforeOpen: !settled,
+          settleConnect: (err) => {
+            if (settled) return
+            settled = true
+            this._connecting = false
+            reject(err)
+          },
+        })
+      }
+      ws.onmessage = (event) => this._onMessage(ws, event)
+    })
+  }
+
+  /**
+   * @param {WebSocket} ws
+   * @param {{ beforeOpen: boolean, settleConnect?: (err: Error) => void }} ctx
+   */
+  _handleSocketClose(ws, ctx) {
+    if (this._ws === ws) this._ws = null
+    this._failAllPending(new Error('net: websocket closed'))
+
+    if (ctx.beforeOpen) {
+      ctx.settleConnect?.(new Error(`net: websocket closed before open`))
+      // 初次 / 手动 connect 未 open 成功：不自动重试
+      // 重连尝试未 open：继续退避
+      if (!ctx.settleConnect && this._autoReconnect && this.token && this._hadOpenConnection) {
+        this._scheduleReconnect()
+      }
+      return
+    }
+
+    if (this._autoReconnect && this.token && this._hadOpenConnection) {
+      this._scheduleReconnect()
+    }
+  }
+
+  _scheduleReconnect() {
+    if (!this._autoReconnect || !this.token) return
+    if (this._reconnectTimer != null) return
+    if (this._connecting) return
+    if (this._ws) return
+
+    const exp = Math.min(
+      this.reconnectMaxMs,
+      this.reconnectBaseMs * 2 ** this._reconnectAttempt,
+    )
+    this._reconnectAttempt += 1
+    const delay = Math.max(0, exp * (0.5 + this._random() * 0.5))
+    this._reconnectTimer = this._setTimeout(() => {
+      this._reconnectTimer = null
+      void this._reconnectNow()
+    }, delay)
+  }
+
+  async _reconnectNow() {
+    if (!this._autoReconnect || !this.token) return
+    if (this._connecting || this._ws) return
+    const url = this.wsUrl || defaultWsUrl()
+    try {
+      await this._openSocket(url, { afterReconnect: true })
+    } catch {
+      if (this._autoReconnect && this.token && this._hadOpenConnection) {
+        this._scheduleReconnect()
+      }
+    }
+  }
+
+  async _restoreAfterReconnect() {
+    if (!this._autoReconnect || !this.token) return
+    if (this._restoring) return
+    this._restoring = true
+    const gen = ++this._restoreGeneration
+    try {
+      const resume = this._resumeContext()
+      const hs = await this.handshake()
+      if (gen !== this._restoreGeneration) return
+      if (hs.err !== 0) {
+        if (FATAL_RECONNECT_ERRS.has(hs.err)) {
+          this._stopReconnectWithFailure(hs)
+        } else if (this._autoReconnect) {
+          this._detachSocket()
+          this._scheduleReconnect()
+        }
+        return
+      }
+
+      let enter = await this.enterFarm(resume.resume_farm_uid || 0)
+      if (gen !== this._restoreGeneration) return
+      if (
+        enter.err === ERR_NOT_FRIEND &&
+        resume.resume_farm_uid &&
+        resume.resume_farm_uid !== 0
+      ) {
+        enter = await this.enterFarm(0)
+        if (gen !== this._restoreGeneration) return
+      }
+
+      if (enter.err !== 0) {
+        if (FATAL_RECONNECT_ERRS.has(enter.err)) {
+          this._stopReconnectWithFailure(enter)
+        } else if (this._autoReconnect) {
+          this._detachSocket()
+          this._scheduleReconnect()
+        } else {
+          this._emitFarmRestoreFailed(enter)
+        }
+        return
+      }
+
+      this._reconnectAttempt = 0
+      for (const handler of this._farmRestoredHandlers) {
+        try {
+          handler(enter)
+        } catch {
+          // 恢复回调失败不阻断其它订阅者
+        }
+      }
+    } catch (err) {
+      if (gen !== this._restoreGeneration) return
+      // 在途请求已因断线 reject；若仍连着则继续退避
+      if (this._autoReconnect && this.token && this._hadOpenConnection) {
+        if (!this._ws) this._scheduleReconnect()
+        else {
+          this._detachSocket()
+          this._scheduleReconnect()
+        }
+      } else {
+        this._emitFarmRestoreFailed(err instanceof Error ? err : new Error(String(err)))
+      }
+    } finally {
+      if (gen === this._restoreGeneration) this._restoring = false
+    }
+  }
+
+  /**
+   * 致命恢复失败：进入真正终止态（停重连、清 pending/timer、关 socket），failure 只通知一次。
+   * @param {Envelope|Error} reason
+   */
+  _stopReconnectWithFailure(reason) {
+    if (this._fatalStopped) return
+    this._fatalStopped = true
+    this._autoReconnect = false
+    this._cancelReconnectTimer()
+    this._restoreGeneration++
+    this._restoring = false
+    this._connecting = false
+    this._failAllPending(new Error('net: reconnect aborted'))
+    this._detachSocket()
+    this._emitFarmRestoreFailed(reason)
+  }
+
+  /** @param {Envelope|Error} reason */
+  _emitFarmRestoreFailed(reason) {
+    for (const handler of this._farmRestoreFailedHandlers) {
+      try {
+        handler(reason)
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  _cancelReconnectTimer() {
+    if (this._reconnectTimer != null) {
+      this._clearTimeout(this._reconnectTimer)
+      this._reconnectTimer = null
+    }
+  }
+
+  /** 卸下当前 socket（含连接中），旧事件不再进入本客户端。 */
+  _detachSocket() {
+    const sockets = [this._ws, this._openingWs]
+    this._ws = null
+    this._openingWs = null
+    for (const ws of sockets) {
+      if (!ws) continue
+      ws.onopen = null
+      ws.onmessage = null
+      ws.onerror = null
+      ws.onclose = null
+      try {
+        if (
+          ws.readyState === this._WebSocket.CONNECTING ||
+          ws.readyState === this._WebSocket.OPEN
+        ) {
+          ws.close()
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** @returns {ResumeContext} */
+  _resumeContext() {
+    try {
+      const ctx = this.getResumeContext?.() || {}
+      return {
+        resume_farm_uid: Number(ctx.resume_farm_uid) || 0,
+        resume_farm_seq: Number(ctx.resume_farm_seq) || 0,
+      }
+    } catch {
+      return { resume_farm_uid: 0, resume_farm_seq: 0 }
+    }
+  }
+
+  /**
+   * @param {WebSocket|MessageEvent} wsOrEvent
+   * @param {MessageEvent} [maybeEvent]
+   */
+  _onMessage(wsOrEvent, maybeEvent) {
+    const event = maybeEvent === undefined ? wsOrEvent : maybeEvent
+    const ws = maybeEvent === undefined ? this._ws : wsOrEvent
+    if (ws != null && this._ws != null && this._ws !== ws) return
     let envelope
     try {
       envelope = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data))
@@ -432,10 +779,11 @@ export class NetClient {
 
   /** @param {Error} err */
   _failAllPending(err) {
-    for (const [, pending] of this._pending) {
+    const entries = [...this._pending.values()]
+    this._pending.clear()
+    for (const pending of entries) {
       pending.reject(err)
     }
-    this._pending.clear()
   }
 }
 

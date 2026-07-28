@@ -7,7 +7,7 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
-	"farm/server/internal/gameconf"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
 )
@@ -151,8 +151,14 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			g.writeStealHint(connection.uid, stealable)
 		}
 		if result.Err == pkgerr.OK {
+			// 同 farmrpc：动作已提交且 Delta 已广播，任务计数失败不能反过来把成功
+			// 报成失败，否则客户端会回滚一次真实发生的变更。
 			if err := g.advanceGameplayTask(connection.uid, kind); err != nil {
-				response.Err = pkgerr.Internal
+				obs.L().Error("gateway advance task failed",
+					"component", "gateway",
+					"op", "advance_task",
+					"err", err.Error(),
+				)
 			}
 		}
 		return response
@@ -212,6 +218,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				})
 			}
 			if result.Err == pkgerr.OK {
+				// 买卖直接改动金币与背包，属于架构 5.3 节的 A 档：必须落盘成功才算
+				// 成功，不能留在 30 秒写回窗口里等着被一次强杀抹掉。
+				farmActor.RequireFlush()
 				response.Payload = marshalPayload(actionResponse{
 					FarmSeq: farmActor.Aggregate.FarmSeq,
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -265,25 +274,11 @@ func (g *Gateway) advanceTask(uid uint64, taskID uint32) error {
 	if g.taskMail == nil {
 		return nil
 	}
-	logicDay := g.Now() / gameconf.LogicDayMs(gameconf.TimeProfileDemo)
-	return g.taskMail.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
+	return g.taskMail.AdvanceTask(context.Background(), uid, int64(g.logicDayID()), taskID, 1)
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {
-	snapshot := farm.PlotSnapshotOf(index, plot)
-	return farm.PlotChange{
-		Index:          snapshot.Index,
-		State:          snapshot.State,
-		CropID:         snapshot.CropID,
-		SeasonIndex:    snapshot.SeasonIndex,
-		SeasonTotal:    snapshot.SeasonTotal,
-		MatureAt:       snapshot.MatureAt,
-		SeasonDuration: snapshot.SeasonDuration,
-		FinalYield:     snapshot.FinalYield,
-		LastWaterAt:    snapshot.LastWaterAt,
-		WeedSince:      snapshot.WeedSince,
-		PestSince:      snapshot.PestSince,
-	}
+	return farm.PlotChangeOf(index, plot)
 }
 
 func plotActionKind(cmd uint32) (farm.PlotActionKind, bool) {

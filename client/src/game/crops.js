@@ -4,15 +4,26 @@
 import * as THREE from 'three';
 
 const matCache = new Map();
+
+/** mat() 缓存材质标记：dispose 时必须跳过，避免污染其他场景/模型 */
+const SHARED_MAT_FLAG = 'farmSharedMat';
+
 export function mat(color, emissive = 0) {
   const key = color + '|' + emissive;
   if (!matCache.has(key)) {
-    matCache.set(key, new THREE.MeshStandardMaterial({
+    const m = new THREE.MeshStandardMaterial({
       color, flatShading: true, roughness: 0.85, metalness: 0,
       emissive, emissiveIntensity: emissive ? 0.5 : 0,
-    }));
+    });
+    m.userData[SHARED_MAT_FLAG] = true;
+    matCache.set(key, m);
   }
   return matCache.get(key);
+}
+
+/** 是否为 mat() 返回的共享材质（不可 dispose） */
+export function isSharedMaterial(m) {
+  return !!(m && m.userData && m.userData[SHARED_MAT_FLAG]);
 }
 
 function sphere(r, color, w = 6, h = 5) {

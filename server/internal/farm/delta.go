@@ -1,6 +1,7 @@
 package farm
 
-const DeltaRingCapacity = 64
+// DeltaRingCapacity 对应 protocol.md 2.3 节的容量选择：每个农场 Actor 保留最近 200 条 delta。
+const DeltaRingCapacity = 200
 
 // PlotChange 是 FarmDelta 中单个地块的可见状态。
 // 字段与 PlotSnapshot 保持一致，方便客户端复用地块投影逻辑。
@@ -16,6 +17,9 @@ type PlotChange struct {
 	LastWaterAt    int64  `json:"last_water_at"`
 	WeedSince      int64  `json:"weed_since"`
 	PestSince      int64  `json:"pest_since"`
+	Health         uint8  `json:"health"`
+	StolenCount    uint16 `json:"stolen_count"`
+	FertMask       uint8  `json:"fert_mask"`
 }
 
 // FarmDelta 是一次农场可见状态变化的增量同步单元。

@@ -203,23 +203,13 @@ for i in $(seq 1 60); do
   [[ "$i" -eq 60 ]] && die "MySQL 未就绪"
 done
 
+# 按文件名顺序执行全部迁移，新增迁移不必再改这里。每个迁移都必须可重复执行，
+# 因为每次启动都会把它们重跑一遍。
 info "执行数据库迁移"
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/001_init.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/002_items.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/003_friendship.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/004_pet.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/005_task_mail.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/006_account_uid_auto_increment.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/007_farm_plot_blob.sql
-docker compose -f deploy/compose.yml exec -T mysql \
-  mysql -ufarm -pfarm farm < server/migrations/008_mail_schema_align.sql
+for migration in server/migrations/*.sql; do
+  docker compose -f deploy/compose.yml exec -T mysql \
+    mysql -ufarm -pfarm farm < "$migration" || die "迁移失败：$migration"
+done
 
 if [[ "$MODE" == "shards" ]]; then
   info "启动双分片：farm-0/:${FARM0_PORT} farm-1/:${FARM1_PORT} gateway-0/:${GW0_PORT} gateway-1/:${GW1_PORT}"

@@ -34,28 +34,35 @@ func (a *Aggregate) ReserveMaintenance(dayID uint32) bool {
 
 // RollbackMaintenance returns a previously reserved rewardable slot after the
 // owner rejects or times out a cross-farm action.
+//
+// 逻辑日已经翻页时直接放弃归还：那个计数器连同它所属的一天已经不存在了。
+// 这里绝不能调 syncDaily——用昨天的 dayID 去同步会把今天已经攒下的计数清零，
+// 等于送出一整轮 150 次额度。
 func (a *Aggregate) RollbackMaintenance(dayID uint32, reserved bool) {
-	if a == nil || !reserved {
+	if a == nil || !reserved || a.Daily.DayID != dayID {
 		return
 	}
-	a.syncDaily(dayID)
 	if a.Daily.MaintainCnt > 0 {
 		a.Daily.MaintainCnt--
 	}
 }
 
-// SettleMaintenance grants a reward after the owner has committed the action.
-// Weed and Pest mutual aid also award five coins while sharing the same cap.
-func (a *Aggregate) SettleMaintenance(dayID uint32, reserved bool, kind PlotActionKind) {
+// SettleMaintenance grants a reward after the owner has committed the action and
+// reports what was granted, so the protocol layer never restates the numbers.
+//
+// 不看 dayID：额度在预占时就已经扣掉，奖励是那次预占的既得对价，跨日结算也照发。
+func (a *Aggregate) SettleMaintenance(reserved bool, kind PlotActionKind) (exp uint32, coin int64) {
 	if a == nil || !reserved {
-		return
+		return 0, 0
 	}
-	a.syncDaily(dayID)
-	a.Exp += maintenanceExpReward
+	exp = maintenanceExpReward
 	if kind == Weed || kind == Pest {
-		a.Coin += maintenanceCoinReward
+		coin = maintenanceCoinReward
 	}
+	a.Exp += exp
+	a.Coin += coin
 	a.RecalcLevel()
+	return exp, coin
 }
 
 func (a *Aggregate) syncDaily(dayID uint32) {

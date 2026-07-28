@@ -19,11 +19,12 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/bus"
 	"farm/server/internal/connreg"
-	"farm/server/internal/cross"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/routing"
 	"farm/server/internal/store"
+	"farm/server/internal/wireenv"
 )
 
 // Authenticator is the authentication boundary used by HTTP handlers.
@@ -56,7 +57,7 @@ type Gateway struct {
 	pushToken         []byte
 	allowDebug        bool
 	crossBus          bus.EventBus
-	crossVisitor      *cross.Visitor
+	crossEnabled      bool
 	crossPending      sync.Map
 	nextCrossReqID    atomic.Uint64
 	crossSubscribeErr error
@@ -65,6 +66,7 @@ type Gateway struct {
 	debugFarmURLs     map[string]string
 	debugGatewayURLs  map[string]string
 	debugFarmToken    string
+	metrics           *obs.Metrics
 }
 
 // Option configures optional Gateway boundaries.
@@ -145,6 +147,16 @@ func WithInternalPushToken(token string) Option {
 	}
 }
 
+// WithMetrics attaches Prometheus collectors for WS and FarmDelta instrumentation.
+func WithMetrics(m *obs.Metrics) Option {
+	return func(gateway *Gateway) {
+		gateway.metrics = m
+		if gateway.rooms != nil {
+			gateway.rooms.metrics = m
+		}
+	}
+}
+
 // New constructs the transport gateway from its application boundaries.
 func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, options ...Option) *Gateway {
 	gateway := &Gateway{
@@ -159,6 +171,9 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, o
 			option(gateway)
 		}
 	}
+	// Random non-sequential start so a restarted Gateway with the same
+	// gatewayID cannot reuse conn_id=1 against leftover connreg leases.
+	gateway.nextConnID.Store(connectionIDSeed())
 	gateway.nextCrossReqID.Store(crossRequestSeed())
 	gateway.startCrossResultConsumer()
 	return gateway
@@ -172,6 +187,28 @@ func crossRequestSeed() uint64 {
 	// crypto/rand failures are exceptional. A time-based fallback preserves
 	// availability; the per-Gateway sequence still prevents local collisions.
 	return uint64(time.Now().UnixNano())
+}
+
+// connectionIDSeed returns a crypto-random 64-bit counter base. The first
+// allocateConnID call yields seed+1 (skipping 0 on wrap), so process restarts
+// do not collide with low IDs left in Redis by a crashed peer process.
+func connectionIDSeed() uint64 {
+	var seed [8]byte
+	if _, err := cryptorand.Read(seed[:]); err == nil {
+		return binary.LittleEndian.Uint64(seed[:])
+	}
+	return uint64(time.Now().UnixNano())
+}
+
+// allocateConnID returns the next local connection identity. Public protocol
+// conn_id remains uint64; 0 is reserved/invalid and is never issued.
+func allocateConnID(counter *atomic.Uint64) uint64 {
+	for {
+		id := counter.Add(1)
+		if id != 0 {
+			return id
+		}
+	}
 }
 
 // EnableDebugTime 打开 /api/debug/advance（仅非生产冒烟；由 FARM_ALLOW_DEBUG_TIME 门控）。
@@ -201,6 +238,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/i/", g.inviteLanding)
 	mux.HandleFunc("/ws", g.serveWS)
 	mux.HandleFunc("/internal/v1/push/farm-delta", g.receiveFarmDelta)
+	mux.HandleFunc("/internal/v1/push/farm-delta-batch", g.receiveFarmDeltaBatch)
 	mux.HandleFunc("/internal/v1/push/player-delta", g.receivePlayerDelta)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
@@ -259,6 +297,42 @@ func (g *Gateway) unregisterConnection(ctx context.Context, connection *wsConnec
 	}
 }
 
+// renewConnectionLease best-effort extends lifecycle and current room leases.
+// Failures are logged only: the already-handled WS command must not flip to error.
+func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnection) {
+	if g == nil || g.connRegistry == nil || connection == nil || !connection.authed || connection.uid == 0 || connection.id == 0 {
+		return
+	}
+	if g.gatewayID == "" {
+		return
+	}
+	if err := g.connRegistry.Register(ctx, connection.uid, connection.id, g.gatewayID); err != nil {
+		obs.L().Error("gateway connreg renew lifecycle failed",
+			"component", "gateway",
+			"op", "connreg_renew_lifecycle",
+			"uid", connection.uid,
+			"conn_id", connection.id,
+			"err", err.Error(),
+		)
+	}
+	connection.roomMu.Lock()
+	roomUID := connection.roomUID
+	connection.roomMu.Unlock()
+	if roomUID == 0 {
+		return
+	}
+	if err := g.connRegistry.Subscribe(ctx, roomUID, connection.id, g.gatewayID); err != nil {
+		obs.L().Error("gateway connreg renew room failed",
+			"component", "gateway",
+			"op", "connreg_renew_room",
+			"uid", connection.uid,
+			"owner_uid", roomUID,
+			"conn_id", connection.id,
+			"err", err.Error(),
+		)
+	}
+}
+
 func (g *Gateway) receiveFarmDelta(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -279,7 +353,63 @@ func (g *Gateway) receiveFarmDelta(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	connection.(*wsConnection).pushFarmDelta(request.Delta.OwnerUID, request.Delta)
+	wsConn := connection.(*wsConnection)
+	if !wsConn.subscribedTo(request.Delta.OwnerUID) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	encoded, err := wireenv.EncodeFarmDelta(request.Delta)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	wsConn.pushFarmDelta(request.Delta.OwnerUID, request.Delta, encoded)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) receiveFarmDeltaBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !g.authorizedPush(r.Header.Get("Authorization")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var request farmrpc.PushBatch
+	if err := decodeJSON(io.LimitReader(r.Body, 1<<20), &request); err != nil ||
+		len(request.ConnIDs) == 0 || len(request.Envelope) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Strict validation before any fan-out: malformed pre-encoded frames must
+	// never be written to clients.
+	delta, err := wireenv.DecodeFarmDelta(request.Envelope)
+	if err != nil || delta.OwnerUID == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	// Invalid / stale conn_ids are skipped; they must not fail the whole batch.
+	// Duplicate conn_ids are ignored so one connection is not written twice.
+	seen := make(map[uint64]struct{}, len(request.ConnIDs))
+	for _, connID := range request.ConnIDs {
+		if connID == 0 {
+			continue
+		}
+		if _, dup := seen[connID]; dup {
+			continue
+		}
+		seen[connID] = struct{}{}
+		connection, ok := g.connections.Load(connID)
+		if !ok {
+			continue
+		}
+		wsConn := connection.(*wsConnection)
+		if !wsConn.subscribedTo(delta.OwnerUID) {
+			continue
+		}
+		wsConn.pushFarmDelta(delta.OwnerUID, delta, request.Envelope)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

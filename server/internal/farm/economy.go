@@ -53,6 +53,10 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 	}
 	crop, ok := gameconf.CropByID(req.ItemID)
 	if ok {
+		// 隐藏作物不进商店（种子价 0 / Hidden）；避免免费购入。
+		if crop.Hidden || crop.SeedPrice == 0 {
+			return ActionResult{Err: pkgerr.ItemNotFound}
+		}
 		if a.Level < uint16(crop.UnlockLevel) {
 			return ActionResult{Err: pkgerr.CropLocked}
 		}

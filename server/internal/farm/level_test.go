@@ -36,6 +36,7 @@ func TestRecalcLevelMatchesClientRule(t *testing.T) {
 func TestAppleUnlockViaAccumulatedExp(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Coin = 10_000
+	const appleID uint16 = 4 // 历史持久化 numeric ID：苹果
 
 	// 经验不足时苹果锁定
 	agg.Exp = 1999
@@ -43,7 +44,7 @@ func TestAppleUnlockViaAccumulatedExp(t *testing.T) {
 	if agg.Level != 9 {
 		t.Fatalf("Level=%d, want 9", agg.Level)
 	}
-	locked := agg.Buy(BuyReq{ItemID: 4, Quantity: 1})
+	locked := agg.Buy(BuyReq{ItemID: appleID, Quantity: 1})
 	if locked.Err != pkgerr.CropLocked {
 		t.Fatalf("Buy apple at Lv9 Err=%d, want CropLocked", locked.Err)
 	}
@@ -61,15 +62,15 @@ func TestAppleUnlockViaAccumulatedExp(t *testing.T) {
 		t.Fatalf("Level=%d, want 10 after till", agg.Level)
 	}
 
-	bought := agg.Buy(BuyReq{ItemID: 4, Quantity: 1})
+	bought := agg.Buy(BuyReq{ItemID: appleID, Quantity: 1})
 	if bought.Err != pkgerr.OK {
 		t.Fatalf("Buy apple at Lv10 Err=%d, want OK", bought.Err)
 	}
-	if got := agg.Items[SeedItem(4)]; got != 1 {
+	if got := agg.Items[SeedItem(appleID)]; got != 1 {
 		t.Fatalf("apple seed count=%d, want 1", got)
 	}
 
-	plant := agg.ApplyPlotAction(PlotAction{Kind: Plant, PlotIndex: 0, Arg: 4}, actionNow)
+	plant := agg.ApplyPlotAction(PlotAction{Kind: Plant, PlotIndex: 0, Arg: appleID}, actionNow)
 	if plant.Err != pkgerr.OK {
 		t.Fatalf("Plant apple Err=%d, want OK", plant.Err)
 	}

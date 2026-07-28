@@ -13,6 +13,9 @@ type PlotSnapshot struct {
 	LastWaterAt    int64  `json:"last_water_at"`
 	WeedSince      int64  `json:"weed_since"`
 	PestSince      int64  `json:"pest_since"`
+	Health         uint8  `json:"health"`
+	StolenCount    uint16 `json:"stolen_count"`
+	FertMask       uint8  `json:"fert_mask"`
 }
 
 // FarmSnapshotJSON 是 EnterFarm 返回的全量农场快照。
@@ -64,6 +67,9 @@ func PlotSnapshotOf(index uint8, p Plot) PlotSnapshot {
 		LastWaterAt:    p.LastWaterAt,
 		WeedSince:      p.WeedSince,
 		PestSince:      p.PestSince,
+		Health:         PlotHealth(p),
+		StolenCount:    p.StolenCount,
+		FertMask:       p.FertMask,
 	}
 }
 

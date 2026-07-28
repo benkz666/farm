@@ -62,6 +62,20 @@ func TestBuyCropLocked(t *testing.T) {
 	}
 }
 
+func TestBuyHiddenCropRejected(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Level = 20
+	agg.Coin = 100_000
+	// 人参 ID=27：隐藏作物不可商店购买
+	result := agg.Buy(BuyReq{ItemID: 27, Quantity: 1})
+	if result.Err != pkgerr.ItemNotFound {
+		t.Fatalf("Buy hidden Err=%d, want ItemNotFound", result.Err)
+	}
+	if _, ok := agg.Items[SeedItem(27)]; ok {
+		t.Fatalf("hidden seed should not be granted")
+	}
+}
+
 func TestSellFruitAddsCoin(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Items[FruitItem(1)] = 2
