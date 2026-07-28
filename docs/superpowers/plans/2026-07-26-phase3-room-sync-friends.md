@@ -1,6 +1,6 @@
 # Phase 3 Room Sync & Friends Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 落地好友（链接+uid）、仅好友可拜访只读、FarmDelta/SyncFarm 房间同步，以及全屏登录页并删除本地权威。
 
@@ -59,9 +59,9 @@ client/src/components/FriendsPanel.vue       # 可选拆分
 **Interfaces:**
 - Produces: `AlreadyFriend=1402` … `InviteExpired=1407`；DDL `friendship(uid_lo, uid_hi, created_at)`
 
-- [ ] **Step 1:** 检出 `feat/phase3-room-friends`（基于当前期 2 HEAD）
+- [x] **Step 1:** 检出 `feat/phase3-room-friends`（基于当前期 2 HEAD）
 
-- [ ] **Step 2:** 红测 — 断言 `pkgerr.AlreadyFriend == 1402` 等
+- [x] **Step 2:** 红测 — 断言 `pkgerr.AlreadyFriend == 1402` 等
 
 ```bash
 cd server && go test ./internal/pkgerr/ -run Friend -v
@@ -69,9 +69,9 @@ cd server && go test ./internal/pkgerr/ -run Friend -v
 
 Expected: FAIL（常量不存在）
 
-- [ ] **Step 3:** 实现常量 + `003_friendship.sql`；`make migrate` 追加执行 003
+- [x] **Step 3:** 实现常量 + `003_friendship.sql`；`make migrate` 追加执行 003
 
-- [ ] **Step 4:** Commit `feat: 添加好友错误码与 friendship 表`
+- [x] **Step 4:** Commit `feat: 添加好友错误码与 friendship 表`
 
 ---
 
@@ -84,11 +84,11 @@ Expected: FAIL（常量不存在）
 - Produces: `IssueInvite(inviterUID uint64, now int64, secret []byte) (token string, err error)`；`ParseInvite(token string, secret []byte, now int64) (inviterUID uint64, err pkgerr.Code)`
 - Consumes: 密钥字节；`exp = now + 7*24*HourMs`（真实毫秒墙钟即可）
 
-- [ ] **Step 1:** 红测 — 签发后解析得同一 uid；篡改 sig → `InviteInvalid`；过期 → `InviteExpired`
+- [x] **Step 1:** 红测 — 签发后解析得同一 uid；篡改 sig → `InviteInvalid`；过期 → `InviteExpired`
 
-- [ ] **Step 2:** 实现 base64url JSON payload + HMAC-SHA256 截断 16 字节
+- [x] **Step 2:** 实现 base64url JSON payload + HMAC-SHA256 截断 16 字节
 
-- [ ] **Step 3:** 测试绿；Commit `feat: 实现好友分享链接 HMAC 凭证`
+- [x] **Step 3:** 测试绿；Commit `feat: 实现好友分享链接 HMAC 凭证`
 
 ---
 
@@ -109,11 +109,11 @@ CountFriends(ctx, uid uint64) (int, error)
 ```
 - FriendLimit：`gameconf.FriendLimit = 200`
 
-- [ ] **Step 1:** 红测 — Add A-B 成功；再 Add → AlreadyFriend；Add self → 调用方校验；满员（测时把 Limit 设 1）
+- [x] **Step 1:** 红测 — Add A-B 成功；再 Add → AlreadyFriend；Add self → 调用方校验；满员（测时把 Limit 设 1）
 
-- [ ] **Step 2:** 实现 `uid_lo/uid_hi` INSERT；List join `player.nickname`
+- [x] **Step 2:** 实现 `uid_lo/uid_hi` INSERT；List join `player.nickname`
 
-- [ ] **Step 3:** Commit `feat: 实现好友关系存储`
+- [x] **Step 3:** Commit `feat: 实现好友关系存储`
 
 ---
 
@@ -131,11 +131,11 @@ CountFriends(ctx, uid uint64) (int, error)
 - GenShareLink Rsp: `{ "path": "/i/..." }`
 - FriendList Rsp: `{ "friends": [ { "uid", "nickname" } ] }`
 
-- [ ] **Step 1:** 红测 — 非好友无关；Accept 自己 → 1403；重复 → 1402
+- [x] **Step 1:** 红测 — 非好友无关；Accept 自己 → 1403；重复 → 1402
 
-- [ ] **Step 2:** 接线 Store + social.ParseInvite；密钥 `FARM_INVITE_SECRET` 或回落 `FARM_TOKEN_SECRET`
+- [x] **Step 2:** 接线 Store + social.ParseInvite；密钥 `FARM_INVITE_SECRET` 或回落 `FARM_TOKEN_SECRET`
 
-- [ ] **Step 3:** Commit `feat: 网关接入好友命令与邀请落地页`
+- [x] **Step 3:** Commit `feat: 网关接入好友命令与邀请落地页`
 
 ---
 
@@ -144,9 +144,9 @@ CountFriends(ctx, uid uint64) (int, error)
 **Files:**
 - Modify: `server/cmd/smoke/main.go`
 
-- [ ] **Step 1:** 注册用户 A、B；A GenShareLink；B AcceptInvite；A FriendList 含 B；B AddFriendByUID(A) → 1402
+- [x] **Step 1:** 注册用户 A、B；A GenShareLink；B AcceptInvite；A FriendList 含 B；B AddFriendByUID(A) → 1402
 
-- [ ] **Step 2:** `make smoke` 绿（或 `FARM_SMOKE_MODE=friends` 子命令）；Commit `feat: 扩展 smoke 覆盖加好友`
+- [x] **Step 2:** `make smoke` 绿（或 `FARM_SMOKE_MODE=friends` 子命令）；Commit `feat: 扩展 smoke 覆盖加好友`
 
 ---
 
@@ -172,11 +172,11 @@ type FarmDelta struct {
 type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 ```
 
-- [ ] **Step 1:** 红测 — Append 1..65；Since(1) 在溢出后 ok=false
+- [x] **Step 1:** 红测 — Append 1..65；Since(1) 在溢出后 ok=false
 
-- [ ] **Step 2:** 实现 ring；RoomHub Subscribe/Unsubscribe/Broadcast
+- [x] **Step 2:** 实现 ring；RoomHub Subscribe/Unsubscribe/Broadcast
 
-- [ ] **Step 3:** Commit `feat: 实现 FarmDelta 环形缓冲与房间订阅`
+- [x] **Step 3:** Commit `feat: 实现 FarmDelta 环形缓冲与房间订阅`
 
 ---
 
@@ -193,11 +193,11 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 - SyncFarm：`from_seq`；ring 命中回 deltas，否则回 snapshot
 - 访客写：gateway 在 owner≠connection.uid 时直接 NotOwner（1202）
 
-- [ ] **Step 1:** 红测 — 非好友 Enter→1401；好友 Enter relation=FRIEND；Till 后订阅者收到 cmd 9000 且 seq+1
+- [x] **Step 1:** 红测 — 非好友 Enter→1401；好友 Enter relation=FRIEND；Till 后订阅者收到 cmd 9000 且 seq+1
 
-- [ ] **Step 2:** 实现；注意 WS 推送为**服务端主动** Envelope（无 client_seq 或 client_seq=0）
+- [x] **Step 2:** 实现；注意 WS 推送为**服务端主动** Envelope（无 client_seq 或 client_seq=0）
 
-- [ ] **Step 3:** Commit `feat: 接入 EnterFarm 好友校验与 FarmDelta 广播`
+- [x] **Step 3:** Commit `feat: 接入 EnterFarm 好友校验与 FarmDelta 广播`
 
 ---
 
@@ -206,9 +206,9 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 **Files:**
 - Modify: smoke 或 `server/cmd/smoke_room/main.go`
 
-- [ ] **Step 1:** A、B 好友；B Enter A；A Till；B 收到 Delta 或 Sync 后状态一致
+- [x] **Step 1:** A、B 好友；B Enter A；A Till；B 收到 Delta 或 Sync 后状态一致
 
-- [ ] **Step 2:** Commit `feat: 扩展 smoke 覆盖房间 Delta`
+- [x] **Step 2:** Commit `feat: 扩展 smoke 覆盖房间 Delta`
 
 ---
 
@@ -225,11 +225,11 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 - Login 成功 → session + connect + handshake + enterFarm(0) → `/farm`
 - `/i/:token` → 登录后 `acceptInvite`
 
-- [ ] **Step 1:** 未登录访问 `/farm` 重定向 `/login`
+- [x] **Step 1:** 未登录访问 `/farm` 重定向 `/login`
 
-- [ ] **Step 2:** 实现登录/注册表单（用户名密码）；错误码 toast
+- [x] **Step 2:** 实现登录/注册表单（用户名密码）；错误码 toast
 
-- [ ] **Step 3:** Commit `feat: 添加全屏登录注册与邀请落地路由`
+- [x] **Step 3:** Commit `feat: 添加全屏登录注册与邀请落地路由`
 
 > 注：若 UI 工作量很大，实现子代理按 `AGENTS.md` 先询问用户模型选择。
 
@@ -241,9 +241,9 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 - Modify: `client/src/game/main.js`, `state.js`（停用 save/load 权威）、移除 NPC 驱动写
 - Remove/Disable: DevNetPanel 入口（或 import.meta.env.DEV 诊断 only）
 
-- [ ] **Step 1:** 确认无 localStorage 写档驱动种收；未登录无 3D 可玩
+- [x] **Step 1:** 确认无 localStorage 写档驱动种收；未登录无 3D 可玩
 
-- [ ] **Step 2:** Commit `refactor: 移除客户端本地种植权威`
+- [x] **Step 2:** Commit `refactor: 移除客户端本地种植权威`
 
 ---
 
@@ -258,11 +258,11 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 - 收 9000：连续则 apply；否则 `syncFarm`
 - FRIEND：隐藏写工具；「回自己农场」→ EnterFarm(0)
 
-- [ ] **Step 1:** 单元/node 测：乱序 seq 触发 sync 标志
+- [x] **Step 1:** 单元/node 测：乱序 seq 触发 sync 标志
 
-- [ ] **Step 2:** 实现面板（展示 uid、复制链接、加 uid、列表拜访）
+- [x] **Step 2:** 实现面板（展示 uid、复制链接、加 uid、列表拜访）
 
-- [ ] **Step 3:** Commit `feat: 客户端接入好友拜访与 FarmDelta 镜像`
+- [x] **Step 3:** Commit `feat: 客户端接入好友拜访与 FarmDelta 镜像`
 
 ---
 
@@ -270,9 +270,9 @@ type DeltaRing struct { /* cap 64; Append; Since(fromSeq) ([]FarmDelta, ok) */ }
 
 **Files:** 无强制代码；更新 `README.md` 期 3 演示步骤
 
-- [ ] **Step 1:** ego-lite 或双浏览器：注册两号 → 加好友 → 拜访 → 主人种植 → 访客看到变化
+- [x] **Step 1:** ego-lite 或双浏览器：注册两号 → 加好友 → 拜访 → 主人种植 → 访客看到变化
 
-- [ ] **Step 2:** 记录结果到报告；Commit `docs: 更新 README 期 3 双客户端演示步骤`
+- [x] **Step 2:** 记录结果到报告；Commit `docs: 更新 README 期 3 双客户端演示步骤`
 
 ---
 

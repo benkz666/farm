@@ -1,6 +1,6 @@
 # Phase 2 Planting Authority Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 落地服务端种植权威（advance + 主路径动作 + Buy/Sell）与客户端 online「发意图、等 Rsp」接线；期末补化肥与多季。
 
@@ -57,9 +57,9 @@ client/src/game/main.js                    # online 分支
 - Produces: `CropByID(id uint16) (CropConf, bool)`；`HourMs(profile string) int64`；`WaterSpan`/`WitherSpan`/`YieldFloor` 等常量
 - Consumes: 无
 
-- [ ] **Step 1: 写失败测试** — 断言白萝卜 `SeedPrice==125`、`CycleHours==10`、`Yield==16`
+- [x] **Step 1: 写失败测试** — 断言白萝卜 `SeedPrice==125`、`CycleHours==10`、`Yield==16`
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 ```bash
 cd server && go test ./internal/gameconf/ -run TestWhiteRadish -v
@@ -67,9 +67,9 @@ cd server && go test ./internal/gameconf/ -run TestWhiteRadish -v
 
 Expected: FAIL
 
-- [ ] **Step 3: 实现最小作物表**（至少白萝卜 + 1–2 种便于解锁测试；字段：ID、UnlockLevel、SeedPrice、FruitPrice、Yield、Seasons、CycleHours、HarvestExp）
+- [x] **Step 3: 实现最小作物表**（至少白萝卜 + 1–2 种便于解锁测试；字段：ID、UnlockLevel、SeedPrice、FruitPrice、Yield、Seasons、CycleHours、HarvestExp）
 
-- [ ] **Step 4: 测试通过并提交**
+- [x] **Step 4: 测试通过并提交**
 
 ```bash
 git add server/internal/gameconf
@@ -88,13 +88,13 @@ git commit -m "feat: 添加期 2 作物与时间配置子集"
 - Produces: `func Advance(p *Plot, now int64, cfg AdvanceConfig)`；跨 MatureAt → Mature + FinalYield；跨 Wither → Withered；Growing 结算 AccruedWeighted
 - Consumes: gameconf 权重与跨度
 
-- [ ] **Step 1: 红测** — 种植后 `now = MatureAt` 应变 Mature；`now = MatureAt + 3*SeasonDuration` 变 Withered
+- [x] **Step 1: 红测** — 种植后 `now = MatureAt` 应变 Mature；`now = MatureAt + 3*SeasonDuration` 变 Withered
 
-- [ ] **Step 2: 实现最小 advance**（风险窗口可先简化：仅按缺水时长扣健康度，草/虫可在 Water 路径外用固定规则逐步加）
+- [x] **Step 2: 实现最小 advance**（风险窗口可先简化：仅按缺水时长扣健康度，草/虫可在 Water 路径外用固定规则逐步加）
 
-- [ ] **Step 3: `go test ./internal/farm/ -run Advance -v` 绿
+- [x] **Step 3: `go test ./internal/farm/ -run Advance -v` 绿
 
-- [ ] **Step 4: Commit** `feat: 实现地块惰性 advance 与成熟枯萎`
+- [x] **Step 4: Commit** `feat: 实现地块惰性 advance 与成熟枯萎`
 
 ---
 
@@ -116,13 +116,13 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult
 - `PlotAction`含 Kind(Till/Clear/Plant/Water/Weed/Pest/Harvest)、PlotIndex、Arg
 - 非法状态返回 protocol 码且聚合不变（可拷贝前后对比）
 
-- [ ] **Step 1: 表驱动红测** — Wasteland+Till→Tilled；Tilled+Plant(白萝卜)+有种子→Growing；Mature+Harvest→Residue/清空；Growing+Till→错误码
+- [x] **Step 1: 表驱动红测** — Wasteland+Till→Tilled；Tilled+Plant(白萝卜)+有种子→Growing；Mature+Harvest→Residue/清空；Growing+Till→错误码
 
-- [ ] **Step 2: 实现动作**（Plant 扣种子；Harvest 按 FinalYield/健康度算产量入仓库；Water 更新 LastWaterAt；Clear 处理 Residue/Withered）
+- [x] **Step 2: 实现动作**（Plant 扣种子；Harvest 按 FinalYield/健康度算产量入仓库；Water 更新 LastWaterAt；Clear 处理 Residue/Withered）
 
-- [ ] **Step 3: 测试绿；补 `Bag` map 到 Aggregate（`map[ItemKey]uint32` 或分 Seeds/Fruits）
+- [x] **Step 3: 测试绿；补 `Bag` map 到 Aggregate（`map[ItemKey]uint32` 或分 Seeds/Fruits）
 
-- [ ] **Step 4: Commit** `feat: 实现种植主路径 validate/commit 动作`
+- [x] **Step 4: Commit** `feat: 实现种植主路径 validate/commit 动作`
 
 ---
 
@@ -133,7 +133,7 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult
 - Modify: `server/internal/store/mysql.go`, `store.go`, `redis` 缓存序列化以含 Items
 - Test: integration 或单测 codec
 
-- [ ] **Step 1: DDL**
+- [x] **Step 1: DDL**
 
 ```sql
 CREATE TABLE IF NOT EXISTS item (
@@ -145,9 +145,9 @@ CREATE TABLE IF NOT EXISTS item (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
-- [ ] **Step 2: LoadFarm/SaveFarm 同步 items**；集成测试：种一粒种子 count-1 持久化
+- [x] **Step 2: LoadFarm/SaveFarm 同步 items**；集成测试：种一粒种子 count-1 持久化
 
-- [ ] **Step 3: Commit** `feat: 新增 item 表并接入农场存取`
+- [x] **Step 3: Commit** `feat: 新增 item 表并接入农场存取`
 
 ---
 
@@ -156,11 +156,11 @@ CREATE TABLE IF NOT EXISTS item (
 **Files:**
 - Create: `server/internal/farm/economy.go`, `economy_test.go`
 
-- [ ] **Step 1: 红测** — 金币 1000 买白萝卜种子 count=1 → coin=875、种子+1；金币不足 → 1302；卖果实加币
+- [x] **Step 1: 红测** — 金币 1000 买白萝卜种子 count=1 → coin=875、种子+1；金币不足 → 1302；卖果实加币
 
-- [ ] **Step 2: 实现 Buy/Sell（仅种子/果实；校验 unlock）
+- [x] **Step 2: 实现 Buy/Sell（仅种子/果实；校验 unlock）
 
-- [ ] **Step 3: Commit** `feat: 实现商店买种子与出售果实`
+- [x] **Step 3: Commit** `feat: 实现商店买种子与出售果实`
 
 ---
 
@@ -176,7 +176,7 @@ CREATE TABLE IF NOT EXISTS item (
 - 非本人 owner → 1401；先 Advance 再动作
 - Clock：可用服务端 `time.Now().UnixMilli()`；测试可注入 Clock 接口
 
-- [ ] **Step 1–4: TDD 接线、测试、Commit** `feat: 网关接入种植与商店命令`
+- [x] **Step 1–4: TDD 接线、测试、Commit** `feat: 网关接入种植与商店命令`
 
 ---
 
@@ -190,11 +190,11 @@ CREATE TABLE IF NOT EXISTS item (
 
 **推荐实现：** 在 `farm-server` 读 `FARM_ALLOW_DEBUG_TIME=1` 时注册内部 cmd 或 HTTP `POST /api/debug/advance` 把 Actor 内 now 偏移；smoke 默认开启该环境变量。
 
-- [ ] **Step 1: 实现 debug 调时（受环境变量门控）**
+- [x] **Step 1: 实现 debug 调时（受环境变量门控）**
 
-- [ ] **Step 2: smoke：注册→买种子→Till→Plant→advance→Harvest→Sell 断言 coin/仓库**
+- [x] **Step 2: smoke：注册→买种子→Till→Plant→advance→Harvest→Sell 断言 coin/仓库**
 
-- [ ] **Step 3: Commit** `feat: 扩展 smoke 覆盖种植与买卖闭环`
+- [x] **Step 3: Commit** `feat: 扩展 smoke 覆盖种植与买卖闭环`
 
 ---
 
@@ -206,13 +206,13 @@ CREATE TABLE IF NOT EXISTS item (
 - Create: `client/src/net/session.js`, `client/src/game/applyPatch.js`
 - Modify: `client/src/net/client.js`
 
-- [ ] **Step 1: `session.js`** — `isOnline`、`uid`、`token`、`enterOnline()`  
+- [x] **Step 1: `session.js`** — `isOnline`、`uid`、`token`、`enterOnline()`
 
-- [ ] **Step 2: client 增加 `plotAction(cmd, plotIndex, arg)`、`buy`、`sell`**
+- [x] **Step 2: client 增加 `plotAction(cmd, plotIndex, arg)`、`buy`、`sell`**
 
-- [ ] **Step 3: `applyPatch` 把 snapshot/plot/coin/inventory 写入现有 state 形状（state 字段名映射：`matureTime`←`mature_at` 等）
+- [x] **Step 3: `applyPatch` 把 snapshot/plot/coin/inventory 写入现有 state 形状（state 字段名映射：`matureTime`←`mature_at` 等）
 
-- [ ] **Step 4: Commit** `feat: 客户端增加 online 会话与动作补丁`
+- [x] **Step 4: Commit** `feat: 客户端增加 online 会话与动作补丁`
 
 ---
 
@@ -222,15 +222,15 @@ CREATE TABLE IF NOT EXISTS item (
 - Modify: `client/src/game/main.js`、可选 `DevNetPanel`（登录成功后 `enterOnline`）
 - Modify: UI 商店购买路径
 
-- [ ] **Step 1: 登录+EnterFarm 成功后 `applyPatch(snapshot)` 并 `session.isOnline=true`**
+- [x] **Step 1: 登录+EnterFarm 成功后 `applyPatch(snapshot)` 并 `session.isOnline=true`**
 
-- [ ] **Step 2: `onPlotClick`：online 时发对应 cmd，等 Rsp；失败 toast；成功 applyPatch**
+- [x] **Step 2: `onPlotClick`：online 时发对应 cmd，等 Rsp；失败 toast；成功 applyPatch**
 
-- [ ] **Step 3: 商店 Buy/Sell 同样**
+- [x] **Step 3: 商店 Buy/Sell 同样**
 
-- [ ] **Step 4: 未登录保持本地 doTill 等路径不变**
+- [x] **Step 4: 未登录保持本地 doTill 等路径不变**
 
-- [ ] **Step 5: 浏览器/ego-lite 或 Vite proxy 脚本验证一轮种收；Commit** `feat: 游戏主逻辑接入 online 种植意图`
+- [x] **Step 5: 浏览器/ego-lite 或 Vite proxy 脚本验证一轮种收；Commit** `feat: 游戏主逻辑接入 online 种植意图`
 
 ---
 
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS item (
 - Modify: `actions.go`、`advance.go`、`gameconf`、gateway cmd 218、client online 施肥
 - Test: 施肥前移 MatureAt 且不改 SeasonDuration；多季 Harvest 进入下一季 Growing
 
-- [ ] **Step 1–4: TDD 实现、smoke 可选扩展、Commit** `feat: 实现施肥与多季作物跨季`
+- [x] **Step 1–4: TDD 实现、smoke 可选扩展、Commit** `feat: 实现施肥与多季作物跨季`
 
 ---
 

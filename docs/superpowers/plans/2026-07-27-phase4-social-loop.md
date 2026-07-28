@@ -1,6 +1,6 @@
 # Phase 4 Social Loop & Multiplayer Skeleton Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 落地多 Gateway + 双 Farm 分片、Kafka 跨农场总线，以及互助/偷菜+狗/可偷摘要/用户名搜索/薄任务·邮件·每日登录的产品闭环。
 
@@ -62,11 +62,11 @@ client/src/game/main.js / ui.js            # 拜访互助/偷菜、面板
 **Interfaces:**
 - Produces: `func LogicalShard(uid uint64) int`；`type RouteTable` with `FarmID(uid uint64) (string, error)`
 
-- [ ] **Step 1:** 检出 `feat/phase4-social-loop`
+- [x] **Step 1:** 检出 `feat/phase4-social-loop`
 
-- [ ] **Step 2:** 红测 — 同一 uid 稳定映射；示例表把 0..511→`farm-0`、512..1023→`farm-1`
+- [x] **Step 2:** 红测 — 同一 uid 稳定映射；示例表把 0..511→`farm-0`、512..1023→`farm-1`
 
-- [ ] **Step 3:** 实现并 Commit `feat: 实现 uid 逻辑分片与路由表`
+- [x] **Step 3:** 实现并 Commit `feat: 实现 uid 逻辑分片与路由表`
 
 ---
 
@@ -86,9 +86,9 @@ type EventBus interface {
 ```
 - Topics 常量：`cross.action`, `cross.result`（可按环境加前缀）
 
-- [ ] **Step 1:** 红测 — Publish 后 Subscribe handler 收到同一 key/payload
+- [x] **Step 1:** 红测 — Publish 后 Subscribe handler 收到同一 key/payload
 
-- [ ] **Step 2:** 实现 MemoryBus；Commit `feat: 添加可注入的跨农场 EventBus 接口`
+- [x] **Step 2:** 实现 MemoryBus；Commit `feat: 添加可注入的跨农场 EventBus 接口`
 
 ---
 
@@ -98,11 +98,11 @@ type EventBus interface {
 - Create: `server/internal/bus/kafka.go`
 - Modify: `deploy/compose.yml`、`.env.example`（`FARM_KAFKA_BROKERS`, `FARM_BUS=kafka|memory`）
 
-- [ ] **Step 1:** compose 增加 Kafka（单 broker 开发配置即可）
+- [x] **Step 1:** compose 增加 Kafka（单 broker 开发配置即可）
 
-- [ ] **Step 2:** KafkaBus 实现；集成测可用 build tag `kafka` 或跳过无 broker
+- [x] **Step 2:** KafkaBus 实现；集成测可用 build tag `kafka` 或跳过无 broker
 
-- [ ] **Step 3:** Commit `feat: 接入 Kafka 作为默认跨农场总线`
+- [x] **Step 3:** Commit `feat: 接入 Kafka 作为默认跨农场总线`
 
 ---
 
@@ -117,11 +117,11 @@ type EventBus interface {
 - `FARM_ROLE=gateway`：只连客户端 + 转发 `/internal`
 - `FARM_ROLE=farm`：只载本实例逻辑片 Actor + 消费 Kafka + 提供 `/internal/v1/cmd`
 
-- [ ] **Step 1:** 红测/冒烟 — `all` 模式原有 `go test` 与登录 EnterFarm 不回归
+- [x] **Step 1:** 红测/冒烟 — `all` 模式原有 `go test` 与登录 EnterFarm 不回归
 
-- [ ] **Step 2:** 实现角色开关与 farm 内部 cmd 转发骨架（先转发现有 EnterFarm/Till）
+- [x] **Step 2:** 实现角色开关与 farm 内部 cmd 转发骨架（先转发现有 EnterFarm/Till）
 
-- [ ] **Step 3:** Commit `feat: 拆分 gateway 与 farm 进程角色`
+- [x] **Step 3:** Commit `feat: 拆分 gateway 与 farm 进程角色`
 
 ---
 
@@ -135,11 +135,11 @@ type EventBus interface {
 - `Register(ctx, uid, connID, gatewayID)` / `Unregister` / `Lookup(uid) []ConnRef`
 - Farm 广播时查注册表，HTTP/回调推到目标 Gateway 的 push 端点
 
-- [ ] **Step 1:** 红测 — 注册后 Lookup 命中；Unregister 后空
+- [x] **Step 1:** 红测 — 注册后 Lookup 命中；Unregister 后空
 
-- [ ] **Step 2:** 接入 WS connect/disconnect；双 Gateway 手工或 smoke：A 连 gw0、B 连 gw1 同房收 Delta
+- [x] **Step 2:** 接入 WS connect/disconnect；双 Gateway 手工或 smoke：A 连 gw0、B 连 gw1 同房收 Delta
 
-- [ ] **Step 3:** Commit `feat: 实现跨 Gateway 连接注册与 Delta 回推`
+- [x] **Step 3:** Commit `feat: 实现跨 Gateway 连接注册与 Delta 回推`
 
 ---
 
@@ -148,11 +148,11 @@ type EventBus interface {
 **Files:**
 - Modify: `deploy/compose.yml`、`scripts/run.sh`、`README.md`、`server/cmd/smoke`
 
-- [ ] **Step 1:** 文档化启动：MySQL/Redis/Kafka + farm-0 + farm-1 + gateway-0 + gateway-1
+- [x] **Step 1:** 文档化启动：MySQL/Redis/Kafka + farm-0 + farm-1 + gateway-0 + gateway-1
 
-- [ ] **Step 2:** smoke：两用户落不同逻辑片，互相 EnterFarm（好友）成功
+- [x] **Step 2:** smoke：两用户落不同逻辑片，互相 EnterFarm（好友）成功
 
-- [ ] **Step 3:** Commit `feat: 编排双分片本地联调并扩展 smoke`
+- [x] **Step 3:** Commit `feat: 编排双分片本地联调并扩展 smoke`
 
 ---
 
@@ -175,9 +175,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 ```
 - 超时 5s 回滚
 
-- [ ] **Step 1:** 红测 — 预占后超时回滚；重复 Result 幂等
+- [x] **Step 1:** 红测 — 预占后超时回滚；重复 Result 幂等
 
-- [ ] **Step 2:** 实现；Commit `feat: 实现跨农场访客预占与超时回滚`
+- [x] **Step 2:** 实现；Commit `feat: 实现跨农场访客预占与超时回滚`
 
 ---
 
@@ -188,19 +188,19 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `gateway` 拜访态 Water/Weed/Pest 走 Cross 而非本地 NotOwner
 - Modify: 维护次数字段（player/日计数，按策划 150）
 
-- [ ] **Step 1:** 红测 — 非好友拒绝；已浇过返回已有码；成功 Commit + 返回 Result
+- [x] **Step 1:** 红测 — 非好友拒绝；已浇过返回已有码；成功 Commit + 返回 Result
 
-- [ ] **Step 2:** Kafka/Memory 往返联调；房间 Delta 仍广播
+- [x] **Step 2:** Kafka/Memory 往返联调；房间 Delta 仍广播
 
-- [ ] **Step 3:** Commit `feat: 接入好友互助浇水除草除虫`
+- [x] **Step 3:** Commit `feat: 接入好友互助浇水除草除虫`
 
 ---
 
 ### Task 9: smoke 互助
 
-- [ ] **Step 1:** A/B 跨片；B 拜访 A；B 浇水成功得经验；失败回滚计数
+- [x] **Step 1:** A/B 跨片；B 拜访 A；B 浇水成功得经验；失败回滚计数
 
-- [ ] **Step 2:** Commit `feat: 扩展 smoke 覆盖跨农场互助`
+- [x] **Step 2:** Commit `feat: 扩展 smoke 覆盖跨农场互助`
 
 ---
 
@@ -213,9 +213,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `plot`/`aggregate` 增加 `StolenCount` / `HarvestRound` 若缺
 - Modify: `pkgerr` 确认 `1408–1412`
 
-- [ ] **Step 1:** 红测 — 40% 上限、一轮一次、收获竞争 `1216`、数量截断
+- [x] **Step 1:** 红测 — 40% 上限、一轮一次、收获竞争 `1216`、数量截断
 
-- [ ] **Step 2:** 实现；Commit `feat: 实现偷菜额度与收获竞争规则`
+- [x] **Step 2:** 实现；Commit `feat: 实现偷菜额度与收获竞争规则`
 
 ---
 
@@ -226,9 +226,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: migrations `004_*.sql`、商店 Buy 狗/狗粮、`PetStatus/Activate/Feed`
 - Cross Steal：预冻单价×10；拦截 `1411` 实扣转主人；不足 `1412`
 
-- [ ] **Step 1:** 红测 — 空盆拦截率 0；拦截转账；不足发起失败
+- [x] **Step 1:** 红测 — 空盆拦截率 0；拦截转账；不足发起失败
 
-- [ ] **Step 2:** 实现命令 500/502/504；Commit `feat: 实现看家狗与偷菜赔付冻结`
+- [x] **Step 2:** 实现命令 500/502/504；Commit `feat: 实现看家狗与偷菜赔付冻结`
 
 ---
 
@@ -238,17 +238,17 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Create: `server/internal/store/steal_hint.go`
 - Modify: FriendList 响应字段；成熟/收获/偷后异步更新
 
-- [ ] **Step 1:** 红测 — 写 hint 后 FriendList 读到 `has_stealable`
+- [x] **Step 1:** 红测 — 写 hint 后 FriendList 读到 `has_stealable`
 
-- [ ] **Step 2:** Commit `feat: 实现 FriendList 可偷摘要`
+- [x] **Step 2:** Commit `feat: 实现 FriendList 可偷摘要`
 
 ---
 
 ### Task 13: smoke 偷菜场景
 
-- [ ] **Step 1:** 额度竞争、收获竞争、狗拦截转账
+- [x] **Step 1:** 额度竞争、收获竞争、狗拦截转账
 
-- [ ] **Step 2:** Commit `feat: 扩展 smoke 覆盖偷菜与狗拦截`
+- [x] **Step 2:** Commit `feat: 扩展 smoke 覆盖偷菜与狗拦截`
 
 ---
 
@@ -260,9 +260,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `protocol.md`、`envelope.go`、`store` 按 username 查、`ws_friends`、限流
 - Client: `client.js` + 好友面板
 
-- [ ] **Step 1:** 红测 — 精确命中 / 未命中 / 限流
+- [x] **Step 1:** 红测 — 精确命中 / 未命中 / 限流
 
-- [ ] **Step 2:** Commit `feat: 实现按用户名精确搜索加好友`
+- [x] **Step 2:** Commit `feat: 实现按用户名精确搜索加好友`
 
 ---
 
@@ -273,9 +273,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `protocol.md` 登记 `ClaimDailyLogin=614`
 - 奖励统一进邮件；`TaskClaim` / `MailClaim` / `ClaimDailyLogin` 幂等
 
-- [ ] **Step 1:** 红测 — 同逻辑日重复每日登录 → `1005`；任务领奖进邮件
+- [x] **Step 1:** 红测 — 同逻辑日重复每日登录 → `1005`；任务领奖进邮件
 
-- [ ] **Step 2:** Commit `feat: 实现薄任务邮件与每日登录奖励`
+- [x] **Step 2:** Commit `feat: 实现薄任务邮件与每日登录奖励`
 
 ---
 
@@ -284,9 +284,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 **Files:**
 - Modify: gateway push、`client` onPush；互助成功经验、偷菜仓库、赔付金币
 
-- [ ] **Step 1:** 单测/联调 — 访客收到 `9002` 且 UI 金币/仓更新
+- [x] **Step 1:** 单测/联调 — 访客收到 `9002` 且 UI 金币/仓更新
 
-- [ ] **Step 2:** Commit `feat: 接入 PlayerDelta 推送个人状态`
+- [x] **Step 2:** Commit `feat: 接入 PlayerDelta 推送个人状态`
 
 ---
 
@@ -296,9 +296,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 - Modify: `main.js`/`ui.js`/`onlineActions.js`/`FriendsPanel` 或内联 UI
 - 拜访开放 Water/Weed/Pest/Steal；等 Rsp；可偷标记；搜索；任务/邮件/每日登录入口；狗面板
 
-- [ ] **Step 1:** `npm run build` + ego-lite 冒烟关键路径
+- [x] **Step 1:** `npm run build` + ego-lite 冒烟关键路径
 
-- [ ] **Step 2:** Commit `feat: 客户端接入互助偷菜与日常面板`
+- [x] **Step 2:** Commit `feat: 客户端接入互助偷菜与日常面板`
 
 ---
 
@@ -307,11 +307,11 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1:** 文档：双实例启动、演示剧本（搜好友→拜访→互助→偷菜→每日登录）
+- [x] **Step 1:** 文档：双实例启动、演示剧本（搜好友→拜访→互助→偷菜→每日登录）
 
-- [ ] **Step 2:** ego-lite 或双浏览器按规格 §9 勾验；写报告
+- [x] **Step 2:** ego-lite 或双浏览器按规格 §9 勾验；写报告
 
-- [ ] **Step 3:** Commit `docs: 更新 README 期 4 双分片社交演示步骤`
+- [x] **Step 3:** Commit `docs: 更新 README 期 4 双分片社交演示步骤`
 
 ---
 

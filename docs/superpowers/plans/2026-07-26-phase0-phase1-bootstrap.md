@@ -1,6 +1,6 @@
 # Phase 0+1 Bootstrap Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 落地工程骨架与期 1 联通切片：Vite+Vue 客户端可玩本地 demo，Go 单进程服务完成注册/登录 → Handshake → EnterFarm 快照，Redis+MySQL 可重启恢复，`make smoke` 通过。
 
