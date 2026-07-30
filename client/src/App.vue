@@ -41,7 +41,7 @@ onMounted(() => {
           <div class="exp-bar"><div id="exp-fill"></div><span id="exp-text">0/200</span></div>
         </div>
         <div class="stat-chip gold-chip" title="金币">💰<span id="gold-num">0</span></div>
-        <div class="stat-chip dog-chip hidden" id="dog-status" title="狗盆余量">🐶<span id="dog-food-num">0g</span></div>
+        <div class="stat-chip dog-chip hidden" id="dog-status" title="狗盆余量"><span id="dog-status-icon"></span><span id="dog-food-num">0g</span></div>
         <div class="stat-chip clock-chip" id="clock-chip" title="游戏时间">☀️</div>
         <button id="btn-settings" class="icon-btn" title="设置">⚙️</button>
       </header>

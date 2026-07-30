@@ -191,6 +191,58 @@ test('dispose 后 start 不得再排程 / render', () => {
   assert.equal(stats().renderCount, 0)
 })
 
+test('地块使用半埋式低矮倒角菜畦，不回退为高方块或纯平贴片', () => {
+  const { container, env } = makeHarness()
+  const scene = new FarmScene(container, env)
+
+  scene.plotGroups.forEach((group) => {
+    const { base, rim, furrows, content, ring, halo } = group.userData
+    assert.equal(base.geometry.type, 'PlaneGeometry')
+    assert.equal(rim.geometry.type, 'BoxGeometry')
+    rim.geometry.computeBoundingBox()
+    const rimSize = rim.geometry.boundingBox.getSize(new THREE.Vector3())
+    assert.ok(Math.abs(rimSize.y - 0.22) < 1e-6)
+    assert.equal(rim.position.y, 0.05)
+    assert.equal(base.position.y, 0.162)
+    assert.equal(content.position.y, 0.13)
+    assert.equal(ring.position.y, 0.24)
+    assert.equal(halo.position.y, 0.22)
+    furrows.children.forEach((furrow) => {
+      assert.equal(furrow.geometry.type, 'BoxGeometry')
+      furrow.geometry.computeBoundingBox()
+      const size = furrow.geometry.boundingBox.getSize(new THREE.Vector3())
+      assert.ok(Math.abs(size.y - 0.07) < 1e-6)
+    })
+  })
+
+  scene.dispose()
+})
+
+test('地面云影使用柔边透明着色器，并随昼夜调整强度', () => {
+  const { container, env } = makeHarness()
+  const scene = new FarmScene(container, env)
+
+  assert.equal(scene.cloudShadows.length, scene.clouds.length)
+  assert.equal(scene.cloudShadows.length, 5)
+  scene.cloudShadows.forEach((shadow, index) => {
+    assert.equal(shadow.geometry.type, 'PlaneGeometry')
+    assert.equal(shadow.material.isShaderMaterial, true)
+    assert.equal(shadow.material.transparent, true)
+    assert.equal(shadow.material.depthWrite, false)
+    assert.ok(shadow.userData.baseOpacity >= 0.09 && shadow.userData.baseOpacity <= 0.14)
+    assert.equal(scene.clouds[index].userData.shadow, shadow)
+  })
+
+  scene.setDayPhase(0)
+  assert.equal(scene.sun.shadow.intensity, 0)
+  assert.ok(scene.cloudShadows.every((shadow) => shadow.material.uniforms.uOpacity.value === 0))
+  scene.setDayPhase(0.5)
+  assert.equal(scene.sun.shadow.intensity, 0.72)
+  assert.ok(scene.cloudShadows.every((shadow) => shadow.material.uniforms.uOpacity.value > 0))
+
+  scene.dispose()
+})
+
 test('updatePlot 重建内容时释放旧独占资源；共享 mat 仍可用', () => {
   const { container, env } = makeHarness()
   const scene = new FarmScene(container, env)

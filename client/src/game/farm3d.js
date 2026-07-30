@@ -3,6 +3,7 @@
 // ============================================================
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mat, isSharedMaterial, createCropModel, createWeedModel, createPestModel, createResidueModel, createDogModel } from './crops.js';
 import { clearAndDispose, disposeExclusiveMaterial, disposeObject3D } from './dispose3d.js';
 import { PLOT } from './state.js';
@@ -10,6 +11,9 @@ import { PLOT } from './state.js';
 const disposeOpts = { isSharedMaterial };
 
 const COLS = 6, ROWS = 3, GAP = 5;
+const DAY_SHADOW_INTENSITY = 0.72;
+const CLOUD_SHADOW_MIN_OPACITY = 0.09;
+const CLOUD_SHADOW_OPACITY_RANGE = 0.05;
 export const plotPos = (id) => ({
   x: ((id % COLS) - (COLS - 1) / 2) * GAP,
   z: ((ROWS - 1) / 2 - Math.floor(id / COLS)) * GAP,   // 初始地块靠近相机，扩地向远处延伸
@@ -52,6 +56,56 @@ function makeGrassTexture(createElement) {
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(8, 8);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+/**
+ * 柔边云影材质：多个椭圆高斯场叠成不规则云团，边缘在片元着色器内渐隐。
+ * 这样仍保留低多边形云体，但地面不会出现 CircleGeometry 的硬折线轮廓。
+ */
+function makeCloudShadowMaterial(seed, opacity) {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    uniforms: {
+      uColor: { value: new THREE.Color(0x315f3a) },
+      uOpacity: { value: opacity },
+      uSeed: { value: seed },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      uniform float uSeed;
+
+      float softLobe(vec2 point, vec2 center, vec2 radius) {
+        vec2 q = (point - center) / radius;
+        return exp(-dot(q, q) * 2.6);
+      }
+
+      void main() {
+        vec2 drift = vec2(
+          sin(uSeed * 2.17) * 0.035,
+          cos(uSeed * 1.73) * 0.025
+        );
+        float field = softLobe(vUv, vec2(0.30, 0.51) + drift, vec2(0.30, 0.31));
+        field = max(field, softLobe(vUv, vec2(0.48, 0.43) - drift, vec2(0.32, 0.35)));
+        field = max(field, softLobe(vUv, vec2(0.67, 0.51) + drift.yx, vec2(0.28, 0.29)));
+        field = max(field, softLobe(vUv, vec2(0.53, 0.62) - drift.yx, vec2(0.38, 0.25)));
+
+        float alpha = smoothstep(0.035, 0.72, field) * uOpacity;
+        if (alpha < 0.001) discard;
+        gl_FragColor = vec4(uColor, alpha);
+      }
+    `,
+  });
 }
 
 function defaultEnv() {
@@ -115,6 +169,7 @@ export class FarmScene {
     const sc = this.sun.shadow.camera;
     sc.left = -30; sc.right = 30; sc.top = 30; sc.bottom = -30; sc.far = 120;
     this.sun.shadow.bias = -0.0008;
+    this.sun.shadow.intensity = DAY_SHADOW_INTENSITY;
     this.scene.add(this.sun, this.sun.target);
 
     this.plotGroups = [];
@@ -148,19 +203,6 @@ export class FarmScene {
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
-
-    // 草地色块层次
-    for (let i = 0; i < 26; i++) {
-      const r = 1.5 + Math.random() * 4;
-      const patch = new THREE.Mesh(
-        new THREE.CircleGeometry(r, 9),
-        new THREE.MeshLambertMaterial({ color: i % 2 ? 0x6fb35c : 0x8ccb78, transparent: true, opacity: 0.55 })
-      );
-      patch.rotation.x = -Math.PI / 2;
-      patch.position.set((Math.random() - 0.5) * 70, 0.02, (Math.random() - 0.5) * 60);
-      patch.receiveShadow = true;
-      this.scene.add(patch);
-    }
 
     // 栅栏
     const fence = new THREE.Group();
@@ -244,6 +286,7 @@ export class FarmScene {
 
     // 云
     this.clouds = [];
+    this.cloudShadows = [];
     const cloudMat = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
     for (let i = 0; i < 5; i++) {
       const cloud = new THREE.Group();
@@ -254,7 +297,25 @@ export class FarmScene {
       }
       cloud.position.set((Math.random() - 0.5) * 90, 16 + Math.random() * 6, -30 - Math.random() * 20);
       cloud.userData.speed = 0.2 + Math.random() * 0.3;
+      const shadowOpacity = CLOUD_SHADOW_MIN_OPACITY + Math.random() * CLOUD_SHADOW_OPACITY_RANGE;
+      const shadow = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        makeCloudShadowMaterial(i + Math.random(), shadowOpacity)
+      );
+      shadow.rotation.x = -Math.PI / 2;
+      shadow.scale.set(14 + Math.random() * 7, 6 + Math.random() * 3, 1);
+      shadow.userData.baseOpacity = shadowOpacity;
+      shadow.userData.offsetX = -5 + Math.random() * 4;
+      shadow.position.set(
+        cloud.position.x + shadow.userData.offsetX,
+        0.035,
+        -20 + Math.random() * 40
+      );
+      shadow.renderOrder = 1;
+      cloud.userData.shadow = shadow;
+      this.cloudShadows.push(shadow);
       this.clouds.push(cloud); this.scene.add(cloud);
+      this.scene.add(shadow);
     }
 
     // 蝴蝶
@@ -302,20 +363,30 @@ export class FarmScene {
       const { x, z } = plotPos(i);
       g.position.set(x, 0, z);
 
-      // 地块底座（可拾取）
-      const base = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 4.2), mat(0xb5977a));
-      base.position.y = 0.25;
+      // 半埋式低矮菜畦：恢复真实厚度与阴影，但用圆润斜边避免“积木台座”。
+      const rim = new THREE.Mesh(new RoundedBoxGeometry(4.3, 0.22, 4.3, 2, 0.08), mat(0x8b6e50));
+      rim.position.y = 0.05;
+      rim.receiveShadow = true;
+      rim.castShadow = true;
+      g.add(rim);
+      g.userData.rim = rim;
+
+      // 顶部土壤保持平整，覆盖在低矮土畦上并承担拾取。
+      const base = new THREE.Mesh(new THREE.PlaneGeometry(4.08, 4.08), mat(0xb5977a));
+      base.rotation.x = -Math.PI / 2;
+      base.position.y = 0.162;
       base.receiveShadow = true; base.castShadow = false;
       base.userData.plotId = i;
       g.add(base);
       g.userData.base = base;
 
-      // 垄沟（3 条凸起）
+      // 翻耕后的圆角土垄：保留轻微起伏，厚度远低于旧版方块。
       const furrows = new THREE.Group();
       for (let r = -1; r <= 1; r++) {
-        const f = new THREE.Mesh(new THREE.BoxGeometry(3.9, 0.14, 0.9), mat(0x6d4c41));
-        f.position.set(0, 0.54, r * 1.25);
+        const f = new THREE.Mesh(new RoundedBoxGeometry(3.78, 0.07, 0.68, 1, 0.03), mat(0x684936));
+        f.position.set(0, 0.155, r * 1.22);
         f.receiveShadow = true;
+        f.castShadow = true;
         furrows.add(f);
       }
       furrows.visible = false;
@@ -329,7 +400,7 @@ export class FarmScene {
       );
       ring.rotation.x = -Math.PI / 2;
       ring.rotation.z = Math.PI / 4;
-      ring.position.y = 0.56;
+      ring.position.y = 0.24;
       ring.visible = false;
       g.add(ring);
       g.userData.ring = ring;
@@ -340,14 +411,14 @@ export class FarmScene {
         new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.85 })
       );
       halo.rotation.x = -Math.PI / 2;
-      halo.position.y = 0.6;
+      halo.position.y = 0.22;
       halo.visible = false;
       g.add(halo);
       g.userData.halo = halo;
 
       // 内容容器（作物/杂草/害虫等）
       const content = new THREE.Group();
-      content.position.y = 0.5;
+      content.position.y = 0.13;
       g.add(content);
       g.userData.content = content;
       g.userData.key = '';
@@ -400,19 +471,24 @@ export class FarmScene {
         u.signBoard.material = new THREE.MeshLambertMaterial({ map: this.signTexture(info.lockText) });
         disposeExclusiveMaterial(prev, disposeOpts);
       }
-      u.base.material = mat(0x9db98a);
-      u.base.scale.y = 0.6;
+      u.base.material = mat(0x86a874);
+      u.rim.material = mat(0x5f864f);
       u.furrows.visible = false;
       clearAndDispose(u.content, disposeOpts);
       u.halo.visible = false;
       return;
     }
-    u.base.scale.y = 1;
-
     // 土壤颜色：荒地浅 / 已翻深 / 缺水更浅
-    if (info.state === PLOT.WASTELAND) u.base.material = mat(0xb5977a);
-    else if (info.dry) u.base.material = mat(0xc9b291);
-    else u.base.material = mat(0x7d5a43);
+    if (info.state === PLOT.WASTELAND) {
+      u.base.material = mat(0xb99a7d);
+      u.rim.material = mat(0x8b6e50);
+    } else if (info.dry) {
+      u.base.material = mat(0xc9b291);
+      u.rim.material = mat(0x997452);
+    } else {
+      u.base.material = mat(0x79543e);
+      u.rim.material = mat(0x513727);
+    }
     u.furrows.visible = info.state !== PLOT.WASTELAND;
 
     // 内容重建
@@ -544,6 +620,12 @@ export class FarmScene {
     // 夜晚月亮保持在空中，避免方向光沉入地下
     this.sun.position.set(Math.cos(a) * r * 0.6, (Math.abs(h) * 0.8 + 0.12) * r, 24);
     const night = h < -0.05;
+    const shadowDaylight = THREE.MathUtils.smoothstep(h, -0.02, 0.55);
+    // 场景没有独立月光源，黄昏后同步收掉实体硬阴影，避免夜间出现“太阳影子”。
+    this.sun.shadow.intensity = DAY_SHADOW_INTENSITY * shadowDaylight;
+    this.cloudShadows.forEach((shadow) => {
+      shadow.material.uniforms.uOpacity.value = shadow.userData.baseOpacity * shadowDaylight;
+    });
     this.stars.material.opacity = night ? Math.min(1, -h * 2.5) : 0;
     this.dust.material.opacity = night ? 0.15 : 0.65;
     this.butterflies.forEach(b => (b.visible = !night));
@@ -571,6 +653,9 @@ export class FarmScene {
       for (const c of this.clouds) {
         c.position.x += c.userData.speed * dt;
         if (c.position.x > 70) c.position.x = -70;
+        if (c.userData.shadow) {
+          c.userData.shadow.position.x = c.position.x + c.userData.shadow.userData.offsetX;
+        }
       }
       // 蝴蝶
       for (const b of this.butterflies) {
@@ -689,6 +774,7 @@ export class FarmScene {
     this.plotGroups = [];
     this.animated = [];
     this.clouds = [];
+    this.cloudShadows = [];
     this.butterflies = [];
     this.stars = null;
     this.dust = null;

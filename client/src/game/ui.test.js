@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { hudSignature } from './ui.js'
+import { canExpandLand, hudSignature } from './ui.js'
 import { taskCardViewModel } from './taskCardView.js'
 
 const state = {
@@ -37,6 +37,13 @@ test('hudSignature 在可领任务（含每日登录）出现时变化以驱动�
     }, false),
     before,
   )
+})
+
+test('扩地入口只在自己的农场满足下一块土地等级和金币要求时显示', () => {
+  assert.equal(canExpandLand(state, false), false, 'Lv.0 与 770 金币不能显示扩地入口')
+  assert.equal(canExpandLand({ ...state, exp: 1000, gold: 10_000 }, false), true)
+  assert.equal(canExpandLand({ ...state, exp: 1000, gold: 9_999 }, false), false)
+  assert.equal(canExpandLand({ ...state, exp: 1000, gold: 10_000 }, true), false, '好友农场始终隐藏')
 })
 
 test('任务面板领取决策统一走 claimTask，Task 4 无独立 614 动作', () => {

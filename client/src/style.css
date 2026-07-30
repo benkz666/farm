@@ -90,6 +90,7 @@ body {
 }
 .gold-chip { color: #b8860b; }
 .dog-chip { color: var(--brown); }
+.dog-chip .pet-badge { margin: -6px 0 -6px -7px; }
 .clock-chip { font-size: 17px; padding: 8px 12px; }
 
 .icon-btn {
@@ -204,12 +205,31 @@ body {
 /* 作物徽章 */
 .crop-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
-  color: #fff; font-weight: 800; font-size: 15px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.15);
+  width: 42px; height: 42px; border-radius: 14px; flex-shrink: 0;
+  overflow: hidden; isolation: isolate;
+  background: radial-gradient(circle at 32% 24%, #fffef6 0 24%, #f3ebd8 72%, #e6dac2 100%);
+  border: 1px solid rgba(115, 88, 53, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 3px 7px rgba(62, 50, 41, 0.16);
 }
-.crop-badge.sm { width: 30px; height: 30px; font-size: 13px; }
+.crop-badge.sm { width: 32px; height: 32px; border-radius: 11px; }
+.crop-art { width: 92%; height: 92%; display: block; overflow: visible; filter: drop-shadow(0 1px 1px rgba(69, 52, 32, 0.18)); }
+.shop-card > .crop-badge { width: 52px; height: 52px; border-radius: 17px; margin-bottom: 2px; }
+.shop-card:hover .crop-art { transform: translateY(-1px) rotate(-2deg); }
+@media (prefers-reduced-motion: reduce) { .shop-card:hover .crop-art { transform: none; } }
+
+/* 看家狗徽章 */
+.pet-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 52px; height: 52px; border-radius: 18px; flex-shrink: 0;
+  overflow: hidden; isolation: isolate;
+  background: radial-gradient(circle at 32% 22%, #fffef8 0 20%, #f4ead7 72%, #e4d5bb 100%);
+  border: 1px solid rgba(115, 88, 53, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 3px 7px rgba(62, 50, 41, 0.16);
+}
+.pet-badge--chip { width: 28px; height: 28px; border-radius: 10px; box-shadow: none; border-color: rgba(115, 88, 53, 0.1); }
+.pet-art { width: 94%; height: 94%; display: block; filter: drop-shadow(0 1px 1px rgba(55, 38, 23, 0.16)); }
+.shop-card:hover .pet-art { transform: translateY(-1px) rotate(2deg); }
+@media (prefers-reduced-motion: reduce) { .shop-card:hover .pet-art { transform: none; } }
 
 /* ---------------- Toast ---------------- */
 #toast-wrap {
@@ -332,6 +352,15 @@ body {
   box-shadow: none;
 }
 .mail-section { margin-bottom: 12px; }
+.mail-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.mail-toolbar .mail-clear--confirm {
+  border-color: #d85c4a;
+  color: #b13c2d;
+}
 .mail-section__title {
   font-size: 12px;
   font-weight: 800;

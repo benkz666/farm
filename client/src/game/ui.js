@@ -6,18 +6,14 @@ import { levelOf, expProgress } from './state.js';
 import { EXP_PER_LEVEL } from './config.js';
 import { mailDotVisible, taskDotVisible } from './sideDots.js';
 import { taskCardViewModel } from './taskCardView.js';
+import { cropIconHTML } from './cropIcons.js';
+import { petBadgeHTML } from './petIcons.js';
 
 const $ = (s) => document.querySelector(s);
 
-// 颜色加深，用于徽章渐变
-function shade(hex, amt) {
-  const n = parseInt(hex.slice(1), 16);
-  const f = (v) => Math.max(0, Math.min(255, v + amt));
-  return `#${((f(n >> 16) << 16) | (f((n >> 8) & 255) << 8) | f(n & 255)).toString(16).padStart(6, '0')}`;
-}
-
 export function badgeHTML(def, sm = false) {
-  return `<span class="crop-badge ${sm ? 'sm' : ''}" style="background:linear-gradient(135deg, ${shade(def.color, 22)}, ${shade(def.color, -34)})">${def.name[0]}</span>`;
+  const name = String(def?.name || '作物').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  return `<span class="crop-badge ${sm ? 'sm' : ''}" role="img" aria-label="${name}">${cropIconHTML(def)}</span>`;
 }
 
 export const fmtTime = (ms) => {
@@ -36,9 +32,17 @@ export function hudSignature(state, readOnly) {
   const mailDot = mailDotVisible(state.mails, state.friendRequests);
   const taskDot = taskDotVisible(state.tasks);
   const lv = levelOf(exp);
-  const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-  const canExpand = !readOnly && !!next && lv >= next[1] && gold >= next[2];
+  const canExpand = canExpandLand(state, readOnly);
   return [gold, exp, state.dog?.id || '', dogBowl, mailDot, taskDot, canExpand].join('|');
+}
+
+/** 是否应显示下一块土地的开垦入口。 */
+export function canExpandLand(state, readOnly = false) {
+  if (readOnly) return false;
+  const level = levelOf(Number(state.exp) || 0);
+  const gold = Math.floor(Number(state.gold) || 0);
+  const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
+  return !!next && level >= next[1] && gold >= next[2];
 }
 
 export class UI {
@@ -85,7 +89,9 @@ export class UI {
     $('#exp-text').textContent = `${exp % EXP_PER_LEVEL}/${EXP_PER_LEVEL}`;
     const dogChip = $('#dog-status');
     if (state.dog) {
+      const dogDef = DOGS.find((dog) => dog.id === state.dog.id);
       dogChip.classList.remove('hidden');
+      $('#dog-status-icon').innerHTML = petBadgeHTML(dogDef || state.dog, 'chip');
       $('#dog-food-num').textContent = `${Math.floor(state.dogBowl)}g`;
       dogChip.style.opacity = state.dogBowl > 0 ? 1 : 0.5;
       dogChip.style.cursor = 'pointer';
@@ -94,9 +100,7 @@ export class UI {
     $('#dot-mail').classList.toggle('hidden', !mailDotVisible(state.mails, state.friendRequests));
     $('#dot-tasks').classList.toggle('hidden', !taskDotVisible(state.tasks));
     // 扩地按钮
-    const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-    const canExpand = !this.readOnly && !!next && lv >= next[1] && gold >= next[2];
-    $('#btn-expand').classList.toggle('hidden', !canExpand);
+    $('#btn-expand').classList.toggle('hidden', !canExpandLand(state, this.readOnly));
   }
 
   setClock(icon) { $('#clock-chip').textContent = icon; }
@@ -119,7 +123,9 @@ export class UI {
   setReadOnly(readOnly) {
     this.readOnly = readOnly;
     $('#side-menu button[data-panel="shop"]').classList.toggle('hidden', readOnly);
-    $('#btn-expand').classList.toggle('hidden', readOnly);
+    // 扩地资格还取决于等级和金币；不能在返回自己农场时直接显示。
+    // 切换读写视图后强制下一次 HUD 重新计算，避免签名缓存保留错误可见性。
+    this.lastHUDSignature = null;
   }
 
   showSubBar(items, activeId, onPick) {
@@ -254,7 +260,7 @@ export class UI {
         const onlineReady = !!d.shopItemId;
         const card = document.createElement('div');
         card.className = 'shop-card' + (locked || !onlineReady ? ' locked' : '');
-        card.innerHTML = `<span style="font-size:34px">🐕</span><div class="name">${d.name}</div>
+        card.innerHTML = `${petBadgeHTML(d)}<div class="name">${d.name}</div>
           <div class="meta">拦截率 ${Math.round(d.intercept * 100)}%<br>粮耗 ${d.consumption}g/小时${!onlineReady ? '<br>期 4 暂未上架' : ''}</div>
           <div class="price">💰 ${d.price}</div>`;
         const btn = document.createElement('button');
@@ -410,6 +416,35 @@ export class UI {
       return;
     }
 
+    if (mails.length) {
+      const toolbar = document.createElement('div');
+      toolbar.className = 'mail-toolbar';
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'act-btn ghost';
+      clear.textContent = '全部清空';
+      clear.onclick = async () => {
+        if (clear.dataset.confirm !== '1') {
+          clear.dataset.confirm = '1';
+          clear.textContent = '确认清空？';
+          clear.classList.add('mail-clear--confirm');
+          window.setTimeout(() => {
+            if (clear.dataset.confirm === '1') {
+              clear.dataset.confirm = '';
+              clear.textContent = '全部清空';
+              clear.classList.remove('mail-clear--confirm');
+            }
+          }, 2600);
+          return;
+        }
+        if (await this.cb.onClearMails?.()) {
+          if (this.isPanelOpen('mail')) this.renderMail(this.cb.getState());
+        }
+      };
+      toolbar.appendChild(clear);
+      body.appendChild(toolbar);
+    }
+
     if (requests.length) {
       const sec = document.createElement('div');
       sec.className = 'mail-section';
@@ -474,14 +509,13 @@ export class UI {
       } else if (m.claimed) {
         row.insertAdjacentHTML('beforeend', `<span style="font-size:11.5px;color:var(--ink-soft);font-weight:700">已领取</span>`);
       }
-      row.onclick = () => { m.read = true; row.classList.remove('unread'); row.querySelector('.unread-dot')?.remove(); this.updateHUD(state); };
       body.appendChild(row);
     }
   }
 
   // ---------------- 看家狗 ----------------
   renderPet(state) {
-    const body = this.openModal('🐶 看家狗', 'pet');
+    const body = this.openModal('看家狗', 'pet');
     const dog = state.dog;
     const bagFood = state.inventory?.dogFood || 0;
     if (!dog) {
@@ -495,7 +529,7 @@ export class UI {
     }
     const def = DOGS.find(d => d.id === dog.id);
     body.insertAdjacentHTML('beforeend', `<div class="list-row">
-      <span style="font-size:34px">🐕</span>
+      ${petBadgeHTML(def || dog)}
       <div class="grow"><div class="title">${def?.name || dog.id}</div>
       <div class="sub">等级 ${dog.level || 0} · 拦截 ${dog.intercepts || 0} 次 · 拦截率 ${dog.interceptionPct ?? Math.round((def?.intercept || 0) * 100)}%</div></div>
     </div>
