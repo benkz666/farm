@@ -53,6 +53,19 @@ func (a *Aggregate) Snapshot() FarmSnapshotJSON {
 	}
 }
 
+// VisitorSafeFarmSnapshot 去掉访客不应看到的个人经济字段（金币、经验、背包、仓库）。
+// 保留昵称/等级/地块，供拜访 HUD 与偷菜判定使用。不修改入参。
+func VisitorSafeFarmSnapshot(full FarmSnapshotJSON) FarmSnapshotJSON {
+	plots := append([]PlotSnapshot(nil), full.Plots...)
+	return FarmSnapshotJSON{
+		OwnerUID:      full.OwnerUID,
+		Nickname:      full.Nickname,
+		Level:         full.Level,
+		UnlockedPlots: full.UnlockedPlots,
+		Plots:         plots,
+	}
+}
+
 // PlotSnapshotOf 投影单地块。
 func PlotSnapshotOf(index uint8, p Plot) PlotSnapshot {
 	return PlotSnapshot{

@@ -36,6 +36,8 @@ const (
 	OperationPet          Operation = "pet"
 	OperationCrossReserve Operation = "cross_reserve"
 	OperationCrossSettle  Operation = "cross_settle"
+	OperationTaskClaim    Operation = "task_claim"
+	OperationDailyLogin   Operation = "daily_login_claim"
 	OperationMailClaim    Operation = "mail_claim"
 )
 
@@ -125,6 +127,11 @@ type MailClaimRequest struct {
 	MailID uint64 `json:"mail_id"`
 }
 
+// TaskClaimRequest identifies one completed daily task.
+type TaskClaimRequest struct {
+	TaskID uint32 `json:"task_id"`
+}
+
 // Runtime is the minimal Actor boundary needed by this RPC handler.
 type Runtime interface {
 	Do(uid uint64, fn func(*actor.FarmActor) error) error
@@ -140,6 +147,9 @@ type Handler struct {
 	playerDeltaPublisher PlayerDeltaPublisher
 	stealHints           StealHintWriter
 	taskProgress         TaskProgressWriter
+	taskNotifyPublisher  TaskNotifyPublisher
+	taskClaimer          TaskClaimer
+	dailyLoginClaimer    DailyLoginClaimer
 	mailClaimer          MailClaimer
 }
 
@@ -150,7 +160,17 @@ type StealHintWriter interface {
 
 // TaskProgressWriter advances gameplay-backed daily tasks.
 type TaskProgressWriter interface {
-	AdvanceTask(ctx context.Context, uid uint64, logicDay int64, taskID, amount uint32) error
+	AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskID, amount uint32) (store.TaskAdvanceResult, error)
+}
+
+// TaskClaimer atomically marks a completed task and credits its direct reward.
+type TaskClaimer interface {
+	ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (store.TaskReward, error)
+}
+
+// DailyLoginClaimer atomically records and credits the daily login reward.
+type DailyLoginClaimer interface {
+	ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (store.TaskReward, error)
 }
 
 // MailClaimer atomically marks and credits a mail attachment in durable storage.
@@ -187,6 +207,28 @@ func WithPlayerDeltaPublisher(publisher PlayerDeltaPublisher) Option {
 func WithTaskProgressWriter(tasks TaskProgressWriter) Option {
 	return func(handler *Handler) {
 		handler.taskProgress = tasks
+	}
+}
+
+// WithTaskNotifyPublisher emits task progress snapshots after changed gameplay
+// task records.
+func WithTaskNotifyPublisher(publisher TaskNotifyPublisher) Option {
+	return func(handler *Handler) {
+		handler.taskNotifyPublisher = publisher
+	}
+}
+
+// WithTaskClaimer enables Actor-serialized direct task reward claims.
+func WithTaskClaimer(claimer TaskClaimer) Option {
+	return func(handler *Handler) {
+		handler.taskClaimer = claimer
+	}
+}
+
+// WithDailyLoginClaimer enables Actor-serialized daily login reward claims.
+func WithDailyLoginClaimer(claimer DailyLoginClaimer) Option {
+	return func(handler *Handler) {
+		handler.dailyLoginClaimer = claimer
 	}
 }
 
@@ -276,6 +318,10 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 		return h.crossReserve(request)
 	case OperationCrossSettle:
 		return h.crossSettle(request)
+	case OperationTaskClaim:
+		return h.taskClaim(request)
+	case OperationDailyLogin:
+		return h.dailyLoginClaim(request)
 	case OperationMailClaim:
 		return h.mailClaim(request)
 	default:
@@ -609,6 +655,81 @@ func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
 	return CommandResponse{Err: code, Payload: marshalPayload(response)}
 }
 
+func (h *Handler) taskClaim(command CommandRequest) CommandResponse {
+	var request TaskClaimRequest
+	if err := decodeJSON(bytes.NewReader(command.Payload), &request); err != nil || request.TaskID == 0 {
+		return CommandResponse{Err: pkgerr.BadRequest}
+	}
+	return h.claimTask(command, request.TaskID, false)
+}
+
+func (h *Handler) claimTask(command CommandRequest, taskID uint32, dailyLoginCompatibility bool) CommandResponse {
+	if h.taskClaimer == nil {
+		return CommandResponse{Err: pkgerr.Internal}
+	}
+	var reward store.TaskReward
+	var claimErr error
+	var playerDelta farm.PlayerDelta
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
+		if farmActor == nil || farmActor.Aggregate == nil {
+			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		dayKey := gameconf.LocalDayKey(h.now())
+		reward, claimErr = h.taskClaimer.ClaimTask(context.Background(), command.FarmUID, dayKey, taskID)
+		if claimErr != nil {
+			return nil
+		}
+		farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp)
+		playerDelta = farmActor.Aggregate.PlayerDelta()
+		return nil
+	}); err != nil {
+		return CommandResponse{Err: pkgerr.Internal}
+	}
+	if claimErr != nil {
+		if dailyLoginCompatibility {
+			return CommandResponse{Err: dailyLoginErrorCode(claimErr)}
+		}
+		return CommandResponse{Err: taskClaimErrorCode(claimErr)}
+	}
+	h.publishPlayerDelta(command.FarmUID, playerDelta)
+	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(reward)}
+}
+
+func (h *Handler) dailyLoginClaim(command CommandRequest) CommandResponse {
+	if err := decodeJSON(bytes.NewReader(command.Payload), &struct{}{}); err != nil {
+		return CommandResponse{Err: pkgerr.BadRequest}
+	}
+	if h.taskClaimer != nil {
+		return h.claimTask(command, store.TaskDailyLoginID, true)
+	}
+	if h.dailyLoginClaimer == nil {
+		return CommandResponse{Err: pkgerr.Internal}
+	}
+	var reward store.TaskReward
+	var claimErr error
+	var playerDelta farm.PlayerDelta
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
+		if farmActor == nil || farmActor.Aggregate == nil {
+			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		dayKey := gameconf.LocalDayKey(h.now())
+		reward, claimErr = h.dailyLoginClaimer.ClaimDailyLogin(context.Background(), command.FarmUID, dayKey)
+		if claimErr != nil {
+			return nil
+		}
+		farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp)
+		playerDelta = farmActor.Aggregate.PlayerDelta()
+		return nil
+	}); err != nil {
+		return CommandResponse{Err: pkgerr.Internal}
+	}
+	if claimErr != nil {
+		return CommandResponse{Err: dailyLoginErrorCode(claimErr)}
+	}
+	h.publishPlayerDelta(command.FarmUID, playerDelta)
+	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(reward)}
+}
+
 func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 	if h.mailClaimer == nil {
 		return CommandResponse{Err: pkgerr.Internal}
@@ -641,6 +762,26 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(mail)}
 }
 
+func taskClaimErrorCode(err error) pkgerr.Code {
+	switch {
+	case errors.Is(err, store.ErrTaskNotComplete):
+		return pkgerr.TaskNotComplete
+	case errors.Is(err, store.ErrTaskAlreadyClaimed):
+		return pkgerr.TaskAlreadyClaimed
+	case errors.Is(err, store.ErrDailyLoginAlreadyClaimed):
+		return pkgerr.DuplicateOK
+	default:
+		return pkgerr.Internal
+	}
+}
+
+func dailyLoginErrorCode(err error) pkgerr.Code {
+	if errors.Is(err, store.ErrTaskAlreadyClaimed) || errors.Is(err, store.ErrDailyLoginAlreadyClaimed) {
+		return pkgerr.DuplicateOK
+	}
+	return taskClaimErrorCode(err)
+}
+
 func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) error {
 	if h.taskProgress == nil {
 		return nil
@@ -654,8 +795,15 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 	default:
 		return nil
 	}
-	logicDay := int64(gameconf.LogicDayID(gameconf.TimeProfileDemo, h.now()))
-	return h.taskProgress.AdvanceTask(context.Background(), uid, logicDay, taskID, 1)
+	dayKey := gameconf.LocalDayKey(h.now())
+	result, err := h.taskProgress.AdvanceTask(context.Background(), uid, dayKey, taskID, 1)
+	if err != nil {
+		return err
+	}
+	if result.Changed {
+		h.publishTaskNotify(uid, result.Task)
+	}
+	return nil
 }
 
 func (h *Handler) publishPlayerDelta(uid uint64, delta farm.PlayerDelta) {
@@ -665,6 +813,24 @@ func (h *Handler) publishPlayerDelta(uid uint64, delta farm.PlayerDelta) {
 	publisher := h.playerDeltaPublisher
 	go func() {
 		_ = publisher.PublishPlayerDelta(context.Background(), uid, delta)
+	}()
+}
+
+func (h *Handler) publishTaskNotify(uid uint64, task store.Task) {
+	if h.taskNotifyPublisher == nil || uid == 0 {
+		return
+	}
+	publisher := h.taskNotifyPublisher
+	go func() {
+		if err := publisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
+			obs.L().Error("farmrpc TaskNotify publish failed",
+				"component", "farmrpc",
+				"op", "publish_task_notify",
+				"uid", uid,
+				"task_id", task.ID,
+				"err", err.Error(),
+			)
+		}
 	}()
 }
 

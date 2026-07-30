@@ -9,6 +9,7 @@ import (
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/obs"
+	"farm/server/internal/store"
 	"farm/server/internal/wireenv"
 )
 
@@ -113,12 +114,46 @@ func (g *Gateway) PublishPlayerDelta(_ context.Context, uid uint64, delta farm.P
 	}
 	g.connections.Range(func(_, value any) bool {
 		connection, ok := value.(*wsConnection)
-		if ok && connection.uid == uid {
+		if ok && connection.uid == uid && connection.authed {
 			connection.pushPlayerDelta(delta)
 		}
 		return true
 	})
 	return nil
+}
+
+// PublishTaskNotify sends an authoritative daily-task snapshot to every local
+// connection authenticated as uid. Each connection retains its own latest
+// snapshot per task until its mailbox can write it.
+func (g *Gateway) PublishTaskNotify(_ context.Context, uid uint64, task store.Task) error {
+	if g == nil || uid == 0 {
+		return errors.New("gateway: invalid TaskNotify target")
+	}
+	g.connections.Range(func(_, value any) bool {
+		connection, ok := value.(*wsConnection)
+		if ok && connection.uid == uid && connection.authed {
+			connection.enqueueTaskNotify(task)
+		}
+		return true
+	})
+	return nil
+}
+
+// pushMailNotify 向 uid 的本机在线连接推送 MailNotify（9004）；对方不在本机则静默跳过。
+func (g *Gateway) pushMailNotify(uid uint64, kind string) {
+	if g == nil || uid == 0 {
+		return
+	}
+	payload := marshalPayload(struct {
+		Kind string `json:"kind"`
+	}{Kind: kind})
+	g.connections.Range(func(_, value any) bool {
+		connection, ok := value.(*wsConnection)
+		if ok && connection.uid == uid && connection.authed {
+			connection.pushMailNotify(payload)
+		}
+		return true
+	})
 }
 
 // Broadcast 向 delta.OwnerUID 房间中当前的全部订阅者推送增量。

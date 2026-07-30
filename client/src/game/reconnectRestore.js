@@ -9,8 +9,8 @@ const boundDisposeByClient = new WeakMap()
 /**
  * @typedef {{
  *   state: object,
- *   applyPatch: (state: object, payload: object) => void,
- *   setFarmView: (view: { ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND' }) => void,
+ *   applyPatch: (state: object, payload: object, opts?: { farmViewOnly?: boolean }) => void,
+ *   setFarmView: (view: { ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND', ownerName?: string|null }) => void,
  *   setOnlineBusy?: (busy: boolean) => void,
  *   getSelfUid?: () => number|null|undefined,
  *   refreshUI?: (info: { relation: 'SELF'|'FRIEND', visiting: boolean }) => void,
@@ -28,6 +28,7 @@ const boundDisposeByClient = new WeakMap()
  *   fail: (msg: string) => void,
  *   errText: (err: number) => string,
  *   onOfflineCleanup?: () => void,
+ *   onRestored?: () => void,
  * }} BindDeps
  */
 
@@ -35,7 +36,7 @@ const boundDisposeByClient = new WeakMap()
  * 丢弃未确认本地态，以 EnterFarm 权威快照强制覆盖。
  * @param {ApplyDeps} deps
  * @param {{ err?: number, payload?: object }} enterEnv
- * @param {{ toast?: string, fallbackOwnerUid?: number }} [opts]
+ * @param {{ toast?: string, fallbackOwnerUid?: number, ownerName?: string }} [opts]
  */
 export function applyAuthoritativeFarmEnter(deps, enterEnv, opts = {}) {
   if (!enterEnv || enterEnv.err !== 0) {
@@ -50,11 +51,15 @@ export function applyAuthoritativeFarmEnter(deps, enterEnv, opts = {}) {
     Number(deps.getSelfUid?.()) ||
     0
   const relation = payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF'
-  deps.applyPatch(deps.state, payload)
+  const ownerName = relation === 'FRIEND'
+    ? (opts.ownerName || snapshot.nickname || null)
+    : null
+  deps.applyPatch(deps.state, payload, { farmViewOnly: relation === 'FRIEND' })
   deps.setFarmView({
     ownerUid,
     farmSeq: Number(payload.farm_seq) || 0,
     relation,
+    ownerName,
   })
   deps.refreshUI?.({ relation, visiting: relation === 'FRIEND' })
   if (opts.toast) deps.toast?.(opts.toast, 'ok')
@@ -96,6 +101,7 @@ export function bindFarmReconnectRestore(deps) {
       applyAuthoritativeFarmEnter(deps, enterEnv, {
         toast: '连接已恢复，已同步农场状态',
       })
+      deps.onRestored?.()
     } catch (error) {
       deps.fail(error instanceof Error ? error.message : String(error))
     }

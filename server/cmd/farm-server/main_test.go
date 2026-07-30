@@ -22,6 +22,8 @@ func TestLoadConfigRequiresGatewayRPCSettings(t *testing.T) {
 	t.Setenv("FARM_ROLE", "gateway")
 	t.Setenv("FARM_INTERNAL_TOKEN", "")
 	t.Setenv("FARM_FARM_URLS", "")
+	t.Setenv("FARM_GATEWAY_URLS", "")
+	t.Setenv("FARM_INSTANCE_ID", "gateway-0")
 
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("loadConfig accepted gateway mode without internal RPC settings")
@@ -29,8 +31,23 @@ func TestLoadConfigRequiresGatewayRPCSettings(t *testing.T) {
 
 	t.Setenv("FARM_INTERNAL_TOKEN", "internal-token")
 	t.Setenv("FARM_FARM_URLS", `{"farm-0":"http://127.0.0.1:9100"}`)
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("loadConfig accepted gateway mode without TaskNotify Gateway topology")
+	}
+
+	t.Setenv("FARM_GATEWAY_URLS", `{"gateway-0":"not-a-url"}`)
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("loadConfig accepted malformed Gateway push endpoint")
+	}
+
+	t.Setenv("FARM_GATEWAY_URLS", `{"gateway-1":"http://127.0.0.1:9201"}`)
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("loadConfig accepted Gateway topology without this instance")
+	}
+
+	t.Setenv("FARM_GATEWAY_URLS", `{"gateway-0":"http://127.0.0.1:9200"}`)
 	if _, err := loadConfig(); err != nil {
-		t.Fatalf("loadConfig with gateway RPC settings: %v", err)
+		t.Fatalf("loadConfig with gateway RPC and TaskNotify settings: %v", err)
 	}
 }
 

@@ -84,6 +84,8 @@ const (
 	StealIntercepted    Code = 1411 // ERR_STEAL_INTERCEPTED 被看家狗抓住了
 	StealNoAfford       Code = 1412 // ERR_STEAL_NO_AFFORD 金币不足以承担被抓的赔付风险
 	UserNotFound        Code = 1413 // ERR_USER_NOT_FOUND 用户不存在
+	FriendRequestPending  Code = 1414 // ERR_FRIEND_REQUEST_PENDING 已发送过好友申请
+	FriendRequestNotFound Code = 1415 // ERR_FRIEND_REQUEST_NOT_FOUND 申请不存在或已处理
 )
 
 // 4.6 宠物（1500—1599）。

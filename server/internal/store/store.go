@@ -49,7 +49,7 @@ type FarmStore interface {
 	SaveFarm(ctx context.Context, agg *farm.Aggregate) error
 }
 
-// FriendStore 管理以 friendship 表为准的双向好友关系。
+// FriendStore 管理以 friendship 表为准的双向好友关系，以及待处理申请。
 type FriendStore interface {
 	AreFriends(ctx context.Context, a, b uint64) (bool, error)
 	AddFriends(ctx context.Context, a, b uint64) error
@@ -57,20 +57,25 @@ type FriendStore interface {
 	ListFriends(ctx context.Context, uid uint64) ([]FriendRow, error)
 	CountFriends(ctx context.Context, uid uint64) (int, error)
 	FindUserByUsername(ctx context.Context, username string) (UserSearchRow, error)
+	CreateFriendRequest(ctx context.Context, fromUID, toUID uint64) error
+	ListIncomingFriendRequests(ctx context.Context, uid uint64) ([]FriendRequestRow, error)
+	AcceptFriendRequest(ctx context.Context, toUID, fromUID uint64) error
+	RejectFriendRequest(ctx context.Context, toUID, fromUID uint64) error
 }
 
-// TaskMailStore 管理逻辑日任务、奖励邮件和附件领取。
-// 任务领奖与每日登录只创建邮件；附件在 MailClaim 时才入账。
+// TaskMailStore manages server-local calendar-day tasks, direct task rewards,
+// mail and attachment claims.
+// 任务与每日登录奖励直接入账；系统/管理员邮件附件在 MailClaim 时入账。
 type TaskMailStore interface {
-	ListTasks(ctx context.Context, uid uint64, logicDay int64) ([]Task, error)
-	AdvanceTask(ctx context.Context, uid uint64, logicDay int64, taskID, amount uint32) error
-	ClaimTask(ctx context.Context, uid uint64, logicDay int64, taskID uint32) (Mail, error)
+	ListTasks(ctx context.Context, uid uint64, dayKey int64) ([]Task, error)
+	AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskID, amount uint32) (TaskAdvanceResult, error)
+	ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (TaskReward, error)
 	ListMails(ctx context.Context, uid uint64) ([]Mail, error)
 	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error)
-	ClaimDailyLogin(ctx context.Context, uid uint64, logicDay int64) (Mail, error)
+	ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (TaskReward, error)
 }
 
-// Task 是当前逻辑日任务的客户端安全视图。
+// Task is the client-safe view of one calendar-day task.
 type Task struct {
 	ID         uint32 `json:"id"`
 	Title      string `json:"title"`
@@ -78,6 +83,20 @@ type Task struct {
 	Target     uint32 `json:"target"`
 	RewardCoin int64  `json:"reward_coin"`
 	Claimed    bool   `json:"claimed"`
+}
+
+// TaskAdvanceResult reports the persisted, client-safe task state after a
+// gameplay event. Changed and JustCompleted describe this specific advancement.
+type TaskAdvanceResult struct {
+	Task          Task
+	Changed       bool
+	JustCompleted bool
+}
+
+// TaskReward 是任务领取时直接入账的玩家奖励。
+type TaskReward struct {
+	Coin int64  `json:"coin"`
+	Exp  uint32 `json:"exp"`
 }
 
 // Mail 是个人邮件与其可领取金币附件。
@@ -106,6 +125,9 @@ var (
 	ErrAlreadyFriend            = errors.New("store: already friends")
 	ErrFriendLimitSelf          = errors.New("store: friend limit reached for self")
 	ErrFriendLimitPeer          = errors.New("store: friend limit reached for peer")
+	ErrCannotFriendSelf         = errors.New("store: cannot friend self")
+	ErrFriendRequestPending     = errors.New("store: friend request already pending")
+	ErrFriendRequestNotFound    = errors.New("store: friend request not found")
 	ErrTaskNotComplete          = errors.New("store: task not complete")
 	ErrTaskAlreadyClaimed       = errors.New("store: task already claimed")
 	ErrMailNotFound             = errors.New("store: mail not found")

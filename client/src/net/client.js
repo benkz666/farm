@@ -1,5 +1,7 @@
 /** 期 1/2 联调：HTTP auth + WS Envelope。不写入本地 game/state（由 applyPatch 负责）。 */
 
+import { parseJSONSafe, wireUid } from './jsonSafe.js'
+
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
 export const CMD_ENTER_FARM = 200
@@ -11,8 +13,14 @@ export const CMD_ACCEPT_INVITE = 404
 export const CMD_REMOVE_FRIEND = 406
 export const CMD_ADD_FRIEND_BY_UID = 408
 export const CMD_SEARCH_USER = 410
+export const CMD_REQUEST_FRIEND = 412
+export const CMD_LIST_FRIEND_REQUESTS = 414
+export const CMD_ACCEPT_FRIEND_REQUEST = 416
+export const CMD_REJECT_FRIEND_REQUEST = 418
 export const CMD_FARM_DELTA = 9000
 export const CMD_PLAYER_DELTA = 9002
+export const CMD_MAIL_NOTIFY = 9004
+export const CMD_TASK_NOTIFY = 9008
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -201,7 +209,8 @@ export class NetClient {
    * @returns {Promise<Envelope>}
    */
   enterFarm(ownerUid = 0) {
-    return this.request(CMD_ENTER_FARM, { owner_uid: ownerUid })
+    const uid = wireUid(ownerUid)
+    return this.request(CMD_ENTER_FARM, { owner_uid: uid == null ? 0 : uid })
   }
 
   /** 离开当前农场房间（cmd 202）。 */
@@ -211,12 +220,16 @@ export class NetClient {
 
   /**
    * 从指定序列补齐农场镜像（cmd 204）。
-   * @param {number} ownerUid
+   * @param {string|number} ownerUid
    * @param {number} fromSeq
    * @returns {Promise<Envelope>}
    */
   syncFarm(ownerUid, fromSeq) {
-    return this.request(CMD_SYNC_FARM, { owner_uid: ownerUid, from_seq: fromSeq })
+    const uid = wireUid(ownerUid)
+    return this.request(CMD_SYNC_FARM, {
+      owner_uid: uid == null ? 0 : uid,
+      from_seq: fromSeq,
+    })
   }
 
   /** 获取好友列表（cmd 400）。 */
@@ -244,16 +257,16 @@ export class NetClient {
    * @returns {Promise<Envelope>}
    */
   removeFriend(peerUid) {
-    return this.request(CMD_REMOVE_FRIEND, { peer_uid: peerUid })
+    return this.request(CMD_REMOVE_FRIEND, { peer_uid: wireUid(peerUid) })
   }
 
   /**
    * 按 UID 添加好友（cmd 408）。
-   * @param {number} peerUid
+   * @param {string|number} peerUid
    * @returns {Promise<Envelope>}
    */
   addFriendByUID(peerUid) {
-    return this.request(CMD_ADD_FRIEND_BY_UID, { peer_uid: peerUid })
+    return this.request(CMD_ADD_FRIEND_BY_UID, { peer_uid: wireUid(peerUid) })
   }
 
   /**
@@ -266,6 +279,38 @@ export class NetClient {
   }
 
   /**
+   * 发起好友申请（cmd 412）。搜索添加走申请；分享链接仍用 acceptInvite。
+   * @param {number} peerUid
+   */
+  requestFriend(peerUid) {
+    const uid = wireUid(peerUid)
+    return this.request(CMD_REQUEST_FRIEND, { peer_uid: uid })
+  }
+
+  /** 收到的好友申请列表（cmd 414）。 */
+  listFriendRequests() {
+    return this.request(CMD_LIST_FRIEND_REQUESTS, {})
+  }
+
+  /**
+   * 同意好友申请（cmd 416）。
+   * @param {string|number} fromUid
+   */
+  acceptFriendRequest(fromUid) {
+    const uid = wireUid(fromUid)
+    return this.request(CMD_ACCEPT_FRIEND_REQUEST, { from_uid: uid })
+  }
+
+  /**
+   * 拒绝好友申请（cmd 418）。
+   * @param {string|number} fromUid
+   */
+  rejectFriendRequest(fromUid) {
+    const uid = wireUid(fromUid)
+    return this.request(CMD_REJECT_FRIEND_REQUEST, { from_uid: uid })
+  }
+
+  /**
    * 偷菜（cmd 222）。拜访好友农场时使用；不做数量乐观预测。
    * @param {number} ownerUid
    * @param {number} plotIndex
@@ -273,8 +318,9 @@ export class NetClient {
    * @returns {Promise<Envelope>}
    */
   steal(ownerUid, plotIndex, cropId) {
+    const uid = wireUid(ownerUid)
     return this.request(CMD_STEAL, {
-      owner_uid: ownerUid,
+      owner_uid: uid == null ? 0 : uid,
       plot_index: plotIndex,
       crop_id: cropId,
     })
@@ -309,7 +355,7 @@ export class NetClient {
   }
 
   /**
-   * 领取任务奖励（cmd 602）；奖励进邮件。
+   * 领取任务奖励（cmd 602）；奖励直接入账。
    * @param {number} taskId
    * @returns {Promise<Envelope>}
    */
@@ -368,6 +414,23 @@ export class NetClient {
   }
 
   /**
+   * MailNotify（cmd 9004）个人通知：邻里申请 / 新邮件提示。
+   * @param {(env: Envelope) => void} handler
+   */
+  onMailNotify(handler) {
+    return this.onPush(CMD_MAIL_NOTIFY, handler)
+  }
+
+  /**
+   * TaskNotify（cmd 9008）个人通知：单条每日任务权威状态。
+   * @param {(env: Envelope) => void} handler
+   * @returns {() => void}
+   */
+  onTaskNotify(handler) {
+    return this.onPush(CMD_TASK_NOTIFY, handler)
+  }
+
+  /**
    * 重连并完成 EnterFarm 权威恢复后通知（全量快照）。返回取消订阅函数。
    * @param {(envelope: Envelope) => void} handler
    * @returns {() => void}
@@ -396,8 +459,9 @@ export class NetClient {
    * @returns {Promise<Envelope>}
    */
   plotAction(cmd, plotIndex, arg = 0, ownerUid = 0) {
+    const uid = wireUid(ownerUid)
     return this.request(cmd, {
-      owner_uid: ownerUid,
+      owner_uid: uid == null ? 0 : uid,
       plot_index: plotIndex,
       arg,
     })
@@ -485,7 +549,13 @@ export class NetClient {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username, password }),
     })
-    const body = await response.json().catch(() => ({}))
+    const raw = await response.text()
+    let body = {}
+    try {
+      body = raw ? parseJSONSafe(raw) : {}
+    } catch {
+      body = {}
+    }
     if (!response.ok) {
       const err = body && typeof body.err === 'number' ? body.err : response.status
       const error = new Error(`net: ${path} failed err=${err}`)
@@ -759,7 +829,7 @@ export class NetClient {
     if (ws != null && this._ws != null && this._ws !== ws) return
     let envelope
     try {
-      envelope = JSON.parse(typeof event.data === 'string' ? event.data : String(event.data))
+      envelope = parseJSONSafe(typeof event.data === 'string' ? event.data : String(event.data))
     } catch {
       return
     }

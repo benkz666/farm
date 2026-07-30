@@ -13,7 +13,9 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/store"
 )
 
 func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
@@ -183,6 +185,108 @@ func TestHandlerExecutesShardedPlotShopSyncAndPetCommands(t *testing.T) {
 	}
 }
 
+func TestHandlerTaskClaimCreditsDirectReward(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	handler := NewHandler(
+		runtimeStub{actor: &actor.FarmActor{Aggregate: aggregate}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTaskClaimer(taskClaimerStub{reward: store.TaskReward{Coin: 20}}),
+	)
+
+	response := handler.execute(CommandRequest{
+		Operation: OperationTaskClaim,
+		FarmUID:   42,
+		Payload:   marshalPayload(TaskClaimRequest{TaskID: 1}),
+	})
+
+	if response.Err != pkgerr.OK {
+		t.Fatalf("TaskClaim response = %#v", response)
+	}
+	var reward store.TaskReward
+	if err := json.Unmarshal(response.Payload, &reward); err != nil {
+		t.Fatalf("decode TaskClaim reward: %v", err)
+	}
+	if reward.Coin != 20 || aggregate.Coin != 1020 {
+		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
+	}
+}
+
+func TestHandlerDailyLoginCreditsDirectReward(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
+	claimer := &recordingTaskClaimer{reward: store.TaskReward{Coin: 100}}
+	handler := NewHandler(
+		runtimeStub{actor: &actor.FarmActor{Aggregate: aggregate}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return now },
+		WithTaskClaimer(claimer),
+	)
+
+	response := handler.execute(CommandRequest{
+		Operation: OperationDailyLogin,
+		FarmUID:   42,
+		Payload:   marshalPayload(struct{}{}),
+	})
+
+	if response.Err != pkgerr.OK {
+		t.Fatalf("DailyLogin response = %#v", response)
+	}
+	var reward store.TaskReward
+	if err := json.Unmarshal(response.Payload, &reward); err != nil {
+		t.Fatalf("decode DailyLogin reward: %v", err)
+	}
+	if reward.Coin != 100 || aggregate.Coin != 1100 {
+		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
+	}
+	if claimer.taskID != store.TaskDailyLoginID || claimer.dayKey != gameconf.LocalDayKey(now) {
+		t.Fatalf("legacy daily login claimed task=%d day=%d, want task=%d day=%d",
+			claimer.taskID, claimer.dayKey, store.TaskDailyLoginID, gameconf.LocalDayKey(now))
+	}
+}
+
+func TestHandlerPublishesTaskNotifyOnlyWhenProgressChanges(t *testing.T) {
+	task := store.Task{
+		ID: 1, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
+	}
+	progress := &taskProgressStub{results: []store.TaskAdvanceResult{
+		{Task: task, Changed: true, JustCompleted: true},
+		{Task: task, Changed: false},
+	}}
+	publisher := &taskNotifyPublisherStub{published: make(chan store.Task, 2)}
+	handler := NewHandler(
+		runtimeStub{actor: &actor.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTaskProgressWriter(progress),
+		WithTaskNotifyPublisher(publisher),
+	)
+
+	if err := handler.advanceGameplayTask(42, farm.Plant); err != nil {
+		t.Fatalf("first advanceGameplayTask: %v", err)
+	}
+	select {
+	case got := <-publisher.published:
+		if got != task {
+			t.Fatalf("TaskNotify payload = %#v, want %#v", got, task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for TaskNotify")
+	}
+
+	if err := handler.advanceGameplayTask(42, farm.Plant); err != nil {
+		t.Fatalf("second advanceGameplayTask: %v", err)
+	}
+	select {
+	case got := <-publisher.published:
+		t.Fatalf("unexpected TaskNotify for unchanged task: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestHandlerAcceptsCompositeOriginatorConnection(t *testing.T) {
 	runtime := runtimeStub{actor: &actor.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
 	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
@@ -253,6 +357,49 @@ func TestHandlerReturnsBeforeSlowDeltaFanout(t *testing.T) {
 
 type runtimeStub struct {
 	actor *actor.FarmActor
+}
+
+type taskClaimerStub struct {
+	reward store.TaskReward
+}
+
+func (s taskClaimerStub) ClaimTask(context.Context, uint64, int64, uint32) (store.TaskReward, error) {
+	return s.reward, nil
+}
+
+func (s taskClaimerStub) ClaimDailyLogin(context.Context, uint64, int64) (store.TaskReward, error) {
+	return s.reward, nil
+}
+
+type recordingTaskClaimer struct {
+	reward store.TaskReward
+	taskID uint32
+	dayKey int64
+}
+
+func (s *recordingTaskClaimer) ClaimTask(_ context.Context, _ uint64, dayKey int64, taskID uint32) (store.TaskReward, error) {
+	s.taskID = taskID
+	s.dayKey = dayKey
+	return s.reward, nil
+}
+
+type taskProgressStub struct {
+	results []store.TaskAdvanceResult
+}
+
+func (s *taskProgressStub) AdvanceTask(context.Context, uint64, int64, uint32, uint32) (store.TaskAdvanceResult, error) {
+	result := s.results[0]
+	s.results = s.results[1:]
+	return result, nil
+}
+
+type taskNotifyPublisherStub struct {
+	published chan store.Task
+}
+
+func (p *taskNotifyPublisherStub) PublishTaskNotify(_ context.Context, _ uint64, task store.Task) error {
+	p.published <- task
+	return nil
 }
 
 type deltaPublisherStub struct {

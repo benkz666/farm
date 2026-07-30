@@ -14,7 +14,9 @@ import (
 
 	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/store"
 	"farm/server/internal/wireenv"
 )
@@ -49,8 +51,16 @@ type wsConnection struct {
 	roomUID uint64
 	// holdFarmDeltas keeps a newly-entered client from observing a delta before
 	// its EnterFarm snapshot has reached the wire.
-	holdFarmDeltas bool
-	heldFarmDeltas []farm.FarmDelta
+	holdFarmDeltas    bool
+	heldFarmDeltas    []farm.FarmDelta
+	taskNotifyMu      sync.Mutex
+	taskNotifyReady   bool
+	taskNotifyClosed  bool
+	taskNotifyStarted bool
+	taskNotifyMailbox map[uint32]store.Task
+	taskNotifyWake    chan struct{}
+	taskNotifyStop    chan struct{}
+	taskNotifyDone    chan struct{}
 }
 
 type handshakeRequest struct {
@@ -74,7 +84,7 @@ type pongResponse struct {
 }
 
 type enterFarmRequest struct {
-	OwnerUID uint64 `json:"owner_uid"`
+	OwnerUID pkgjson.UID `json:"owner_uid"`
 }
 
 type enterFarmResponse struct {
@@ -113,6 +123,7 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		g.leaveFarm(&connection)
+		connection.closeTaskNotify()
 		if connection.authed {
 			g.unregisterConnection(context.Background(), &connection)
 		}
@@ -177,6 +188,9 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		if respondErr != nil {
 			return
 		}
+		if request.Cmd == CommandHandshake && response.Err == pkgerr.OK {
+			connection.enableTaskNotify(g)
+		}
 	}
 }
 
@@ -222,12 +236,13 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			return response
 		}
 		connection.uid = uid
+		connection.authed = true
 		if err := g.registerConnection(context.Background(), connection); err != nil {
+			connection.authed = false
 			connection.uid = 0
 			response.Err = pkgerr.Internal
 			return response
 		}
-		connection.authed = true
 		response.Payload = marshalPayload(handshakeResponse{UID: uid})
 		return response
 	}
@@ -260,7 +275,9 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 	case CommandPetStatus, CommandPetActivate, CommandPetFeed:
 		return g.handlePet(connection, request)
 	case CommandFriendList, CommandGenShareLink, CommandAcceptInvite,
-		CommandRemoveFriend, CommandAddFriendByUID, CommandSearchUser:
+		CommandRemoveFriend, CommandAddFriendByUID, CommandSearchUser,
+		CommandRequestFriend, CommandListFriendRequests,
+		CommandAcceptFriendRequest, CommandRejectFriendRequest:
 		return g.handleFriendRequest(connection, request)
 	case CommandTaskList, CommandTaskClaim, CommandMailList, CommandMailClaim, CommandClaimDailyLogin:
 		return g.handleTaskMailRequest(connection, request)
@@ -358,6 +375,166 @@ func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) {
 		ClientSeq: 0,
 		Payload:   marshalPayload(delta),
 	})
+}
+
+func (connection *wsConnection) pushMailNotify(payload json.RawMessage) {
+	if connection == nil {
+		return
+	}
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
+	_ = connection.respondLocked(Envelope{
+		Cmd:       CommandMailNotify,
+		ClientSeq: 0,
+		Payload:   payload,
+	})
+}
+
+func (connection *wsConnection) pushTaskNotify(task store.Task) error {
+	if connection == nil {
+		return errors.New("gateway: nil TaskNotify connection")
+	}
+	connection.writeMu.Lock()
+	defer connection.writeMu.Unlock()
+	return connection.respondLocked(Envelope{
+		Cmd:       CommandTaskNotify,
+		ClientSeq: 0,
+		Payload:   marshalPayload(task),
+	})
+}
+
+// enqueueTaskNotify merges the newest state for one of the four fixed daily
+// task IDs. A mailbox is intentionally retained before ready so a push racing
+// a successful Handshake is emitted only after its response reaches the wire.
+func (connection *wsConnection) enqueueTaskNotify(task store.Task) bool {
+	if connection == nil || !isTaskNotifyID(task.ID) {
+		return false
+	}
+	connection.taskNotifyMu.Lock()
+	defer connection.taskNotifyMu.Unlock()
+	if connection.taskNotifyClosed {
+		return false
+	}
+	if connection.taskNotifyMailbox == nil {
+		connection.taskNotifyMailbox = make(map[uint32]store.Task, store.TaskDailyLoginID)
+	}
+	connection.taskNotifyMailbox[task.ID] = task
+	if connection.taskNotifyReady {
+		connection.signalTaskNotifyLocked()
+	}
+	return true
+}
+
+// enableTaskNotify starts the one bounded mailbox dispatcher only after the
+// Handshake response has been written successfully.
+func (connection *wsConnection) enableTaskNotify(gateway *Gateway) {
+	if connection == nil {
+		return
+	}
+	connection.taskNotifyMu.Lock()
+	if connection.taskNotifyClosed || connection.taskNotifyStarted {
+		connection.taskNotifyMu.Unlock()
+		return
+	}
+	connection.taskNotifyReady = true
+	connection.taskNotifyStarted = true
+	connection.taskNotifyWake = make(chan struct{}, 1)
+	connection.taskNotifyStop = make(chan struct{})
+	connection.taskNotifyDone = make(chan struct{})
+	connection.taskNotifyMu.Unlock()
+	go connection.runTaskNotifyMailbox(gateway)
+}
+
+func (connection *wsConnection) closeTaskNotify() {
+	if connection == nil {
+		return
+	}
+	connection.taskNotifyMu.Lock()
+	if connection.taskNotifyClosed {
+		connection.taskNotifyMu.Unlock()
+		return
+	}
+	connection.taskNotifyClosed = true
+	if connection.taskNotifyStarted {
+		close(connection.taskNotifyStop)
+	}
+	connection.taskNotifyMailbox = nil
+	connection.taskNotifyMu.Unlock()
+}
+
+func (connection *wsConnection) runTaskNotifyMailbox(gateway *Gateway) {
+	defer close(connection.taskNotifyDone)
+	for {
+		connection.taskNotifyMu.Lock()
+		if connection.taskNotifyClosed {
+			connection.taskNotifyMu.Unlock()
+			return
+		}
+		task, ok := connection.takeTaskNotifyLocked()
+		if !ok {
+			wake := connection.taskNotifyWake
+			stop := connection.taskNotifyStop
+			connection.taskNotifyMu.Unlock()
+			select {
+			case <-wake:
+			case <-stop:
+				return
+			}
+			continue
+		}
+		connection.taskNotifyMu.Unlock()
+
+		deliver := gateway.taskNotifyDelivery
+		if deliver == nil {
+			deliver = func(connection *wsConnection, task store.Task) error {
+				return connection.pushTaskNotify(task)
+			}
+		}
+		if err := deliver(connection, task); err != nil {
+			obs.L().Debug("gateway TaskNotify delivery failed",
+				"component", "gateway",
+				"op", "deliver_task_notify",
+				"uid", connection.uid,
+				"conn_id", connection.id,
+				"task_id", task.ID,
+				"err", err.Error(),
+			)
+		}
+	}
+}
+
+func (connection *wsConnection) takeTaskNotifyLocked() (store.Task, bool) {
+	var (
+		selectedID uint32
+		task       store.Task
+	)
+	for taskID, candidate := range connection.taskNotifyMailbox {
+		if selectedID == 0 || taskID < selectedID {
+			selectedID = taskID
+			task = candidate
+		}
+	}
+	if selectedID == 0 {
+		return store.Task{}, false
+	}
+	delete(connection.taskNotifyMailbox, selectedID)
+	return task, true
+}
+
+func (connection *wsConnection) signalTaskNotifyLocked() {
+	select {
+	case connection.taskNotifyWake <- struct{}{}:
+	default:
+	}
+}
+
+func isTaskNotifyID(taskID uint32) bool {
+	switch taskID {
+	case store.TaskPlantID, store.TaskHarvestID, store.TaskVisitID, store.TaskDailyLoginID:
+		return true
+	default:
+		return false
+	}
 }
 
 func (connection *wsConnection) subscribedTo(ownerUID uint64) bool {

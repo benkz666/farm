@@ -1,0 +1,29 @@
+package gameconf
+
+import (
+	"testing"
+	"time"
+)
+
+func TestLocalDayKeyAndNextResetAtMidnightBoundaries(t *testing.T) {
+	originalLocal := time.Local
+	time.Local = time.FixedZone("UTC+8", 8*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	beforeMidnight := time.Date(2026, time.July, 30, 23, 59, 59, 999*int(time.Millisecond), time.Local).UnixMilli()
+	midnight := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.Local).UnixMilli()
+	nextMidnight := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.Local).UnixMilli()
+
+	if got := LocalDayKey(beforeMidnight); got != 20260730 {
+		t.Fatalf("LocalDayKey(23:59:59.999) = %d, want 20260730", got)
+	}
+	if got := NextLocalDayResetMs(beforeMidnight); got != midnight {
+		t.Fatalf("NextLocalDayResetMs(23:59:59.999) = %d, want %d", got, midnight)
+	}
+	if got := LocalDayKey(midnight); got != 20260731 {
+		t.Fatalf("LocalDayKey(00:00:00) = %d, want 20260731", got)
+	}
+	if got := NextLocalDayResetMs(midnight); got != nextMidnight {
+		t.Fatalf("NextLocalDayResetMs(00:00:00) = %d, want %d", got, nextMidnight)
+	}
+}

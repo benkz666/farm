@@ -22,6 +22,7 @@ import (
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/routing"
 	"farm/server/internal/store"
 	"farm/server/internal/wireenv"
@@ -40,33 +41,36 @@ type FarmRuntime interface {
 
 // Gateway owns the HTTP and WebSocket transport adapters.
 type Gateway struct {
-	auth              Authenticator
-	sessions          store.SessionStore
-	runtime           FarmRuntime
-	farmRPC           farmrpc.Client
-	routes            *routing.RouteTable
-	friends           store.FriendStore
-	inviteSecret      []byte
-	now               func() int64
-	offsetMs          atomic.Int64
-	rooms             *RoomHub
-	nextConnID        atomic.Uint64
-	connRegistry      *connreg.Registry
-	gatewayID         string
-	connections       sync.Map
-	pushToken         []byte
-	allowDebug        bool
-	crossBus          bus.EventBus
-	crossEnabled      bool
-	crossPending      sync.Map
-	nextCrossReqID    atomic.Uint64
-	crossSubscribeErr error
-	stealHints        store.StealHintStore
-	taskMail          store.TaskMailStore
-	debugFarmURLs     map[string]string
-	debugGatewayURLs  map[string]string
-	debugFarmToken    string
-	metrics           *obs.Metrics
+	auth                      Authenticator
+	sessions                  store.SessionStore
+	runtime                   FarmRuntime
+	farmRPC                   farmrpc.Client
+	routes                    *routing.RouteTable
+	friends                   store.FriendStore
+	inviteSecret              []byte
+	now                       func() int64
+	offsetMs                  atomic.Int64
+	rooms                     *RoomHub
+	nextConnID                atomic.Uint64
+	connRegistry              *connreg.Registry
+	gatewayID                 string
+	connections               sync.Map
+	pushToken                 []byte
+	allowDebug                bool
+	crossBus                  bus.EventBus
+	crossEnabled              bool
+	crossPending              sync.Map
+	nextCrossReqID            atomic.Uint64
+	crossSubscribeErr         error
+	stealHints                store.StealHintStore
+	taskMail                  store.TaskMailStore
+	taskNotifyFanout          farmrpc.TaskNotifyPublisher
+	taskNotifyDelivery        func(*wsConnection, store.Task) error
+	afterConnectionRegistered func(*wsConnection) // test seam for pre-ready pushes
+	debugFarmURLs             map[string]string
+	debugGatewayURLs          map[string]string
+	debugFarmToken            string
+	metrics                   *obs.Metrics
 }
 
 // Option configures optional Gateway boundaries.
@@ -90,6 +94,14 @@ func WithStealHintStore(hints store.StealHintStore) Option {
 func WithTaskMailStore(taskMail store.TaskMailStore) Option {
 	return func(gateway *Gateway) {
 		gateway.taskMail = taskMail
+	}
+}
+
+// WithTaskNotifyFanout forwards local Gateway-owned task updates to every
+// connection leased for the player across Gateway instances.
+func WithTaskNotifyFanout(publisher farmrpc.TaskNotifyPublisher) Option {
+	return func(gateway *Gateway) {
+		gateway.taskNotifyFanout = publisher
 	}
 }
 
@@ -240,6 +252,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/internal/v1/push/farm-delta", g.receiveFarmDelta)
 	mux.HandleFunc("/internal/v1/push/farm-delta-batch", g.receiveFarmDeltaBatch)
 	mux.HandleFunc("/internal/v1/push/player-delta", g.receivePlayerDelta)
+	mux.HandleFunc("/internal/v1/push/task-notify", g.receiveTaskNotify)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 		mux.HandleFunc("/internal/v1/debug/advance", g.debugAdvanceLocal)
@@ -270,21 +283,29 @@ func (g *Gateway) connectionRef(connection *wsConnection) connreg.ConnRef {
 }
 
 func (g *Gateway) registerConnection(ctx context.Context, connection *wsConnection) error {
-	if connection == nil || connection.id == 0 || connection.uid == 0 {
+	if connection == nil || connection.id == 0 || connection.uid == 0 || !connection.authed {
 		return errors.New("gateway: invalid websocket connection")
 	}
 	if g.connRegistry == nil {
+		g.connections.Store(connection.id, connection)
+		g.afterRegisterConnection(connection)
 		return nil
 	}
 	if g.gatewayID == "" {
 		return errors.New("gateway: connection registry requires a gateway ID")
 	}
-	g.connections.Store(connection.id, connection)
 	if err := g.connRegistry.Register(ctx, connection.uid, connection.id, g.gatewayID); err != nil {
-		g.connections.Delete(connection.id)
 		return err
 	}
+	g.connections.Store(connection.id, connection)
+	g.afterRegisterConnection(connection)
 	return nil
+}
+
+func (g *Gateway) afterRegisterConnection(connection *wsConnection) {
+	if g.afterConnectionRegistered != nil {
+		g.afterConnectionRegistered(connection)
+	}
 }
 
 func (g *Gateway) unregisterConnection(ctx context.Context, connection *wsConnection) {
@@ -440,6 +461,33 @@ func (g *Gateway) receivePlayerDelta(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (g *Gateway) receiveTaskNotify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !g.authorizedPush(r.Header.Get("Authorization")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var request farmrpc.TaskNotifyPushRequest
+	if err := decodeJSON(io.LimitReader(r.Body, 64<<10), &request); err != nil ||
+		request.ConnectionID == 0 || request.UID == 0 || !isTaskNotifyID(request.Task.ID) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	connection, ok := g.connections.Load(request.ConnectionID)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	wsConnection := connection.(*wsConnection)
+	if wsConnection.uid == request.UID && wsConnection.authed {
+		wsConnection.enqueueTaskNotify(request.Task)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (g *Gateway) authorizedPush(header string) bool {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) || len(g.pushToken) == 0 {
@@ -551,9 +599,9 @@ type authRequest struct {
 }
 
 type authResponse struct {
-	UID   uint64 `json:"uid"`
-	Token string `json:"token"`
-	WSURL string `json:"ws_url"`
+	UID   pkgjson.UID `json:"uid"`
+	Token string      `json:"token"`
+	WSURL string      `json:"ws_url"`
 }
 
 type errorResponse struct {
@@ -600,7 +648,7 @@ func (g *Gateway) handleAuth(
 	}
 
 	writeJSON(w, http.StatusOK, authResponse{
-		UID:   uid,
+		UID:   pkgjson.UID(uid),
 		Token: token,
 		WSURL: websocketURL(r),
 	})

@@ -7,15 +7,17 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/store"
 )
 
 type plotActionRequest struct {
-	OwnerUID  uint64 `json:"owner_uid"`
-	PlotIndex uint32 `json:"plot_index"`
-	Arg       uint32 `json:"arg"`
+	OwnerUID  pkgjson.UID `json:"owner_uid"`
+	PlotIndex uint32      `json:"plot_index"`
+	Arg       uint32      `json:"arg"`
 }
 
 type shopRequest struct {
@@ -56,7 +58,8 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			response.Err = pkgerr.BadRequest
 			return response
 		}
-		if payload.OwnerUID != 0 && payload.OwnerUID != connection.uid {
+		ownerUID := uint64(payload.OwnerUID)
+		if ownerUID != 0 && ownerUID != connection.uid {
 			response.Err = pkgerr.NotOwner
 			return response
 		}
@@ -78,7 +81,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				Operation:  farmrpc.OperationPlotAction,
 				Originator: g.connectionRef(connection),
 				Payload: marshalPayload(farmrpc.PlotActionRequest{
-					OwnerUID:  payload.OwnerUID,
+					OwnerUID:  ownerUID,
 					PlotIndex: payload.PlotIndex,
 					Arg:       payload.Arg,
 					Kind:      kind,
@@ -274,7 +277,44 @@ func (g *Gateway) advanceTask(uid uint64, taskID uint32) error {
 	if g.taskMail == nil {
 		return nil
 	}
-	return g.taskMail.AdvanceTask(context.Background(), uid, int64(g.logicDayID()), taskID, 1)
+	result, err := g.taskMail.AdvanceTask(context.Background(), uid, gameconf.LocalDayKey(g.Now()), taskID, 1)
+	if err != nil {
+		return err
+	}
+	if result.Changed {
+		g.publishTaskNotify(uid, result.Task)
+	}
+	return nil
+}
+
+func (g *Gateway) publishTaskNotify(uid uint64, task store.Task) {
+	if g == nil || uid == 0 {
+		return
+	}
+	if g.taskNotifyFanout == nil {
+		if err := g.PublishTaskNotify(context.Background(), uid, task); err != nil {
+			obs.L().Error("gateway TaskNotify publish failed",
+				"component", "gateway",
+				"op", "publish_task_notify",
+				"uid", uid,
+				"task_id", task.ID,
+				"err", err.Error(),
+			)
+		}
+		return
+	}
+	publisher := g.taskNotifyFanout
+	go func() {
+		if err := publisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
+			obs.L().Error("gateway TaskNotify fan-out failed",
+				"component", "gateway",
+				"op", "fanout_task_notify",
+				"uid", uid,
+				"task_id", task.ID,
+				"err", err.Error(),
+			)
+		}
+	}()
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

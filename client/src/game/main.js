@@ -3,15 +3,15 @@
 // 规则实现严格对照 docs/design/game-design-full.md
 // ============================================================
 import {
-  TIME_SCALES, CROP_MAP, FERTILIZERS, DOGS, EXPANSION, TASK_POOL,
+  TIME_SCALES, CROP_MAP, FERTILIZERS, DOGS, EXPANSION,
   YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO, DOG_BOWL_CAP, DOG_FOOD_SHOP_ITEM_ID,
-  CODEX_MILESTONES, stageCount, STAGE_NAMES_3, STAGE_NAMES_4, levelUpGold, logicDayMs,
+  stageCount, STAGE_NAMES_3, STAGE_NAMES_4, logicDayPhase,
 } from './config.js';
-import { PLOT, defaultState, clearSave, levelOf, drawDailyTasks, applyMailClaimReceipt } from './state.js';
+import { PLOT, defaultState, applyMailClaimReceipt } from './state.js';
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
-import { enterOnline, isOnline, leaveOnline, session, setFarmView } from '../net/session.js';
+import { enterOnline, isOnline, leaveOnline, logout, session, setFarmView } from '../net/session.js';
 import { CMD_FERTILIZE, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import { applyPatch, cropKeyToId } from './applyPatch.js';
@@ -24,11 +24,25 @@ import {
 } from './reconnectRestore.js';
 import { cropOf, stageOf, computePlotInfo } from './plotInfo.js';
 import { bindPageUnload } from './pageLifecycle.js';
+import {
+  applyTaskListSchedule,
+  createTaskResetScheduler,
+  taskRefreshResultFromOutcome,
+} from './taskResetTimer.js';
+import { createTaskSession } from './taskSession.js';
+import { openTasksPanel } from './taskPanel.js';
+
+// Vite 热更新会重新执行本模块，但不一定触发 pagehide。保留状态和连接，
+// 由新模块接管；否则旧实例与新实例会同时更新同一组 HUD。
+const previousActiveRuntime = window.__farmActiveRuntime;
+const hmrRuntime = import.meta.hot?.data?.runtime || previousActiveRuntime?.snapshot?.() || null;
+const runtimeHandle = {};
+// Vite 未能调用旧模块 dispose 时，也由全局槽位兜底释放上一实例。
+// 这防止旧 tick 在后续热更新中继续写入 HUD。
+previousActiveRuntime?.dispose?.();
 
 // ---------------- 初始化（期 3：无本地权威存档；状态由 snapshot/Rsp 驱动） ----------------
-clearSave(); // 清理遗留 farm3d_save_v1，避免误以为本地仍可玩
-let state = defaultState();
-if (!state.tasks.length) drawDailyTasks(state);
+let state = hmrRuntime?.state || defaultState();
 state.settings = state.settings || { sound: true };
 
 const sfx = new SFX();
@@ -42,27 +56,96 @@ let selectedFert = null;
 let hoverPlot = null;
 
 /** @type {import('../net/client.js').NetClient|null} */
-let netClient = null;
+let netClient = hmrRuntime?.netClient || null;
 let farmMirror = null;
 let stopDeltaSubscription = null;
 let stopPlayerDeltaSubscription = null;
+let stopMailNotifySubscription = null;
+let stopTaskNotifySubscription = null;
 /** @type {{ dispose: () => void }|null} */
 let reconnectBinding = null;
+let removePageUnload = null;
 /** 等 Rsp 期间防连点 */
 let onlineBusy = false;
+let runtimeDisposed = false;
+/** 服务端下次自然日 00:00（Unix 毫秒） */
+let taskResetAt = 0;
+
+/** @type {ReturnType<typeof createTaskResetScheduler>|null} */
+let taskResetScheduler = null;
+/** @type {ReturnType<typeof createTaskSession>|null} */
+let taskSession = null;
+
+function createLiveTaskResetScheduler() {
+  return createTaskResetScheduler({
+    setTimeout,
+    clearTimeout,
+    // timer 回调只拉取/应用；stale 不改 timer，真实失败才 retry
+    refresh: async () => taskRefreshResultFromOutcome(await pullAndApplyTasks()),
+  });
+}
+
+function ensureTaskSession() {
+  if (!taskSession || taskSession.disposed) {
+    taskSession = createTaskSession();
+  }
+  return taskSession;
+}
+
+/** 登录绑定 / 重连恢复：使旧 task 请求上下文失效（即使复用 client）。 */
+function invalidateTaskSession() {
+  ensureTaskSession().invalidate();
+}
+
+/** 卸载/登出/pagehide/HMR：dispose session + scheduler，在途结果不得写 state/排程。 */
+function disposeTaskRuntime() {
+  taskSession?.dispose();
+  taskSession = null;
+  taskResetScheduler?.dispose();
+  taskResetScheduler = null;
+  taskResetAt = 0;
+}
+
+/** 登录/重连/HMR 接管：需要时创建新 scheduler。 */
+function ensureTaskResetScheduler() {
+  if (!taskResetScheduler || taskResetScheduler.disposed) {
+    taskResetScheduler = createLiveTaskResetScheduler();
+  }
+  return taskResetScheduler;
+}
+
+function taskUiSinks({ renderOpenTasks = true } = {}) {
+  return {
+    getTasks: () => state.tasks,
+    setTasks: (tasks) => { state.tasks = tasks; },
+    setResetAt: (v) => { taskResetAt = v; },
+    afterApply: () => {
+      ui.updateHUD(state);
+      if (renderOpenTasks && isTasksModalOpen()) ui.renderTasks(state, taskRemainMs());
+    },
+  };
+}
+
+function taskRemainMs() {
+  if (!taskResetAt) return null;
+  return Math.max(0, taskResetAt - Date.now());
+}
+
+function isTasksModalOpen() {
+  return ui.isPanelOpen('tasks');
+}
 
 const hourMs = () => TIME_SCALES[state.timeScale].hourMs;
-const myLevel = () => levelOf(state.exp);
 const fertilizerKeyToId = (key) => ({ normal: 1, fast: 2, super: 3 }[key] || 0);
 
 const TOOLS_HOME = [
-  { id: 'till', name: '锄地', icon: '⛏️' },
   { id: 'plant', name: '播种', icon: '🌱' },
+  { id: 'harvest', name: '收获', icon: '🧺' },
+  { id: 'till', name: '锄地', icon: '⛏️' },
   { id: 'water', name: '浇水', icon: '💧' },
+  { id: 'fert', name: '施肥', icon: '🧪' },
   { id: 'weed', name: '除草', icon: '🌿' },
   { id: 'pest', name: '除虫', icon: '🐛' },
-  { id: 'fert', name: '施肥', icon: '🧪' },
-  { id: 'harvest', name: '收获', icon: '🧺' },
 ];
 const TOOLS_VISIT = [
   { id: 'water', name: '浇水', icon: '💧' },
@@ -96,7 +179,9 @@ function refreshFarmMirror() {
   if (visiting && activeTool && !isVisitTool(activeTool)) activeTool = null;
   if (!visiting && activeTool === 'steal') activeTool = null;
   ui.setReadOnly?.(visiting);
-  ui.setVisitor?.(visiting ? `UID ${session.viewingOwnerUid}` : null);
+  ui.setVisitor?.(visiting
+    ? (session.viewingOwnerName || `UID ${session.viewingOwnerUid}`)
+    : null);
   refreshToolbar();
   refreshSubBar();
   syncAllPlots();
@@ -110,79 +195,6 @@ const actualYield = (crop, h) => Math.floor(crop.yield * yieldFactor(h));
 
 function stageName(crop, stage) {
   return (stageCount(crop) === 3 ? STAGE_NAMES_3 : STAGE_NAMES_4)[stage] || '';
-}
-
-// ---------------- 邮件 ----------------
-function addMail(mail) {
-  state.mails.push({ id: state.mailSeq++, time: Date.now(), read: false, claimed: false, gold: 0, exp: 0, ...mail });
-  while (state.mails.length > 100) {
-    const idx = state.mails.findIndex(m => m.read && !(m.gold || m.exp) || (m.claimed && m.read));
-    if (idx === -1) break;
-    state.mails.splice(idx, 1);
-  }
-  ui.updateHUD(state);
-}
-
-// ---------------- 经验 / 金币 ----------------
-function addExp(n, silent = false) {
-  if (n <= 0) return;
-  const before = myLevel();
-  state.exp += n;
-  const after = myLevel();
-  if (after > before) {
-    sfx.levelup();
-    ui.toast(`🎉 升到 Lv.${after}！新作物与土地已解锁`, 'gold');
-    addMail({ title: '升级奖励', content: `恭喜达到 Lv.${after}，系统奖励金币 ${levelUpGold(after)}。`, gold: levelUpGold(after) });
-  } else if (!silent) {
-    ui.toast(`+${n} 经验`, 'info');
-  }
-}
-
-function addGold(n) {
-  state.gold += n;
-  ui.updateHUD(state);
-}
-
-// ---------------- 任务跟踪 ----------------
-function trackEvent(type, count = 1) {
-  for (const t of state.tasks) {
-    const def = TASK_POOL.find(d => d.id === t.taskId);
-    if (def.type !== type || t.done) continue;
-    t.progress += count;
-    if (t.progress >= def.target) {
-      t.done = true;
-      sfx.task();
-      ui.toast(`📋 任务「${def.name}」完成，奖励已发送至邮箱`, 'gold');
-      addMail({ title: '任务奖励', content: `完成日常任务「${def.name}」。`, gold: def.gold, exp: def.exp });
-    }
-  }
-  ui.updateHUD(state);
-}
-
-// ---------------- 图鉴 ----------------
-function unlockCodex(cropId) {
-  if (state.codex.includes(cropId)) return;
-  state.codex.push(cropId);
-  const crop = CROP_MAP[cropId];
-  ui.toast(`📖 图鉴解锁：${crop.name}`, 'gold');
-  for (const [need, gold] of CODEX_MILESTONES) {
-    if (state.codex.length >= need && !state.codexMilestones.includes(need)) {
-      state.codexMilestones.push(need);
-      addMail({ title: '图鉴里程碑', content: `收集度达到 ${need} 种，奖励金币 ${gold}。`, gold });
-    }
-  }
-}
-
-// ---------------- 逻辑日 ----------------
-function checkLogicDay(now) {
-  const dayMs = logicDayMs(state.timeScale);
-  let guard = 0;
-  while (now - state.daily.dayStart >= dayMs && guard++ < 100) {
-    state.daily.dayStart += dayMs;
-    state.daily.careCount = 0;
-    drawDailyTasks(state);
-    addMail({ title: '新的一天', content: '日常任务已刷新，快去查看吧。' });
-  }
 }
 
 // ---------------- 农事反馈 ----------------
@@ -206,6 +218,11 @@ function reconnectRestoreDeps(client) {
       refreshFarmMirror();
       if (!isVisitingFriend()) void refreshPetStatus();
     },
+    onRestored: () => {
+      // 重连成功：即使复用 client 也使旧 task 请求失效，再重建列表/timer
+      invalidateTaskSession();
+      void refreshTasks();
+    },
     toast: (msg, type) => ui.toast(msg, type),
     fail,
     errText,
@@ -214,6 +231,11 @@ function reconnectRestoreDeps(client) {
       stopDeltaSubscription = null;
       stopPlayerDeltaSubscription?.();
       stopPlayerDeltaSubscription = null;
+      stopMailNotifySubscription?.();
+      stopMailNotifySubscription = null;
+      stopTaskNotifySubscription?.();
+      stopTaskNotifySubscription = null;
+      disposeTaskRuntime();
       farmMirror = null;
       netClient = null;
       reconnectBinding = null;
@@ -222,20 +244,15 @@ function reconnectRestoreDeps(client) {
 }
 
 /**
- * 登录 + Handshake + EnterFarm 成功后切入 online：applyPatch 快照并记录会话。
+ * 让当前模块接管已有的在线客户端。
  * @param {import('../net/client.js').NetClient} client
- * @param {import('../net/client.js').Envelope} enterEnv
  */
-function enterOnlineFromNet(client, enterEnv) {
-  if (!client?.uid || !client?.token) {
-    throw new Error('enterOnlineFromNet: missing uid/token');
-  }
-  if (!enterEnv || enterEnv.err !== 0) {
-    throw new Error(`enterOnlineFromNet: enterFarm err=${enterEnv?.err}`);
-  }
-  enterOnline({ uid: client.uid, token: client.token });
+function bindOnlineClient(client) {
   netClient = client;
+  // 新登录绑定：使旧 task 请求/会话失效
+  invalidateTaskSession();
   reconnectBinding = bindFarmReconnectRestore(reconnectRestoreDeps(client));
+  farmMirror?.dispose?.();
   stopDeltaSubscription?.();
   farmMirror = createFarmMirror({
     state,
@@ -258,9 +275,39 @@ function enterOnlineFromNet(client, enterEnv) {
     ui.updateHUD(state);
     refreshSubBar();
   });
+  stopMailNotifySubscription?.();
+  stopMailNotifySubscription = client.onMailNotify(() => {
+    // 申请/同意/拒绝到达：按需拉列表，点亮或熄灭侧栏红点
+    void refreshFriendRequests();
+    void refreshMails();
+  });
+  stopTaskNotifySubscription?.();
+  stopTaskNotifySubscription = client.onTaskNotify((env) => {
+    // 只合并任务权威状态；提升 push epoch，避免晚到 TaskList 覆盖
+    ensureTaskSession().applyTaskNotify(env.payload, taskUiSinks());
+  });
+}
+
+function enterOnlineFromNet(client, enterEnv) {
+  if (!client?.uid || !client?.token) {
+    throw new Error('enterOnlineFromNet: missing uid/token');
+  }
+  if (!enterEnv || enterEnv.err !== 0) {
+    throw new Error(`applyAuthoritativeFarmEnter: enterFarm err=${enterEnv?.err}`);
+  }
+  enterOnline({ uid: client.uid, token: client.token });
+  bindOnlineClient(client);
   applyAuthoritativeFarmEnter(reconnectRestoreDeps(client), enterEnv, {
     toast: '已进入 online 模式：操作将发往服务端',
   });
+  // 清掉登录前本地灌入的假邮件/任务，避免右侧红点误报；真实列表按需拉取
+  state.mails = [];
+  state.tasks = [];
+  state.friendRequests = [];
+  ui.updateHUD(state);
+  void refreshMails();
+  void refreshTasks();
+  void refreshFriendRequests();
 }
 
 async function enterFarm(ownerUid, nickname = '') {
@@ -272,12 +319,15 @@ async function enterFarm(ownerUid, nickname = '') {
       fail(errText(response.err));
       return;
     }
+    const snapshot = response.payload?.snapshot || {};
+    const friend = Array.isArray(state.friends)
+      ? state.friends.find((f) => Number(f.uid) === Number(ownerUid || snapshot.owner_uid))
+      : null;
     applyAuthoritativeFarmEnter(reconnectRestoreDeps(netClient), response, {
       fallbackOwnerUid: ownerUid || netClient.uid,
+      ownerName: nickname || snapshot.nickname || friend?.nickname || '',
     });
     if (isVisitingFriend()) {
-      const snapshot = response.payload?.snapshot || {};
-      ui.setVisitor?.(nickname || snapshot.nickname || `UID ${session.viewingOwnerUid}`);
       ui.toast('已进入好友农场，可浇水/除草/除虫/偷菜', 'info');
     }
   } catch (error) {
@@ -644,49 +694,73 @@ async function refreshPetStatus() {
   }
 }
 
-function mapServerTasks(tasks) {
-  return (Array.isArray(tasks) ? tasks : []).map((t) => ({
-    id: Number(t.id),
-    taskId: String(t.id),
-    title: t.title || `任务 ${t.id}`,
-    progress: Number(t.progress) || 0,
-    target: Number(t.target) || 1,
-    rewardCoin: Number(t.reward_coin) || 0,
-    done: (Number(t.progress) || 0) >= (Number(t.target) || 1),
-    claimed: !!t.claimed,
-    seen: false,
-  }));
-}
-
 function mapServerMails(mails) {
-  return (Array.isArray(mails) ? mails : []).map((m) => ({
-    id: Number(m.id),
-    title: m.title || '系统邮件',
-    content: '',
-    gold: Number(m.attachment_coin) || 0,
-    attachmentCoin: Number(m.attachment_coin) || 0,
-    exp: 0,
-    claimed: !!m.claimed,
-    read: !!m.claimed,
-    time: Number(m.created_at) || Date.now(),
-  }));
+  return (Array.isArray(mails) ? mails : []).map((m) => {
+    const gold = Number(m.attachment_coin) || 0;
+    const claimed = !!m.claimed;
+    return {
+      id: Number(m.id),
+      title: m.title || '系统邮件',
+      content: '',
+      gold,
+      attachmentCoin: gold,
+      exp: 0,
+      claimed,
+      // 无附件=纯通知，不占未读；有金币附件且未领=未读（侧栏红点与行内圆点）
+      read: gold <= 0 || claimed,
+      time: Number(m.created_at) || Date.now(),
+    };
+  });
 }
 
-async function refreshTasks() {
-  if (!netClient) return false;
-  try {
-    const response = await netClient.taskList();
-    if (response.err !== 0) {
-      fail(errText(response.err));
-      return false;
-    }
-    state.tasks = mapServerTasks(response.payload?.tasks);
-    ui.updateHUD(state);
-    return true;
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-    return false;
+/**
+ * 仅拉取并在上下文有效时应用；不排程、不 toast。
+ * @returns {Promise<import('./taskSession.js').TaskListApplyOutcome>}
+ */
+async function pullAndApplyTasks({ renderOpenTasks = true } = {}) {
+  const client = netClient;
+  if (!client) {
+    return { applied: false, ok: false, resetAt: 0, contextValid: false, reason: 'no_client' };
   }
+  const session = ensureTaskSession();
+  const sinks = taskUiSinks({ renderOpenTasks });
+  return session.refreshTaskList({
+    client,
+    getCurrentClient: () => netClient,
+    fetch: async (c) => {
+      const response = await c.taskList();
+      if (response.err !== 0) return { ok: false, err: response.err };
+      return {
+        ok: true,
+        tasks: response.payload?.tasks,
+        resetAt: Number(response.payload?.reset_at) || 0,
+      };
+    },
+    getTasks: sinks.getTasks,
+    setTasks: sinks.setTasks,
+    setResetAt: sinks.setResetAt,
+    afterApply: sinks.afterApply,
+  });
+}
+
+/**
+ * 拉取 TaskList：网络结果先不落地；仅 success/failure 改 timer，stale 不动。
+ * @returns {Promise<boolean>}
+ */
+async function refreshTasks({ renderOpenTasks = true } = {}) {
+  const scheduler = ensureTaskResetScheduler();
+  const outcome = await pullAndApplyTasks({ renderOpenTasks });
+  const result = taskRefreshResultFromOutcome(outcome);
+
+  if (result.status === 'failure') {
+    if (result.err != null) fail(errText(result.err));
+    else if (result.error) fail(result.error instanceof Error ? result.error.message : String(result.error));
+  }
+
+  if (taskResetScheduler === scheduler && !scheduler.disposed) {
+    applyTaskListSchedule(scheduler, result);
+  }
+  return result.status === 'success';
 }
 
 async function refreshMails() {
@@ -748,45 +822,145 @@ function inviteTokenFromInput(value) {
   }
 }
 
-async function addFriend(value) {
-  if (!netClient) return false;
+/** 比较 uid（雪花经 JSON 后可能丢精度，同端两侧通常同为 Number）。 */
+function sameUid(a, b) {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
+async function refreshFriendRequests() {
+  if (!netClient) return [];
+  try {
+    const response = await netClient.listFriendRequests();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return [];
+    }
+    const requests = Array.isArray(response.payload?.requests) ? response.payload.requests : [];
+    state.friendRequests = requests;
+    ui.updateHUD(state);
+    return requests;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return [];
+  }
+}
+
+/** 搜索用户（精确用户名）；邀请链接走 acceptInvite。不返回自己。 */
+async function searchNeighbors(value) {
+  if (!netClient) return { ok: false, users: [] };
+  const selfUid = session.uid ?? netClient.uid;
   const input = value.trim();
   if (!input) {
-    fail('请输入用户名、UID 或分享链接');
+    fail('请输入用户名');
+    return { ok: false, users: [] };
+  }
+  const token = inviteTokenFromInput(input);
+  if (token) {
+    try {
+      const response = await netClient.acceptInvite(token);
+      if (response.err !== 0) {
+        fail(errText(response.err));
+        return { ok: false, users: [] };
+      }
+      await refreshFriends();
+      ui.toast('已通过邀请成为好友', 'ok');
+      return { ok: true, users: [], invited: true };
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+      return { ok: false, users: [] };
+    }
+  }
+  try {
+    // 纯数字 UID：直接作为搜索结果卡片，发申请（排除自己）
+    const peerUid = Number(input);
+    if (Number.isSafeInteger(peerUid) && peerUid > 0 && String(peerUid) === input) {
+      if (sameUid(peerUid, selfUid)) {
+        fail('不能添加自己为好友');
+        return { ok: true, users: [] };
+      }
+      return { ok: true, users: [{ uid: peerUid, nickname: `UID ${peerUid}` }] };
+    }
+    const search = await netClient.searchUser(input);
+    if (search.err !== 0) {
+      // 未找到：交给结果区空态，不弹 toast
+      if (search.err === 1413) return { ok: true, users: [] };
+      fail(errText(search.err));
+      return { ok: false, users: [] };
+    }
+    // 兼容旧 Rsp { uid, nickname } 与新 Rsp { users: [...] }
+    let users = Array.isArray(search.payload?.users) ? search.payload.users : [];
+    if (!users.length && search.payload?.uid) {
+      users = [{ uid: search.payload.uid, nickname: search.payload.nickname || '' }];
+    }
+    users = users.filter((u) => !sameUid(u.uid, selfUid));
+    return { ok: true, users };
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return { ok: false, users: [] };
+  }
+}
+
+async function requestFriend(peerUid) {
+  if (!netClient) return false;
+  if (sameUid(peerUid, session.uid ?? netClient.uid)) {
+    fail('不能添加自己为好友');
     return false;
   }
   try {
-    const token = inviteTokenFromInput(input);
-    const peerUid = Number(input);
-    let response;
-    if (token) {
-      response = await netClient.acceptInvite(token);
-    } else if (Number.isSafeInteger(peerUid) && peerUid > 0) {
-      response = await netClient.addFriendByUID(peerUid);
-    } else {
-      const search = await netClient.searchUser(input);
-      if (search.err !== 0) {
-        fail(errText(search.err));
-        return false;
-      }
-      const foundUID = Number(search.payload?.uid);
-      if (!Number.isSafeInteger(foundUID) || foundUID <= 0) {
-        fail('搜索结果无效');
-        return false;
-      }
-      response = await netClient.addFriendByUID(foundUID);
-    }
+    const response = await netClient.requestFriend(peerUid);
     if (response.err !== 0) {
       fail(errText(response.err));
       return false;
     }
     await refreshFriends();
-    ui.toast('添加好友成功', 'ok');
+    ui.toast('好友申请已发送', 'ok');
     return true;
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
     return false;
   }
+}
+
+async function acceptFriendRequest(fromUid) {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.acceptFriendRequest(fromUid);
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    await Promise.all([refreshFriends(), refreshFriendRequests(), refreshMails()]);
+    ui.toast('已同意好友申请', 'ok');
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function rejectFriendRequest(fromUid) {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.rejectFriendRequest(fromUid);
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    await Promise.all([refreshFriendRequests(), refreshMails()]);
+    ui.toast('已拒绝申请', 'info');
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function addFriend(value) {
+  const result = await searchNeighbors(value);
+  if (result.invited) return true;
+  if (!result.ok || !result.users?.length) return false;
+  return requestFriend(result.users[0].uid);
 }
 
 async function removeFriend(peerUid) {
@@ -845,16 +1019,17 @@ const ui = new UI({
       case 'bag': ui.renderBag(state); break;
       case 'barn': ui.renderBarn(state); break;
       case 'tasks':
-        ui.renderTasks(state, null);
-        void refreshTasks().then((ok) => {
-          if (ok && ui.modalOpen) ui.renderTasks(state, null);
+        openTasksPanel({
+          render: () => ui.renderTasks(state, taskRemainMs()),
+          refresh: () => refreshTasks({ renderOpenTasks: false }),
+          isPanelOpen: (panel) => ui.isPanelOpen(panel),
         });
         break;
       case 'codex': ui.renderCodex(state); break;
       case 'mail':
         ui.renderMail(state);
-        void refreshMails().then((ok) => {
-          if (ok && ui.modalOpen) ui.renderMail(state);
+        void Promise.all([refreshMails(), refreshFriendRequests()]).then(() => {
+          if (ui.modalOpen) ui.renderMail(state);
         });
         break;
       case 'pet':
@@ -971,30 +1146,9 @@ const ui = new UI({
     try {
       const rsp = await netClient.taskClaim(taskId);
       if (rsp.err !== 0) return fail(errText(rsp.err));
-      ui.toast('任务奖励已发送至邮箱', 'gold');
+      const rewardCoin = Number(rsp.payload?.coin) || 0;
+      ui.toast(rewardCoin > 0 ? `任务奖励已到账 💰${rewardCoin}` : '任务奖励已到账', 'gold');
       await refreshTasks();
-      await refreshMails();
-    } catch (e) {
-      fail(e instanceof Error ? e.message : String(e));
-    } finally {
-      onlineBusy = false;
-    }
-  },
-
-  async onClaimDailyLogin() {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
-    if (onlineBusy) return;
-    onlineBusy = true;
-    try {
-      const rsp = await netClient.claimDailyLogin();
-      if (rsp.err === 1005) {
-        ui.toast('今日登录奖励已领取', 'info');
-        return;
-      }
-      if (rsp.err !== 0) return fail(errText(rsp.err));
-      sfx.gold();
-      ui.toast('每日登录奖励已发送至邮箱', 'gold');
-      await refreshMails();
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1064,6 +1218,26 @@ const ui = new UI({
     return generateShareLink();
   },
 
+  onSearchNeighbors(value) {
+    return searchNeighbors(value);
+  },
+
+  onRequestFriend(peerUid) {
+    return requestFriend(peerUid);
+  },
+
+  onListFriendRequests() {
+    return refreshFriendRequests();
+  },
+
+  onAcceptFriendRequest(fromUid) {
+    return acceptFriendRequest(fromUid);
+  },
+
+  onRejectFriendRequest(fromUid) {
+    return rejectFriendRequest(fromUid);
+  },
+
   onAddFriend(value) {
     return addFriend(value);
   },
@@ -1078,7 +1252,15 @@ const ui = new UI({
 
   onSetTimeScale(id) { state.timeScale = id; sfx.click(); },
   onSetSound(v) { state.settings.sound = v; sfx.enabled = v; sfx.click(); },
-  onReset() { clearSave(); location.reload(); },
+  onLogout() {
+    disposeTaskRuntime();
+    stopTaskNotifySubscription?.();
+    stopTaskNotifySubscription = null;
+    netClient?.close();
+    netClient = null;
+    logout();
+    location.assign('/login');
+  },
 });
 
 // ---------------- 事件绑定 ----------------
@@ -1098,8 +1280,6 @@ function tick() {
   const dt = now - lastTick;
   lastTick = now;
 
-  checkLogicDay(now);
-
   // 期 3：不做本地权威地块推进 / NPC 假好友写；镜像仅由 snapshot/Rsp/Delta 更新
 
   // 玩家狗粮：online 以 PetStatus 为准，不做本地权威扣减
@@ -1109,9 +1289,8 @@ function tick() {
     if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
   }
 
-  // 日夜循环（跟随逻辑日）
-  const dayMs = logicDayMs(state.timeScale);
-  const phase = ((now - state.daily.dayStart) % dayMs) / dayMs;
+  // 日夜循环：跟全局逻辑日相位，各客户端同刻同天空
+  const phase = logicDayPhase(now, state.timeScale);
   scene.setDayPhase(phase);
   const icon = CLOCK_ICONS.find(([t]) => phase < t)?.[1] || '☀️';
   ui.setClock(icon);
@@ -1124,7 +1303,6 @@ function tick() {
   }
 
   syncAllPlots();
-  ui.updateHUD(state);
 
   // 悬停 tooltip 实时刷新
   if (hoverPlot !== null && !ui.modalOpen) {
@@ -1143,6 +1321,7 @@ addEventListener('pointermove', onGlobalPointerMove);
 // ---------------- 启动 ----------------
 // 登录页 authFlow / DEV 诊断：暴露 online 切入与状态
 window.__farm = {
+  __runtime: runtimeHandle,
   getState: () => state,
   scene,
   enterOnlineFromNet,
@@ -1156,7 +1335,7 @@ const tickIntervalId = setInterval(tick, 300);
 tick();
 
 // 页面卸载：清 tick / pointermove / scene，并保留网络关闭与 reconnect cleanup
-bindPageUnload({
+removePageUnload = bindPageUnload({
   addEventListener,
   removeEventListener,
   clearInterval,
@@ -1166,6 +1345,62 @@ bindPageUnload({
   setReconnectBinding: (v) => { reconnectBinding = v; },
   scene,
   getNetClient: () => netClient,
+  onCleanup: () => {
+    disposeTaskRuntime();
+    stopTaskNotifySubscription?.();
+    stopTaskNotifySubscription = null;
+  },
 });
+
+// 热更新时保留在线状态，避免新模块从默认金币/经验开始渲染。
+if (hmrRuntime?.netClient && isOnline()) {
+  bindOnlineClient(hmrRuntime.netClient);
+  refreshFarmMirror();
+  void refreshTasks();
+}
+
+function disposeRuntimeForHMR() {
+  if (runtimeDisposed) return;
+  runtimeDisposed = true;
+  // 停掉旧模块的 tick：否则 HMR 后新旧实例都会每 300ms 写同一组 HUD，
+  // 旧实例用旧 state、新实例用新 state，金币/经验就会反复跳动。
+  clearInterval(tickIntervalId);
+  disposeTaskRuntime();
+  stopDeltaSubscription?.();
+  stopDeltaSubscription = null;
+  stopPlayerDeltaSubscription?.();
+  stopPlayerDeltaSubscription = null;
+  stopMailNotifySubscription?.();
+  stopMailNotifySubscription = null;
+  stopTaskNotifySubscription?.();
+  stopTaskNotifySubscription = null;
+  reconnectBinding?.dispose?.();
+  reconnectBinding = null;
+  farmMirror?.dispose?.();
+  farmMirror = null;
+  removePageUnload?.();
+  removePageUnload = null;
+  removeEventListener('pointermove', onGlobalPointerMove);
+  scene.dispose();
+  // HMR 交接时故意不关闭 netClient：新模块会继续接管它。
+  if (window.__farm?.__runtime === runtimeHandle) {
+    delete window.__farm;
+  }
+  if (window.__farmActiveRuntime?.runtime === runtimeHandle) {
+    delete window.__farmActiveRuntime;
+  }
+}
+
+if (import.meta.hot) {
+  window.__farmActiveRuntime = {
+    runtime: runtimeHandle,
+    dispose: disposeRuntimeForHMR,
+    snapshot: () => ({ state, netClient }),
+  };
+  import.meta.hot.dispose(() => {
+    import.meta.hot.data.runtime = { state, netClient };
+    disposeRuntimeForHMR();
+  });
+}
 
 // 未 online 时不提示本地开局指引（须登录）；online 后由 enterOnlineFromNet toast

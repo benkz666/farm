@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#143c32" />
+  <title>经典农场 · 后端中期答辩</title>
+  <style>
+    :root { --ink:#143c32; --pine:#0d2c25; --leaf:#347b5c; --sprout:#72b968; --sun:#f4be51; --cream:#f6f3ea; --paper:#fcfbf7; --line:#d9ddd1; --muted:#66746d; --blue:#2d7190; --red:#bd5a45; --mono:"DM Mono", ui-monospace, monospace; --sans:"Noto Sans SC", "PingFang SC", sans-serif; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:var(--cream); font-family:var(--sans); line-height:1.65; }
+    ::selection { color:white; background:var(--leaf); }
+    .topbar { position:fixed; inset:0 0 auto; height:58px; z-index:20; display:flex; justify-content:space-between; align-items:center; padding:0 4.5vw; color:#eaf2e9; background:rgba(13,44,37,.93); backdrop-filter:blur(16px); border-bottom:1px solid rgba(255,255,255,.12); }
+    .brand { display:flex; gap:10px; align-items:center; font-size:13px; font-weight:700; letter-spacing:.04em; }
+    .brand-mark { display:grid; place-items:center; width:27px; height:27px; border:1px solid rgba(255,255,255,.6); color:var(--sun); font-family:var(--mono); }
+    .top-meta { font:11px var(--mono); color:#b4c9bd; letter-spacing:.04em; }
+    .page { overflow:hidden; }
+    .hero { position:relative; min-height:670px; padding:150px 7vw 80px; color:var(--ink); background:#e9efd9; isolation:isolate; display:grid; grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr); gap:7vw; align-items:end; }
+    .hero::before { content:""; position:absolute; inset:0; z-index:-2; background:radial-gradient(ellipse at 83% 12%, rgba(148,191,104,.68) 0, transparent 32%), radial-gradient(ellipse at 5% 100%, rgba(244,190,81,.25) 0, transparent 35%), linear-gradient(120deg,#f8f5e9 0%,#edf2db 48%,#cce1bd 100%); }
+    .field-lines { position:absolute; z-index:-1; inset:-18% -24% -30% 35%; opacity:.6; transform:rotate(-17deg); background:repeating-linear-gradient(90deg, transparent 0 57px, rgba(43,101,72,.17) 58px 59px, transparent 60px 118px), repeating-linear-gradient(0deg, transparent 0 57px, rgba(143,107,48,.13) 58px 59px, transparent 60px 118px); mask-image:linear-gradient(90deg,transparent,black 16%); }
+    .eyebrow, .label { display:block; color:var(--sprout); font:500 12px var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { max-width:850px; margin:15px 0 25px; font-size:clamp(46px,7vw,94px); line-height:1.05; letter-spacing:-.07em; font-weight:900; }
+    .hero h1 em { color:var(--sun); font-style:normal; }
+    .identity { display:flex; flex-wrap:wrap; gap:9px 15px; align-items:baseline; margin:-4px 0 20px; padding-left:14px; border-left:3px solid var(--sun); color:#456556; font-size:15px; }
+    .identity strong { color:var(--ink); font-size:18px; }
+    .hero-lead { max-width:660px; margin:0; font-size:18px; color:#3e5d50; }
+    .hero-note { align-self:center; max-width:320px; padding:24px; border:1px solid rgba(52,123,92,.22); border-top:3px solid var(--sun); background:rgba(255,255,255,.62); box-shadow:0 18px 38px rgba(41,83,56,.12); backdrop-filter:blur(5px); }
+    .hero-note strong { display:block; margin:5px 0 12px; color:var(--ink); font-size:21px; line-height:1.35; }
+    .hero-note p { margin:0; color:#456556; font-size:14px; }
+    .scroll-cue { grid-column:1/-1; margin-top:26px; color:#527164; font:11px var(--mono); letter-spacing:.08em; }
+    .scroll-cue span { display:inline-block; width:53px; margin-left:12px; vertical-align:middle; border-top:1px solid var(--sprout); }
+    .section { max-width:1280px; padding:105px 5vw; margin:auto; }
+    .section-header { display:grid; grid-template-columns:210px minmax(0,1fr); gap:34px; margin-bottom:42px; }
+    .section-no { color:var(--leaf); font:12px var(--mono); letter-spacing:.1em; }
+    h2 { margin:0; max-width:800px; font-size:clamp(31px,4vw,54px); line-height:1.18; letter-spacing:-.055em; }
+    .section-header p { grid-column:2; max-width:700px; margin:0; color:var(--muted); font-size:16px; }
+    .problem-strip { display:grid; grid-template-columns:1.3fr .7fr; gap:22px; }
+    .thesis { padding:42px; color:white; background:var(--ink); }
+    .thesis .label { color:var(--sun); }
+    .thesis blockquote { margin:22px 0 0; font-size:clamp(26px,3.2vw,43px); line-height:1.28; letter-spacing:-.045em; font-weight:700; }
+    .requirements { padding:27px 30px; border:1px solid var(--line); background:var(--paper); }
+    .requirements h3 { margin-bottom:14px; font-size:15px; }
+    .requirements ul { margin:0; padding:0; list-style:none; }
+    .requirements li { display:flex; gap:12px; padding:10px 0; border-top:1px solid var(--line); font-size:14px; }
+    .requirements li::before { content:"✓"; color:var(--leaf); font-weight:900; }
+    .source-figure { margin:28px 0 0; border:1px solid var(--line); background:var(--paper); overflow:hidden; box-shadow:0 14px 35px rgba(20,60,50,.07); }
+    .source-figure img { display:block; width:100%; height:auto; background:#fff; }
+    .source-figure figcaption { display:flex; gap:14px; align-items:baseline; padding:14px 18px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); }
+    .source-figure figcaption b { flex:0 0 auto; color:var(--leaf); font:500 11px var(--mono); letter-spacing:.08em; }
+    .challenge-grid { display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid var(--line); border-left:1px solid var(--line); }
+    .challenge { min-height:242px; padding:27px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); background:var(--paper); transition:background .25s,color .25s,transform .25s; }
+    .challenge:hover { color:white; background:var(--leaf); transform:translateY(-5px); }
+    .challenge-id { color:var(--sprout); font:11px var(--mono); }
+    .challenge:hover .challenge-id { color:var(--sun); }
+    .challenge h3 { margin:13px 0 10px; font-size:19px; line-height:1.35; }
+    .challenge p { margin:0; color:var(--muted); font-size:13px; }
+    .challenge:hover p { color:#e0eee4; }
+    .architecture { color:#eaf3eb; background:var(--pine); }
+    .architecture .section-header h2 { color:white; }
+    .architecture .section-header p { color:#b8cec1; }
+    .architecture .section-no { color:var(--sprout); }
+    .arch-map { padding:28px; overflow:auto; background:#10362d; border:1px solid rgba(255,255,255,.14); }
+    .arch-map svg { display:block; min-width:800px; width:100%; height:auto; }
+    .arch-legend { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; margin-top:1px; background:rgba(255,255,255,.13); }
+    .arch-legend div { padding:19px 20px; background:#123d33; }
+    .arch-legend strong { display:block; margin-bottom:5px; font:500 12px var(--mono); color:var(--sun); }
+    .arch-legend span { color:#c4d8cb; font-size:12px; }
+    .architecture .source-figure { margin-top:25px; border-color:rgba(255,255,255,.18); background:#fff; }
+    .architecture .source-figure figcaption { color:#c4d8cb; background:#123d33; border-color:rgba(255,255,255,.15); }
+    .architecture .source-figure figcaption b { color:var(--sun); }
+    .decision-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:2px; background:var(--line); }
+    .decision { padding:27px 30px; min-height:198px; background:var(--paper); }
+    .decision h3 { display:flex; gap:13px; align-items:baseline; margin:0 0 13px; font-size:18px; }
+    .decision h3 span { color:var(--leaf); font:12px var(--mono); }
+    .decision p { margin:0; color:var(--muted); font-size:14px; }
+    .sequence { padding:38px; color:white; background:var(--blue); }
+    .sequence h3 { margin-bottom:26px; font-size:24px; }
+    .flow { display:flex; align-items:center; gap:10px; overflow:auto; }
+    .flow-step { flex:1 0 150px; min-height:125px; padding:18px; background:rgba(255,255,255,.12); border-top:2px solid var(--sun); }
+    .flow-step span { color:#c9e5ef; font:11px var(--mono); }
+    .flow-step strong { display:block; margin-top:9px; font-size:17px; }
+    .arrow { flex:0 0 19px; color:var(--sun); font-size:23px; }
+    .sequence p { margin:24px 0 0; color:#d9edf4; font-size:14px; }
+    .timeline { display:grid; grid-template-columns:repeat(5,1fr); gap:0; margin:0; padding:0; list-style:none; }
+    .timeline li { position:relative; min-height:245px; padding:22px 20px; border-left:1px solid var(--line); }
+    .timeline li:last-child { border-right:1px solid var(--line); }
+    .timeline li::before { content:""; display:block; width:12px; height:12px; margin-bottom:23px; border-radius:50%; background:var(--leaf); box-shadow:0 0 0 5px var(--cream); }
+    .timeline .done::before { background:var(--sprout); }
+    .timeline .doing::before { background:var(--sun); }
+    .phase { display:block; color:var(--leaf); font:11px var(--mono); }
+    .timeline h3 { margin:11px 0; font-size:18px; line-height:1.35; }
+    .timeline p { margin:0; color:var(--muted); font-size:13px; }
+    .status { display:inline-block; margin-top:14px; padding:2px 8px; border:1px solid var(--line); color:var(--muted); font:10px var(--mono); }
+    .done .status { color:var(--leaf); border-color:#a7c8aa; }
+    .doing .status { color:#9c6700; border-color:#e6c77e; }
+    .test-matrix { display:grid; grid-template-columns:repeat(4,1fr); gap:2px; background:var(--line); }
+    .test { padding:24px; min-height:187px; background:white; }
+    .test .tier { display:block; color:var(--blue); font:500 12px var(--mono); }
+    .test h3 { margin:10px 0; font-size:17px; }
+    .test p { margin:0; color:var(--muted); font-size:13px; }
+    .capacity { display:grid; grid-template-columns:.8fr 1.2fr; gap:22px; }
+    .capacity-statement { padding:36px; color:white; background:var(--ink); }
+    .capacity-statement h3 { margin:16px 0; font-size:26px; line-height:1.35; }
+    .capacity-statement p { margin:0; color:#c6d8cc; font-size:14px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:2px; background:var(--line); }
+    .metric { padding:26px; background:var(--paper); }
+    .metric b { display:block; font:500 clamp(30px,4vw,52px) var(--mono); letter-spacing:-.08em; color:var(--leaf); }
+    .metric span { display:block; margin-top:8px; color:var(--muted); font-size:13px; }
+    .questions { max-width:1280px; margin:auto; padding:105px 5vw; color:#eef5ed; background:var(--pine); }
+    .questions .section-header h2 { color:white; }
+    .questions .section-header p { color:#bfd2c4; }
+    .questions .section-no { color:var(--sprout); }
+    .question-list { margin:0; padding:0; list-style:none; counter-reset:question; border-top:1px solid rgba(255,255,255,.22); }
+    .question-list li { display:grid; grid-template-columns:92px 1fr; gap:27px; align-items:baseline; min-height:116px; padding:26px 4px; border-bottom:1px solid rgba(255,255,255,.22); }
+    .question-list li::before { counter-increment:question; content:"Q" counter(question, decimal-leading-zero); color:var(--sun); font:500 13px var(--mono); letter-spacing:.1em; }
+    .question-list strong { display:block; max-width:990px; font-size:clamp(21px,2.6vw,33px); line-height:1.38; letter-spacing:-.04em; }
+    .roadmap { padding:70px 7vw; color:white; background:linear-gradient(135deg,#143c32,#235b48); }
+    .roadmap-inner { max-width:1110px; margin:auto; display:grid; grid-template-columns:1fr .8fr; gap:80px; align-items:end; }
+    .roadmap h2 { margin:13px 0 0; font-size:clamp(36px,5vw,67px); }
+    .roadmap p { margin:0; color:#cae0d1; }
+    .todo-list { margin:0; padding:0; list-style:none; counter-reset:todo; }
+    .todo-list li { display:grid; grid-template-columns:42px 1fr; gap:14px; padding:13px 0; border-top:1px solid rgba(255,255,255,.2); }
+    .todo-list li::before { counter-increment:todo; content:"0" counter(todo); color:var(--sun); font:12px var(--mono); padding-top:4px; }
+    .todo-list strong { display:block; font-size:16px; }
+    .todo-list span { color:#c5d9cc; font-size:13px; }
+    .footer { display:flex; justify-content:space-between; max-width:1110px; margin:auto; padding:25px 0; font:11px var(--mono); color:#86a493; }
+    .float-nav { position:fixed; right:20px; bottom:20px; z-index:10; display:flex; gap:4px; padding:5px; background:rgba(252,251,247,.9); border:1px solid var(--line); box-shadow:0 10px 30px rgba(20,60,50,.12); backdrop-filter:blur(8px); }
+    .float-nav a { padding:7px 9px; color:var(--muted); text-decoration:none; font:11px var(--mono); }
+    .float-nav a:hover { color:white; background:var(--leaf); }
+    @media (max-width:850px) { .top-meta { display:none; } .hero { min-height:620px; grid-template-columns:1fr; gap:25px; padding-top:120px; } .hero-note { align-self:auto; } .section-header { grid-template-columns:1fr; gap:14px; } .section-header p { grid-column:auto; } .problem-strip,.capacity,.roadmap-inner { grid-template-columns:1fr; } .challenge-grid { grid-template-columns:repeat(2,1fr); } .arch-legend { grid-template-columns:repeat(2,1fr); } .timeline { grid-template-columns:repeat(2,1fr); } .timeline li:nth-child(3) { border-left:1px solid var(--line); } .test-matrix { grid-template-columns:repeat(2,1fr); } }
+    @media (max-width:560px) { .topbar { padding:0 18px; } .hero,.section,.questions { padding-left:22px; padding-right:22px; } h1 { font-size:48px; } .identity { margin-bottom:18px; font-size:14px; } .challenge-grid,.decision-grid,.test-matrix,.metric-grid { grid-template-columns:1fr; } .challenge { min-height:auto; } .timeline { grid-template-columns:1fr; } .timeline li { min-height:auto; border-right:1px solid var(--line); } .timeline li:not(:first-child) { border-top:1px solid var(--line); } .arch-legend { grid-template-columns:1fr; } .question-list li { grid-template-columns:1fr; gap:8px; } .float-nav { display:none; } }
+    @media print { .topbar,.float-nav { display:none; } .hero { min-height:500px; padding-top:60px; } .section { padding-top:55px; padding-bottom:55px; } .challenge:hover { transform:none; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+  </style>
+</head>
+<body>
+  <nav class="topbar" aria-label="页面导航"><div class="brand"><span class="brand-mark">F</span>经典农场 / 后端中期答辩</div><div class="top-meta">MIDTERM REVIEW · 2026</div></nav>
+  <main class="page">
+    <header class="hero" id="top">
+      <div class="field-lines" aria-hidden="true"></div>
+      <div>
+        <span class="eyebrow">Classic Farm · Engineering Midterm</span>
+        <h1>农场游戏<br>中期答辩</h1>
+        <div class="identity"><strong>周本宽</strong><span>魔王工作室 / 狩项目组 / 服务器组实习生</span></div>
+        <p class="hero-lead">本次答辩汇报项目的题目理解、系统架构、关键设计、实施计划和测试验证方案。</p>
+      </div>
+      <aside class="hero-note"><span class="label">汇报内容</span><strong>项目理解、架构设计、实施与测试</strong><p>重点说明服务端权威、多人同步、数据可靠性和容量验证的设计与后续计划。</p></aside>
+      <div class="scroll-cue">SCROLL TO EXPLORE <span></span></div>
+    </header>
+
+    <section class="section" id="problem">
+      <div class="section-header"><span class="section-no">01 / 破题</span><h2>题目不是“做农场”，而是处理时间、并发与资源。</h2><p>QQ 农场式玩法看似简单，但其种植、收获和好友互动同时触及状态一致性、实时同步与资源安全。交付重点应落在完整且可验证的工程闭环。</p></div>
+      <div class="problem-strip"><article class="thesis"><span class="label">核心判断</span><blockquote>“客户端只能表达意图，<br>服务端必须产生结果。”</blockquote></article><aside class="requirements"><h3>两个必须交付的闭环</h3><ul><li>注册、种植、收获、交易、好友互动等玩法完整可玩</li><li>金币、仓库、作物和奖励由服务端权威裁决</li><li>断线重连、重复消息、进程重启不破坏玩家数据</li><li>将 3000 万 DAU 转换为可测量、可复现的验证目标</li></ul></aside></div>
+      <figure class="source-figure"><img src="../docs/midterm/.assets/farm-requirement-alignment-imagegen-v1.png" alt="题目要求与项目落点：业务闭环、多人玩法、交付形态、规模目标、工程方法与评价重点。"><figcaption><b>材料图 · 01</b><span>题目要求与项目落点：从六个维度拆解交付，明确后端工程的验证重点。</span></figcaption></figure>
+    </section>
+
+    <section class="section" id="challenges">
+      <div class="section-header"><span class="section-no">02 / 六个难点</span><h2>每一个工程决策，都对应一道真实的题目约束。</h2><p>从“不能相信浏览器”到“不能用单机证明 DAU”，先厘清问题边界，再选择刚好够用的机制。</p></div>
+      <div class="challenge-grid">
+        <article class="challenge"><span class="challenge-id">C-01</span><h3>客户端不可信</h3><p>价格、产量、成熟时间和奖励不能由 H5 上传。服务端根据存档、配置与服务器时间重新校验、结算。</p></article>
+        <article class="challenge"><span class="challenge-id">C-02</span><h3>作物持续成长</h3><p>3,000 万用户 × 地块数量不能常驻定时器。访问时按持久化时间戳惰性推进，离线状态零运行时开销。</p></article>
+        <article class="challenge"><span class="challenge-id">C-03</span><h3>同农场并发修改</h3><p>主人收获与多名好友操作会竞争同一状态。以 UID 为边界投入唯一 Actor 串行区，保证读取与提交的顺序。</p></article>
+        <article class="challenge"><span class="challenge-id">C-04</span><h3>跨农场资源变更</h3><p>互助、偷菜同时影响访客与主人。通过预占、远程提交、回执结算和 req_id 幂等处理异常消息。</p></article>
+        <article class="challenge"><span class="challenge-id">C-05</span><h3>实时消息不可靠</h3><p>广播可能乱序、丢失或在断线时中断。FarmSeq + DeltaRing 发现缺口后补齐增量，失效则回退快照。</p></article>
+        <article class="challenge"><span class="challenge-id">C-06</span><h3>DAU 不能直接压测</h3><p>先推导 PCU、QPS、写入量与单机通过线，再通过逐层压测验证假设，并明确线性外推的边界。</p></article>
+      </div>
+    </section>
+
+    <section class="architecture" id="architecture">
+      <div class="section">
+        <div class="section-header"><span class="section-no">03 / 总体架构</span><h2>由数据所有权决定边界，<br>由消息流动连接系统。</h2><p>开发期可在一个进程运行 Gateway 与 FarmRuntime；部署形态则拆分 Gateway 与 FarmServer，保留静态逻辑分片与跨服务协作接口。</p></div>
+        <div class="arch-map" role="img" aria-label="经典农场系统架构图：客户端经由网关访问农场服务与社交服务，服务层使用消息、缓存、数据库与可观测性组件。">
+          <svg viewBox="0 0 1000 470" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#72b968"/></marker></defs><style>.t{font-family:Arial,"Noto Sans SC",sans-serif;fill:#eff8ef}.s{font-family:monospace;fill:#9cc6ab;font-size:12px}.box{fill:#173f35;stroke:#508369;stroke-width:1}.accent{fill:#2b6e57;stroke:#8ac27e;stroke-width:1}.line{stroke:#72b968;stroke-width:1.5;marker-end:url(#arrow)}</style><text class="s" x="25" y="30">PRESENTATION LAYER</text><rect class="box" x="25" y="50" width="180" height="73" rx="3"/><text class="t" x="48" y="80" font-size="18" font-weight="700">H5 客户端</text><text class="s" x="48" y="103">Vue 3 · Three.js</text><text class="s" x="275" y="30">ACCESS LAYER</text><rect class="accent" x="260" y="50" width="205" height="73" rx="3"/><text class="t" x="284" y="80" font-size="18" font-weight="700">Gateway 集群</text><text class="s" x="284" y="103">WSS · 鉴权 · 路由 · 推送</text><text class="s" x="560" y="30">LOGIC LAYER</text><rect class="accent" x="545" y="50" width="190" height="73" rx="3"/><text class="t" x="570" y="80" font-size="18" font-weight="700">FarmServer</text><text class="s" x="570" y="103">1024 分片 · UID Actor</text><rect class="box" x="780" y="50" width="190" height="73" rx="3"/><text class="t" x="805" y="80" font-size="18" font-weight="700">社交服务</text><text class="s" x="805" y="103">好友 · 分享 · 访问权限</text><path class="line" d="M205 86H252"/><path class="line" d="M465 86H537"/><path class="line" d="M735 86H772"/><text class="s" x="275" y="185">ASYNC EVENT LAYER</text><rect class="box" x="260" y="205" width="205" height="80" rx="3"/><text class="t" x="284" y="238" font-size="18" font-weight="700">Kafka / 延迟队列</text><text class="s" x="284" y="261">跨农场事件 · 任务 · 邮件</text><rect class="box" x="545" y="205" width="190" height="80" rx="3"/><text class="t" x="570" y="238" font-size="18" font-weight="700">监控与运维</text><text class="s" x="570" y="261">Metrics · Health · Pprof</text><path class="line" d="M640 123V196"/><path class="line" d="M640 196H473"/><text class="s" x="275" y="345">STATE &amp; PERSISTENCE</text><rect class="accent" x="260" y="365" width="205" height="75" rx="3"/><text class="t" x="284" y="396" font-size="18" font-weight="700">Redis Cluster</text><text class="s" x="284" y="419">Session · 热数据 · 连接位置</text><rect class="accent" x="545" y="365" width="190" height="75" rx="3"/><text class="t" x="570" y="396" font-size="18" font-weight="700">MySQL 分片</text><text class="s" x="570" y="419">权威数据 · 事务持久化</text><path class="line" d="M640 123V355"/><path class="line" d="M640 355H473"/></svg>
+        </div>
+        <div class="arch-legend"><div><strong>CLIENT</strong><span>只维护农场镜像，提交操作意图</span></div><div><strong>GATEWAY</strong><span>持连接、鉴权、限流与 UID 路由</span></div><div><strong>FARMSERVER</strong><span>权威规则、Actor 串行、状态变更</span></div><div><strong>STORAGE</strong><span>热数据与权威数据各司其职</span></div></div>
+        <figure class="source-figure"><img src="../docs/midterm/.assets/farm-target-evolution-architecture-v1.png" alt="经典农场目标架构：H5 客户端、Gateway、FarmServer、社交服务、Kafka、Redis、MySQL 和运维监控组成的分层系统。"><figcaption><b>材料图 · 02</b><span>目标架构与演进路径：开发阶段聚合运行，部署阶段按接入、权威逻辑、异步事件与存储分层扩展。</span></figcaption></figure>
+      </div>
+    </section>
+
+    <section class="section" id="modules">
+      <div class="section-header"><span class="section-no">04 / 模块设计</span><h2>先按权威状态归属，<br>再按职责与负载特征拆分。</h2><p>模块边界不是按页面或功能菜单划分，而是先保证同一玩家的权威状态在一个串行边界内；连接、认证与离线事件则按各自的扩缩容规律独立演进。</p></div>
+      <figure class="source-figure"><img src="../docs/midterm/.assets/farm-service-boundary-target-imagegen-v1.png" alt="服务划分与独立部署依据：Gateway 与 Auth 为无状态接入，FarmServer 是按 UID 路由的有状态权威核心，Social、Task、Mail 为独立领域服务。"><figcaption><b>材料图 · 03</b><span>服务边界：按照状态所有权、负载曲线、安全边界与在线依赖拆分，避免把一个收获动作拆成多次同步 RPC。</span></figcaption></figure>
+    </section>
+
+    <section class="section" id="decisions">
+      <div class="section-header"><span class="section-no">05 / 关键决策</span><h2>用约束换取简单，<br>把复杂性放在必须处理的位置。</h2><p>系统不追求“全都强一致”，而是按资源价值、操作范围和异常概率选择一致性策略。</p></div>
+      <div class="decision-grid">
+        <article class="decision"><h3><span>D1</span>客户端提交意图</h3><p>商品、数量和地块可由客户端选择；价格、成熟时间、产量、经验与奖励一律由服务端配置和规则计算。</p></article>
+        <article class="decision"><h3><span>D2</span>UID Actor 串行执行</h3><p>农场、金币、仓库、任务等同一玩家状态进入一个 mailbox，消除单农场内的读改写竞争。</p></article>
+        <article class="decision"><h3><span>D3</span>作物状态惰性推进</h3><p>进入农场、同步或操作时才计算时间演进。重启后读取存档和当前时间即可确定性恢复。</p></article>
+        <article class="decision"><h3><span>D4</span>持久化按风险分级</h3><p>普通农场动作最长 30 秒合并写回；金币、背包和邮件附件等高价值资源同步事务落盘。</p></article>
+        <article class="decision"><h3><span>D5</span>领域序列恢复镜像</h3><p>FarmSeq 单调递增，Actor 保留最近 200 条 Delta。客户端优先补增量，无法补齐再获取快照。</p></article>
+        <article class="decision"><h3><span>D6</span>补偿事务处理跨农场</h3><p>访客预占 → 主人提交 → 访客结算；req_id 幂等、回执、超时回滚共同避免资源重复扣发。</p></article>
+      </div>
+    </section>
+
+    <section class="section" id="protocol">
+      <div class="section-header"><span class="section-no">06 / 通信协议</span><h2>先分层建立通信边界，<br>再处理跨农场的异常路径。</h2><p>客户端只通过 HTTPS 与 WebSocket 接入 Gateway；Gateway 负责鉴权与路由，不直接修改农场聚合。跨 FarmServer 的操作通过事件总线协作完成。</p></div>
+      <figure class="source-figure"><img src="../docs/midterm/.assets/farm-current-communication-protocol-imagegen-v2.png" alt="通信协议：H5 通过 HTTPS 和 WSS 访问 Gateway，Gateway 通过内部 HTTP 按 UID 路由 FarmServer，FarmServer 使用 Kafka、Redis 和 MySQL 协作。"><figcaption><b>材料图 · 04</b><span>通信协议：客户端仅接入 Gateway；FarmServer 保持权威状态，使用 FarmSeq、req_id 与事件总线保障同步和跨农场结算。</span></figcaption></figure>
+      <article class="sequence"><h3>跨农场动作 · 三阶段结算</h3><div class="flow"><div class="flow-step"><span>01 · VISITOR</span><strong>预占资源</strong></div><span class="arrow">→</span><div class="flow-step"><span>02 · OWNER</span><strong>校验并提交</strong></div><span class="arrow">→</span><div class="flow-step"><span>03 · VISITOR</span><strong>根据回执结算</strong></div><span class="arrow">→</span><div class="flow-step"><span>EXCEPTION</span><strong>超时补偿 / 回滚</strong></div></div><p><code>req_id</code> 贯穿整条链路：重复消息返回既有结果，网络超时后不会产生“扣了但没到账”的悬挂资源。</p></article>
+    </section>
+
+    <section class="section" id="plan">
+      <div class="section-header"><span class="section-no">07 / 实施计划</span><h2>先把体验做完整，<br>再把证据做扎实。</h2><p>当前已完成工程骨架、种植循环、好友同步与社交玩法；下一阶段将集中回归、补齐 GM 能力，并用真实数据校准容量模型。</p></div>
+      <ol class="timeline"><li class="done"><span class="phase">PHASE 0–2</span><h3>工程骨架与单人玩法</h3><p>注册登录、快照恢复、种植循环、Actor、物品持久化与在线 Patch。</p><span class="status">已完成</span></li><li class="done"><span class="phase">PHASE 3–4</span><h3>好友、同步与社交</h3><p>分享加好友、房间订阅、FarmSeq + Delta、双 Gateway 与跨农场补偿。</p><span class="status">已完成</span></li><li class="done"><span class="phase">PHASE 5</span><h3>可靠性补强</h3><p>存储与重连加固、配置生成、可观测性和微基准。</p><span class="status">已完成</span></li><li class="doing"><span class="phase">PHASE 6–7</span><h3>GM 与集中回归</h3><p>开发门控、目标农场视图、核心玩法端到端回归和缺陷闭环。</p><span class="status">进行中 / 重点</span></li><li><span class="phase">PHASE 8–9</span><h3>容量验证与演进</h3><p>阶梯压测、故障注入、Actor fencing、动态路由与分片迁移。</p><span class="status">后续</span></li></ol>
+    </section>
+
+    <section class="section" id="testing">
+      <div class="section-header"><span class="section-no">08 / 测试策略</span><h2>从便宜到昂贵，<br>从确定性到真实环境。</h2><p>不把“跑起来”当作验证完成。测试层级分别证明规则、并发、多人闭环与故障性能，形成可定位的证据链。</p></div>
+      <div class="test-matrix"><article class="test"><span class="tier">L1–L2</span><h3>规则正确</h3><p>配置、严格 JSON、作物推进、经济、任务、宠物与补偿。验证状态流转和资源守恒。</p></article><article class="test"><span class="tier">L3–L4</span><h3>并发与存储</h3><p>Actor 串行、停机排水、MySQL 事务、Redis 回填。验证重载前后状态一致。</p></article><article class="test"><span class="tier">L5–L6</span><h3>协议与多人闭环</h3><p>乱序 Delta、重连、双客户端、双分片、重复消息。验证最终状态与结算唯一性。</p></article><article class="test"><span class="tier">L7–L8</span><h3>故障与容量</h3><p>kill 进程、慢存储、网络延迟、阶梯压测与稳态运行。验证恢复能力与性能拐点。</p></article></div>
+    </section>
+
+    <section class="section" id="capacity">
+      <div class="section-header"><span class="section-no">09 / 容量模型</span><h2>把“3000 万 DAU”<br>翻译成一次可执行的测试。</h2><p>按人均日登录 4 次、每次 5 分钟、每次 30 个操作，并叠加高峰与 20% 余量，得出可校验的集群设计值和单实例通过线。</p></div>
+      <div class="capacity"><article class="capacity-statement"><span class="label">验证原则</span><h3>DAU 是业务指标；QPS、P99、错误率和稳定性才是工程证据。</h3><p>单机压测不能直接等同于集群能力，因此将内部 RPC、跨机广播和尾延迟以 0.65 的集群折扣反推单实例通过线；随后逐层以实测数据替换模型假设。</p></article><div class="metric-grid"><article class="metric"><b>200w</b><span>设计峰值并发连接</span></article><article class="metric"><b>25w</b><span>设计峰值 QPS（含 20% 余量）</span></article><article class="metric"><b>10w</b><span>设计写 QPS（按 40% 写操作）</span></article><article class="metric"><b>≥2.4w</b><span>单 FarmServer 实例 QPS 通过线</span></article></div></div>
+    </section>
+
+    <section class="questions" id="questions">
+      <div class="section-header"><span class="section-no">10 / 讨论与请教</span><h2>希望在答辩中进一步明确的问题。</h2><p>以下问题用于校准后续的验证标准与演进方向，也欢迎老师结合经典农场类游戏的实际经验给予建议。</p></div>
+      <ol class="question-list"><li><strong>3000 万 DAU 应该验证到什么程度？单机测试怎样界定“容量设计已经得到有效验证”？</strong></li><li><strong>当前架构设计整体上是否合理，是否符合此类游戏的一般设计思路？</strong></li><li><strong>哪些地方需要优化改进？<span style="color:#bcd4c3;font-weight:500">（目前我认为静态分片路由值得优先讨论）</span></strong></li></ol>
+    </section>
+
+    <section class="roadmap" id="next"><div class="roadmap-inner"><div><span class="eyebrow">NEXT / 继续推进</span><h2>从“架构合理”<br>走向“证据充分”。</h2></div><ol class="todo-list"><li><div><strong>集中回归与体验优化</strong><span>保证登录、种植、好友、任务邮件、图鉴与宠物稳定演示。</span></div></li><li><div><strong>校准容量模型，定位瓶颈</strong><span>以阶梯压测、行为链机器人、稳态与故障演练替换推导假设。</span></div></li><li><div><strong>推进演进能力</strong><span>补强并发安全、动态路由、分片迁移和 GM 控制台。</span></div></li></ol></div></section>
+  </main>
+  <footer class="footer"><span>CLASSIC FARM · ENGINEERING MIDTERM</span><span>END / THANK YOU</span></footer>
+  <aside class="float-nav" aria-label="快速跳转"><a href="#top">TOP</a><a href="#architecture">ARCH</a><a href="#capacity">CAP</a><a href="#questions">Q&amp;A</a><a href="#next">NEXT</a></aside>
+</body>
+</html>

@@ -13,6 +13,24 @@ export const TIME_SCALES = {
 export const LOGIC_DAY_MIN_MS = 5 * 60 * 1000;
 export const logicDayMs = (ts) => Math.max(24 * TIME_SCALES[ts].hourMs, LOGIC_DAY_MIN_MS);
 
+/** 当前时刻所属逻辑日起点，与服务端 LogicDayID 同口径：floor(now / dayMs) * dayMs。 */
+export function logicDayStart(nowMs, timeScaleKey) {
+  const dayMs = logicDayMs(timeScaleKey);
+  if (!Number.isFinite(nowMs) || nowMs <= 0 || !dayMs) return 0;
+  return Math.floor(nowMs / dayMs) * dayMs;
+}
+
+/**
+ * 全局昼夜相位 [0, 1)：所有客户端用同一墙钟（或校准后的 serverNow）应得到同一值。
+ * 不依赖本机会话的 dayStart 偏移。
+ */
+export function logicDayPhase(nowMs, timeScaleKey) {
+  const dayMs = logicDayMs(timeScaleKey);
+  if (!Number.isFinite(nowMs) || !dayMs) return 0;
+  const rem = ((nowMs % dayMs) + dayMs) % dayMs;
+  return rem / dayMs;
+}
+
 // ---- 等级与土地（4.x）----
 export const EXP_PER_LEVEL = 200;                 // 累计经验 = N × 200
 export const INITIAL_GOLD = 1000;

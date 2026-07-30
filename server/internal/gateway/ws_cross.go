@@ -17,6 +17,7 @@ import (
 	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 )
 
 // crossPending 只保存「这次请求该回给谁」的传输态。
@@ -34,9 +35,9 @@ type crossPending struct {
 type crossActionResponse = cross.VisitorReward
 
 type stealRequest struct {
-	OwnerUID  uint64 `json:"owner_uid"`
-	PlotIndex uint32 `json:"plot_index"`
-	CropID    uint32 `json:"crop_id"`
+	OwnerUID  pkgjson.UID `json:"owner_uid"`
+	PlotIndex uint32      `json:"plot_index"`
+	CropID    uint32      `json:"crop_id"`
 }
 
 // WithCrossEventBus enables the visitor-side half of cross-farm actions.
@@ -114,7 +115,7 @@ func (g *Gateway) handleVisitorMutualAid(connection *wsConnection, request Envel
 		response.Err = pkgerr.BadRequest
 		return response
 	}
-	ownerUID, code := g.resolveCrossTarget(connection, payload.OwnerUID)
+	ownerUID, code := g.resolveCrossTarget(connection, uint64(payload.OwnerUID))
 	if code != pkgerr.OK {
 		response.Err = code
 		return response
@@ -151,7 +152,7 @@ func (g *Gateway) handleVisitorSteal(connection *wsConnection, request Envelope)
 		response.Err = pkgerr.BadRequest
 		return response
 	}
-	ownerUID, code := g.resolveCrossTarget(connection, payload.OwnerUID)
+	ownerUID, code := g.resolveCrossTarget(connection, uint64(payload.OwnerUID))
 	if code != pkgerr.OK {
 		response.Err = code
 		return response

@@ -9,13 +9,14 @@ import (
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 )
 
 var errFriendAccessRevoked = errors.New("gateway: friend access revoked during enter")
 
 type syncFarmRequest struct {
-	OwnerUID uint64 `json:"owner_uid"`
-	FromSeq  uint64 `json:"from_seq"`
+	OwnerUID pkgjson.UID `json:"owner_uid"`
+	FromSeq  uint64      `json:"from_seq"`
 }
 
 type syncFarmResponse struct {
@@ -36,7 +37,7 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		return response
 	}
 
-	ownerUID, relation, code := g.farmAccess(connection.uid, payload.OwnerUID)
+	ownerUID, relation, code := g.farmAccess(connection.uid, uint64(payload.OwnerUID))
 	if code != pkgerr.OK {
 		response.Err = code
 		return response
@@ -81,7 +82,7 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			}
 		}
 		response.Payload = marshalPayload(enterFarmResponse{
-			Snapshot:   remote.Snapshot,
+			Snapshot:   redactFarmSnapshot(remote.Snapshot, relation),
 			FarmSeq:    remote.FarmSeq,
 			ServerTime: remote.ServerTime,
 			Relation:   relation,
@@ -108,7 +109,7 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		}
 		changes := farmActor.Aggregate.AdvanceAll(g.Now())
 		enter = enterFarmResponse{
-			Snapshot:   farmActor.Aggregate.Snapshot(),
+			Snapshot:   redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation),
 			FarmSeq:    farmActor.Aggregate.FarmSeq,
 			ServerTime: g.Now(),
 			Relation:   relation,
@@ -175,7 +176,7 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		return response
 	}
 
-	ownerUID, _, code := g.farmAccess(connection.uid, payload.OwnerUID)
+	ownerUID, relation, code := g.farmAccess(connection.uid, uint64(payload.OwnerUID))
 	if code != pkgerr.OK {
 		response.Err = code
 		return response
@@ -193,7 +194,16 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		}
 		response.Err = result.Err
 		if result.Err == pkgerr.OK {
-			response.Payload = result.Payload
+			var sync syncFarmResponse
+			if err := unmarshalPayload(result.Payload, &sync); err != nil {
+				response.Err = pkgerr.Internal
+				return response
+			}
+			if sync.Snapshot != nil {
+				safe := redactFarmSnapshot(*sync.Snapshot, relation)
+				sync.Snapshot = &safe
+			}
+			response.Payload = marshalPayload(sync)
 		}
 		return response
 	}
@@ -209,13 +219,13 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 			return nil
 		}
 		if payload.FromSeq > sync.FarmSeq {
-			snapshot := farmActor.Aggregate.Snapshot()
+			snapshot := redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation)
 			sync.Snapshot = &snapshot
 			return nil
 		}
 		deltas, ok := farmActor.Deltas.Since(payload.FromSeq + 1)
 		if !ok || len(deltas) == 0 {
-			snapshot := farmActor.Aggregate.Snapshot()
+			snapshot := redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation)
 			sync.Snapshot = &snapshot
 			return nil
 		}
@@ -249,6 +259,13 @@ func (g *Gateway) farmAccess(viewerUID, requestedOwnerUID uint64) (ownerUID uint
 		return 0, "", pkgerr.NotFriend
 	}
 	return ownerUID, "FRIEND", pkgerr.OK
+}
+
+func redactFarmSnapshot(snap farm.FarmSnapshotJSON, relation string) farm.FarmSnapshotJSON {
+	if relation == "FRIEND" {
+		return farm.VisitorSafeFarmSnapshot(snap)
+	}
+	return snap
 }
 
 func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {

@@ -1,0 +1,53 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { hudSignature } from './ui.js'
+import { taskCardViewModel } from './taskCardView.js'
+
+const state = {
+  gold: 770,
+  exp: 18,
+  dog: null,
+  dogBowl: 0,
+  mails: [],
+  friendRequests: [],
+  tasks: [],
+  unlockedPlots: 6,
+}
+
+test('hudSignature 仅在 HUD 可见数据变化时改变', () => {
+  const before = hudSignature(state, false)
+
+  assert.equal(hudSignature({ ...state }, false), before)
+  assert.notEqual(hudSignature({ ...state, gold: 771 }, false), before)
+  assert.notEqual(hudSignature({ ...state, exp: 19 }, false), before)
+})
+
+test('hudSignature 在可领任务（含每日登录）出现时变化以驱动红点', () => {
+  const before = hudSignature(state, false)
+  const withDaily = {
+    ...state,
+    tasks: [{ id: 4, progress: 1, target: 1, done: true, claimed: false }],
+  }
+  assert.notEqual(hudSignature(withDaily, false), before)
+  assert.equal(
+    hudSignature({
+      ...withDaily,
+      tasks: [{ id: 4, progress: 1, target: 1, done: true, claimed: true }],
+    }, false),
+    before,
+  )
+})
+
+test('任务面板领取决策统一走 claimTask，Task 4 无独立 614 动作', () => {
+  const tasks = [
+    { id: 1, title: '完成一次播种', progress: 1, target: 1, rewardCoin: 20, done: true, claimed: false },
+    { id: 4, title: '每日登录', progress: 1, target: 1, rewardCoin: 100, done: true, claimed: false },
+  ]
+  const actions = tasks.map((t) => taskCardViewModel(t).claimAction)
+  assert.deepEqual(actions, [
+    { type: 'claimTask', taskId: 1 },
+    { type: 'claimTask', taskId: 4 },
+  ])
+  assert.ok(actions.every((a) => a && a.type === 'claimTask' && a.type !== 'claimDailyLogin'))
+})

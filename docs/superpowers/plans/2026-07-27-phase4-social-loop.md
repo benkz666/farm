@@ -271,9 +271,9 @@ type Pending struct { /* Reserved → Settled|RolledBack */ }
 **Files:**
 - Create: migrations、`store/mail.go`、`store/task.go`、gateway handlers
 - Modify: `protocol.md` 登记 `ClaimDailyLogin=614`
-- 奖励统一进邮件；`TaskClaim` / `MailClaim` / `ClaimDailyLogin` 幂等
+- 系统邮件附件走 `MailClaim`；任务与每日登录通过任务页直接入账，`TaskClaim` / `MailClaim` / `ClaimDailyLogin` 均幂等
 
-- [x] **Step 1:** 红测 — 同逻辑日重复每日登录 → `1005`；任务领奖进邮件
+- [x] **Step 1:** 红测 — 同一服务器本地自然日重复每日登录 → `1005`；任务领奖直接入账
 
 - [x] **Step 2:** Commit `feat: 实现薄任务邮件与每日登录奖励`
 

@@ -25,14 +25,21 @@ func (a *Aggregate) PlayerDelta() PlayerDelta {
 	}
 }
 
-// CreditMailReward mirrors an already committed mail attachment credit into
-// the resident authoritative aggregate so a later Actor flush cannot overwrite
-// the database reward with an older coin snapshot.
-func (a *Aggregate) CreditMailReward(amount int64) bool {
-	if a == nil || amount <= 0 {
+// CreditReward mirrors a committed direct reward into the resident
+// authoritative aggregate so a later Actor flush cannot overwrite durable
+// state with an older snapshot.
+func (a *Aggregate) CreditReward(coin int64, exp uint32) bool {
+	if a == nil || coin < 0 || (coin == 0 && exp == 0) {
 		return false
 	}
-	a.Coin += amount
+	a.Coin += coin
+	a.Exp += exp
+	a.RecalcLevel()
 	a.FarmSeq++
 	return true
+}
+
+// CreditMailReward 保留邮件附件领取的语义封装。
+func (a *Aggregate) CreditMailReward(amount int64) bool {
+	return a.CreditReward(amount, 0)
 }

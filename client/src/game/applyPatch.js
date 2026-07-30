@@ -172,21 +172,30 @@ export function applyPlotSnapshot(plot, snap) {
 /**
  * @param {object} state
  * @param {object} snap FarmSnapshotJSON
+ * @param {{ farmViewOnly?: boolean }} [opts]
+ *   farmViewOnly：拜访好友时只投影地块/解锁数，保留访客自己的金币与背包。
  */
-function applyFullSnapshot(state, snap) {
-  if (typeof snap.coin === 'number') state.gold = snap.coin
-  if (typeof snap.exp === 'number') state.exp = snap.exp
-  if (typeof snap.unlocked_plots === 'number') state.unlockedPlots = snap.unlocked_plots
+function applyFullSnapshot(state, snap, opts = {}) {
+  const farmViewOnly = opts.farmViewOnly === true
 
-  if (snap.bag) {
-    if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
-    state.inventory.seeds = bagToSeeds(snap.bag)
-    state.inventory.fertilizers = bagToFertilizers(snap.bag)
-    state.inventory.dogFood = bagToDogFood(snap.bag)
+  if (!farmViewOnly) {
+    if (typeof snap.coin === 'number') state.gold = snap.coin
+    if (typeof snap.exp === 'number') state.exp = snap.exp
+    if (typeof snap.nickname === 'string' && snap.nickname.trim()) {
+      state.nickname = snap.nickname.trim()
+    }
+    if (snap.bag) {
+      if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {} }
+      state.inventory.seeds = bagToSeeds(snap.bag)
+      state.inventory.fertilizers = bagToFertilizers(snap.bag)
+      state.inventory.dogFood = bagToDogFood(snap.bag)
+    }
+    if (snap.warehouse) {
+      state.warehouse = warehouseFromServer(snap.warehouse)
+    }
   }
-  if (snap.warehouse) {
-    state.warehouse = warehouseFromServer(snap.warehouse)
-  }
+
+  if (typeof snap.unlocked_plots === 'number') state.unlockedPlots = snap.unlocked_plots
 
   if (Array.isArray(snap.plots)) {
     if (!Array.isArray(state.plots)) state.plots = []
@@ -261,13 +270,14 @@ export function applyFarmDelta(state, delta) {
  *
  * @param {object} state
  * @param {object} source
+ * @param {{ farmViewOnly?: boolean }} [opts] 拜访好友农场时传 true，避免主人经济字段污染访客 HUD
  * @returns {object} state
  */
-export function applyPatch(state, source) {
+export function applyPatch(state, source, opts = {}) {
   if (!state || !source || typeof source !== 'object') return state
 
   if (source.snapshot && typeof source.snapshot === 'object') {
-    applyFullSnapshot(state, source.snapshot)
+    applyFullSnapshot(state, source.snapshot, opts)
     return state
   }
   if (source.patch && typeof source.patch === 'object') {

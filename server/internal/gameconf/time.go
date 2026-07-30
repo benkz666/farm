@@ -7,6 +7,8 @@
 // 禁止依赖真实长等待（见期 2 规格 4.5）。
 package gameconf
 
+import "time"
+
 // 时间档名称常量，避免魔法字符串散落。
 const (
 	TimeProfileDemo      = "demo"
@@ -41,12 +43,45 @@ func LogicDayMs(profile string) int64 {
 
 // LogicDayID 返回 now 所属逻辑日的编号。
 //
-// 每日重置类状态（维护额度、登录奖励、任务进度）判断「是否换天」必须只认这一个
-// 口径。各模块自行用常量除法会在非 demo 档上算出不同的天：demo 档下 24 缩放小时
-// 只有 144 秒，被 LogicDayMinMs 抬到 5 分钟，而 fast 档是实打实的 24 分钟。
+// 仅供跟随时间档缩放的农场 demo 玩法状态（如维护额度）判断「是否换天」。各模块
+// 不应自行用常量除法：demo 档下 24 缩放小时只有 144 秒，被 LogicDayMinMs 抬到
+// 5 分钟，而 fast 档是实打实的 24 分钟。每日任务与每日登录改用 LocalDayKey。
 func LogicDayID(profile string, now int64) uint32 {
 	if now <= 0 {
 		return 0
 	}
 	return uint32(now / LogicDayMs(profile))
+}
+
+// LocalDayKey returns the server-local calendar day containing nowMs, encoded
+// as YYYYMMDD. Daily tasks use this real-world boundary; it is deliberately
+// independent from the accelerated demo LogicDayID used by farm simulation.
+func LocalDayKey(nowMs int64) int64 {
+	now := time.UnixMilli(nowMs).In(time.Local)
+	return int64(now.Year()*10_000 + int(now.Month())*100 + now.Day())
+}
+
+// NextLocalDayResetMs returns the Unix-millisecond timestamp of the next
+// server-local midnight after nowMs.
+func NextLocalDayResetMs(nowMs int64) int64 {
+	now := time.UnixMilli(nowMs).In(time.Local)
+	next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.Local)
+	return next.UnixMilli()
+}
+
+// LocalDayBounds returns the server-local [start, nextStart) range for a
+// YYYYMMDD key. It is used when mapping legacy records written before daily
+// tasks switched away from accelerated logical days.
+func LocalDayBounds(dayKey int64) (startMs, nextStartMs int64, ok bool) {
+	year := int(dayKey / 10_000)
+	month := time.Month(dayKey / 100 % 100)
+	day := int(dayKey % 100)
+	if year < 1 || month < time.January || month > time.December || day < 1 || day > 31 {
+		return 0, 0, false
+	}
+	start := time.Date(year, month, day, 0, 0, 0, 0, time.Local)
+	if start.Year() != year || start.Month() != month || start.Day() != day {
+		return 0, 0, false
+	}
+	return start.UnixMilli(), start.AddDate(0, 0, 1).UnixMilli(), true
 }

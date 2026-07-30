@@ -9,6 +9,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -166,7 +167,10 @@ func run() error {
 				func(uint64) bool { return true },
 				transport.Now,
 				farmrpc.WithPlayerDeltaPublisher(transport),
+				farmrpc.WithTaskNotifyPublisher(transport),
 				farmrpc.WithTaskProgressWriter(storage),
+				farmrpc.WithTaskClaimer(storage),
+				farmrpc.WithDailyLoginClaimer(storage),
 				farmrpc.WithMailClaimer(storage),
 			),
 		)
@@ -181,6 +185,10 @@ func run() error {
 			nil,
 			metrics,
 			gateway.WithFarmRPC(farmrpc.NewHTTPClient(config.farmURLs, config.internalToken), routes),
+			gateway.WithTaskNotifyFanout(farmrpc.NewTaskFanoutPublisher(
+				storage.ConnectionRegistry(),
+				farmrpc.NewHTTPTaskNotifyPusher(config.gatewayURLs, config.internalToken),
+			)),
 			gateway.WithDebugTimeFanout(config.farmURLs, config.gatewayURLs, config.internalToken),
 			gateway.WithCrossEventBus(eventBus),
 		)
@@ -211,6 +219,10 @@ func run() error {
 			storage.ConnectionRegistry(),
 			farmrpc.NewHTTPPlayerDeltaPusher(config.gatewayURLs, config.internalToken),
 		)
+		taskNotifyPublisher := farmrpc.NewTaskFanoutPublisher(
+			storage.ConnectionRegistry(),
+			farmrpc.NewHTTPTaskNotifyPusher(config.gatewayURLs, config.internalToken),
+		)
 		clock := &debugclock.Clock{}
 		owner := cross.NewOwner(runtime, storage, eventBus, clock.Now, deltaPublisher, owns)
 		owner.SetStealHintWriter(storage)
@@ -225,8 +237,11 @@ func run() error {
 			clock.Now,
 			farmrpc.WithDeltaPublisher(deltaPublisher),
 			farmrpc.WithPlayerDeltaPublisher(playerDeltaPublisher),
+			farmrpc.WithTaskNotifyPublisher(taskNotifyPublisher),
 			farmrpc.WithStealHintWriter(storage),
 			farmrpc.WithTaskProgressWriter(storage),
+			farmrpc.WithTaskClaimer(storage),
+			farmrpc.WithDailyLoginClaimer(storage),
 			farmrpc.WithMailClaimer(storage),
 		)
 		mux := http.NewServeMux()
@@ -367,11 +382,11 @@ func loadRouteTable(path string) (*routing.RouteTable, error) {
 func loadConfig() (config, error) {
 	tokenSecret := getenv("FARM_TOKEN_SECRET", devTokenSecret)
 	role := strings.ToLower(getenv("FARM_ROLE", roleAll))
-	farmURLs, err := parseFarmURLs(os.Getenv("FARM_FARM_URLS"))
+	farmURLs, err := parseServiceURLs("FARM_FARM_URLS", os.Getenv("FARM_FARM_URLS"))
 	if err != nil {
 		return config{}, err
 	}
-	gatewayURLs, err := parseFarmURLs(os.Getenv("FARM_GATEWAY_URLS"))
+	gatewayURLs, err := parseServiceURLs("FARM_GATEWAY_URLS", os.Getenv("FARM_GATEWAY_URLS"))
 	if err != nil {
 		return config{}, fmt.Errorf("parse FARM_GATEWAY_URLS: %w", err)
 	}
@@ -404,8 +419,11 @@ func loadConfig() (config, error) {
 	switch cfg.role {
 	case roleAll:
 	case roleGateway:
-		if cfg.internalToken == "" || len(cfg.farmURLs) == 0 {
-			return config{}, errors.New("FARM_ROLE=gateway requires FARM_INTERNAL_TOKEN and FARM_FARM_URLS")
+		if cfg.internalToken == "" || cfg.instanceID == "" || len(cfg.farmURLs) == 0 || len(cfg.gatewayURLs) == 0 {
+			return config{}, errors.New("FARM_ROLE=gateway requires FARM_INTERNAL_TOKEN, FARM_INSTANCE_ID, FARM_FARM_URLS, and FARM_GATEWAY_URLS")
+		}
+		if _, ok := cfg.gatewayURLs[cfg.instanceID]; !ok {
+			return config{}, fmt.Errorf("FARM_ROLE=gateway requires FARM_GATEWAY_URLS entry for %q", cfg.instanceID)
 		}
 	case roleFarm:
 		if cfg.internalToken == "" || cfg.instanceID == "" || len(cfg.gatewayURLs) == 0 {
@@ -478,17 +496,21 @@ func newCrossBus(config config) (bus.EventBus, error) {
 	return eventBus, nil
 }
 
-func parseFarmURLs(value string) (map[string]string, error) {
+func parseServiceURLs(name, value string) (map[string]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
 	}
 	var endpoints map[string]string
 	if err := json.Unmarshal([]byte(value), &endpoints); err != nil {
-		return nil, fmt.Errorf("parse FARM_FARM_URLS: %w", err)
+		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
-	for farmID, endpoint := range endpoints {
-		if strings.TrimSpace(farmID) == "" || strings.TrimSpace(endpoint) == "" {
-			return nil, errors.New("FARM_FARM_URLS contains an empty farm ID or endpoint")
+	for serviceID, endpoint := range endpoints {
+		if strings.TrimSpace(serviceID) == "" || strings.TrimSpace(endpoint) == "" {
+			return nil, fmt.Errorf("%s contains an empty service ID or endpoint", name)
+		}
+		parsed, err := url.ParseRequestURI(endpoint)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return nil, fmt.Errorf("%s endpoint for %q must be an absolute HTTP URL", name, serviceID)
 		}
 	}
 	return endpoints, nil

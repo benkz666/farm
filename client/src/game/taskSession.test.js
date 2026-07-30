@@ -1,0 +1,331 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+
+import { createTaskSession, mergeListRespectingPush } from './taskSession.js'
+
+function deferred() {
+  /** @type {(v: any) => void} */
+  let resolve
+  /** @type {(e?: any) => void} */
+  let reject
+  const promise = new Promise((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function makeSink() {
+  const writes = []
+  let tasks = []
+  let resetAt = 0
+  return {
+    writes,
+    getTasks: () => tasks,
+    getResetAt: () => resetAt,
+    setTasks: (next) => {
+      tasks = next
+      writes.push({ type: 'tasks', tasks: next.map((t) => ({ ...t })) })
+    },
+    setResetAt: (v) => {
+      resetAt = v
+      writes.push({ type: 'resetAt', resetAt: v })
+    },
+    afterApply: () => {
+      writes.push({ type: 'hud' })
+    },
+  }
+}
+
+test('旧登录响应不污染新登录会话', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const clientA = { id: 'A' }
+  const clientB = { id: 'B' }
+  let current = clientA
+  const d = deferred()
+
+  session.invalidate()
+  const p1 = session.refreshTaskList({
+    client: clientA,
+    getCurrentClient: () => current,
+    fetch: async () => d.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  session.invalidate()
+  current = clientB
+  const p2 = session.refreshTaskList({
+    client: clientB,
+    getCurrentClient: () => current,
+    fetch: async () => ({
+      ok: true,
+      tasks: [{ id: 4, title: '每日登录', progress: 1, target: 1, reward_coin: 100, claimed: false }],
+      resetAt: 2000,
+    }),
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  const r2 = await p2
+  assert.equal(r2.applied, true)
+  assert.equal(sink.getResetAt(), 2000)
+  assert.equal(sink.getTasks()[0].id, 4)
+
+  d.resolve({
+    ok: true,
+    tasks: [{ id: 1, title: '旧播种', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    resetAt: 999,
+  })
+  const r1 = await p1
+  assert.equal(r1.applied, false)
+  assert.equal(r1.reason, 'session')
+  assert.equal(sink.getResetAt(), 2000)
+  assert.equal(sink.getTasks()[0].id, 4)
+  assert.equal(sink.getTasks()[0].title, '每日登录')
+})
+
+test('重连前响应不污染重连后（即使复用同一 client）', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'same' }
+  const d = deferred()
+
+  session.invalidate()
+  const before = session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => d.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  // 重连恢复：即使复用 client 也必须使旧请求失效
+  session.invalidate()
+  const after = await session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => ({
+      ok: true,
+      tasks: [{ id: 2, title: '完成一次收获', progress: 1, target: 1, reward_coin: 30, claimed: false }],
+      resetAt: 5000,
+    }),
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+  assert.equal(after.applied, true)
+
+  d.resolve({
+    ok: true,
+    tasks: [{ id: 1, title: '重连前旧列表', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    resetAt: 1,
+  })
+  const stale = await before
+  assert.equal(stale.applied, false)
+  assert.equal(stale.reason, 'session')
+  assert.equal(sink.getTasks()[0].title, '完成一次收获')
+  assert.equal(sink.getResetAt(), 5000)
+})
+
+test('晚到旧 TaskList 不覆盖已到的 TaskNotify', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+  const d = deferred()
+
+  session.invalidate()
+  sink.setTasks([{
+    id: 1, taskId: '1', title: '完成一次播种', progress: 0, target: 1, rewardCoin: 20, done: false, claimed: false, rev: 0,
+  }])
+  sink.writes.length = 0
+
+  const listP = session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => d.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  const notified = session.applyTaskNotify(
+    { id: 1, title: '完成一次播种', progress: 1, target: 1, reward_coin: 20, claimed: false },
+    { getTasks: sink.getTasks, setTasks: sink.setTasks, afterApply: sink.afterApply },
+  )
+  assert.equal(notified, true)
+  assert.equal(sink.getTasks()[0].progress, 1)
+  assert.equal(sink.getTasks()[0].done, true)
+
+  d.resolve({
+    ok: true,
+    tasks: [
+      { id: 1, title: '完成一次播种', progress: 0, target: 1, reward_coin: 20, claimed: false },
+      { id: 2, title: '完成一次收获', progress: 0, target: 1, reward_coin: 30, claimed: false },
+    ],
+    resetAt: 8000,
+  })
+  const listR = await listP
+  assert.equal(listR.applied, true)
+  assert.equal(listR.pushMerged, true)
+  assert.equal(sink.getTasks().find((t) => t.id === 1).progress, 1, 'notify 进度应保留')
+  assert.equal(sink.getTasks().find((t) => t.id === 2).progress, 0, '列表其它任务仍应用')
+  assert.equal(sink.getResetAt(), 8000)
+})
+
+test('dispose 后无 state/HUD 写入', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+  const d = deferred()
+
+  session.invalidate()
+  const p = session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => d.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  session.dispose()
+  d.resolve({
+    ok: true,
+    tasks: [{ id: 1, title: 'x', progress: 1, target: 1, reward_coin: 20, claimed: false }],
+    resetAt: 9,
+  })
+  const r = await p
+  assert.equal(r.applied, false)
+  assert.equal(r.reason, 'disposed')
+  assert.equal(sink.writes.length, 0)
+  assert.equal(session.applyTaskNotify({ id: 1, progress: 1, target: 1 }, {
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    afterApply: sink.afterApply,
+  }), false)
+})
+
+test('同会话乱序 latest-wins：旧响应不覆盖新请求', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+  const d1 = deferred()
+  const d2 = deferred()
+
+  session.invalidate()
+  const p1 = session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => d1.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+  const p2 = session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => d2.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+
+  d2.resolve({
+    ok: true,
+    tasks: [{ id: 3, title: '拜访', progress: 1, target: 1, reward_coin: 40, claimed: false }],
+    resetAt: 300,
+  })
+  assert.equal((await p2).applied, true)
+
+  d1.resolve({
+    ok: true,
+    tasks: [{ id: 1, title: '旧请求', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    resetAt: 100,
+  })
+  const r1 = await p1
+  assert.equal(r1.applied, false)
+  assert.equal(r1.reason, 'stale_request')
+  assert.equal(sink.getTasks()[0].id, 3)
+  assert.equal(sink.getResetAt(), 300)
+})
+
+test('client 已切换时旧响应不应用', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const clientA = { id: 'A' }
+  const clientB = { id: 'B' }
+  let current = clientA
+  const d = deferred()
+
+  session.invalidate()
+  const p = session.refreshTaskList({
+    client: clientA,
+    getCurrentClient: () => current,
+    fetch: async () => d.promise,
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+  current = clientB
+  d.resolve({
+    ok: true,
+    tasks: [{ id: 1, title: 'x', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    resetAt: 1,
+  })
+  const r = await p
+  assert.equal(r.applied, false)
+  assert.equal(r.reason, 'client')
+  assert.equal(sink.writes.length, 0)
+})
+
+test('mergeListRespectingPush：仅保留请求开始后被 push 更新的任务', () => {
+  const merged = mergeListRespectingPush(
+    [
+      { id: 1, progress: 1, rev: 3 },
+      { id: 2, progress: 0, rev: 0 },
+    ],
+    [
+      { id: 1, progress: 0, rev: 0 },
+      { id: 2, progress: 1, rev: 0 },
+      { id: 3, progress: 0, rev: 0 },
+    ],
+    2,
+  )
+  assert.equal(merged.find((t) => t.id === 1).progress, 1)
+  assert.equal(merged.find((t) => t.id === 2).progress, 1)
+  assert.equal(merged.find((t) => t.id === 3).progress, 0)
+})
+
+test('contextValid 失败时可供上层安排重试，但不写 tasks', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+  session.invalidate()
+  const r = await session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => ({ ok: false, err: 500 }),
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+  assert.equal(r.applied, false)
+  assert.equal(r.ok, false)
+  assert.equal(r.contextValid, true)
+  assert.equal(sink.writes.length, 0)
+})

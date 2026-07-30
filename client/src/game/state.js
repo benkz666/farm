@@ -1,7 +1,7 @@
 // ============================================================
 // 游戏状态：创建、派生计算（期 3：不再以 localStorage 为权威）
 // ============================================================
-import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, TASK_POOL, DAILY_TASK_COUNT } from './config.js';
+import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, TASK_POOL, DAILY_TASK_COUNT, logicDayStart } from './config.js';
 
 // 地块状态机（5.1 节）
 export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered' };
@@ -36,6 +36,7 @@ export function defaultState() {
     version: 1,
     createdAt: now,
     timeScale: 'demo',
+    nickname: null,
     gold: INITIAL_GOLD,
     exp: 0,
     plots: Array.from({ length: MAX_PLOTS }, (_, i) => makePlot(i)),
@@ -49,8 +50,9 @@ export function defaultState() {
     mails: [],
     mailSeq: 1,
     friends: [],          // 期 3：真实好友由 Task 11 接入；不再预置 NPC
+    friendRequests: [],   // 待处理邻里申请（邮箱待办）
     tasks: [],            // [{taskId, progress, done}]
-    daily: { dayStart: now - 2 * 60 * 1000, careCount: 0 },  // 初始落在上午时段
+    daily: { dayStart: logicDayStart(now, 'demo'), careCount: 0 },
     stats: { tilled: 0, planted: 0, watered: 0, weeded: 0, depested: 0, harvested: 0, stolen: 0, helped: 0, fertilized: 0, sold: 0, caught: 0 },
     seenUnlockTip: 0,     // 上次提示扩地时的等级
     settings: { sound: true },
@@ -84,24 +86,4 @@ export function drawDailyTasks(state) {
     tasks.push({ taskId: def.id, progress: 0, done: false });
   }
   state.tasks = tasks;
-}
-
-// ---- 存档（期 3 停用：不写、不读权威）----
-const SAVE_KEY = 'farm3d_save_v1';
-
-/** @deprecated 期 3 起不再持久化本地权威；保留空实现以免旧调用炸掉。 */
-export function saveGame(_state) {
-  /* no-op：玩法权威在服务端 */
-}
-
-/** @deprecated 期 3 起忽略遗留 localStorage 存档。 */
-export function loadGame() {
-  return null;
-}
-
-/** 清理遗留 localStorage 键（设置里「重置」可调用）。 */
-export function clearSave() {
-  try {
-    localStorage.removeItem(SAVE_KEY);
-  } catch (e) { /* 隐私模式等 */ }
 }

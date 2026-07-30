@@ -12,6 +12,7 @@ function makeSession(overrides = {}) {
     uid: 42,
     token: 'tok',
     viewingOwnerUid: 99,
+    viewingOwnerName: null,
     lastFarmSeq: 7,
     farmViewGeneration: 1,
     relation: 'FRIEND',
@@ -52,20 +53,23 @@ function makeHarness(sessionOverrides = {}) {
     client,
     session,
     state,
-    applyPatch: (st, payload) => {
+    applyPatch: (st, payload, opts = {}) => {
       st.stamped = payload
+      if (opts.farmViewOnly) return
       st.gold = payload.snapshot?.coin ?? st.gold
     },
-    setFarmView: ({ ownerUid, farmSeq, relation }) => {
+    setFarmView: ({ ownerUid, farmSeq, relation, ownerName = null }) => {
       session.farmViewGeneration++
       session.viewingOwnerUid = ownerUid
       session.lastFarmSeq = farmSeq
       session.relation = relation
+      session.viewingOwnerName = relation === 'FRIEND' ? (ownerName || null) : null
     },
     leaveOnline: () => {
       leaveCalls.push(true)
       session.isOnline = false
       session.viewingOwnerUid = null
+      session.viewingOwnerName = null
       session.lastFarmSeq = 0
       session.relation = null
       session.farmViewGeneration++
@@ -109,6 +113,7 @@ function makeHarness(sessionOverrides = {}) {
 
 test('onFarmRestored 好友 EnterFarm 全量响应：权威 apply、更新 view、清 busy、刷新 UI', () => {
   const h = makeHarness()
+  h.state.gold = 333
   bindFarmReconnectRestore(h.deps)
 
   h.client.emitRestored({
@@ -118,18 +123,37 @@ test('onFarmRestored 好友 EnterFarm 全量响应：权威 apply、更新 view�
     payload: {
       farm_seq: 12,
       relation: 'FRIEND',
-      snapshot: { owner_uid: 99, coin: 500, plots: [{ index: 0 }] },
+      snapshot: { owner_uid: 99, nickname: '阿花', coin: 500, plots: [{ index: 0 }] },
     },
   })
 
   assert.equal(h.onlineBusy, false)
   assert.deepEqual(h.state.stamped.snapshot.owner_uid, 99)
-  assert.equal(h.state.gold, 500)
+  assert.equal(h.state.gold, 333, '拜访不覆盖访客自己的金币')
   assert.equal(h.session.viewingOwnerUid, 99)
+  assert.equal(h.session.viewingOwnerName, '阿花')
   assert.equal(h.session.lastFarmSeq, 12)
   assert.equal(h.session.relation, 'FRIEND')
   assert.ok(h.uiCalls.some((c) => c.relation === 'FRIEND'))
   assert.ok(h.uiCalls.some((c) => c.toast))
+})
+
+test('onFarmRestored 成功后调用 onRestored（重建任务列表/跨日 timer）', () => {
+  const restored = []
+  const h = makeHarness()
+  h.deps.onRestored = () => restored.push(1)
+  bindFarmReconnectRestore(h.deps)
+
+  h.client.emitRestored({
+    err: 0,
+    payload: {
+      relation: 'SELF',
+      farm_seq: 2,
+      snapshot: { owner_uid: 42 },
+    },
+  })
+
+  assert.deepEqual(restored, [1])
 })
 
 test('onFarmRestored 自己农场：更新为 SELF view', () => {
@@ -220,8 +244,9 @@ test('重新绑定不会重复注册 handler', () => {
   assert.equal(restores, 0)
 })
 
-test('applyAuthoritativeFarmEnter 可独立强制覆盖 snapshot', () => {
+test('applyAuthoritativeFarmEnter 好友农场不覆盖访客金币', () => {
   const h = makeHarness()
+  h.state.gold = 333
   applyAuthoritativeFarmEnter(h.deps, {
     err: 0,
     payload: {
@@ -233,6 +258,20 @@ test('applyAuthoritativeFarmEnter 可独立强制覆盖 snapshot', () => {
   assert.equal(h.session.viewingOwnerUid, 88)
   assert.equal(h.session.lastFarmSeq, 3)
   assert.equal(h.onlineBusy, false)
+  assert.equal(h.state.gold, 333)
+})
+
+test('applyAuthoritativeFarmEnter 自己农场权威覆盖金币', () => {
+  const h = makeHarness({ viewingOwnerUid: 42, relation: 'SELF' })
+  h.state.gold = 1
+  applyAuthoritativeFarmEnter(h.deps, {
+    err: 0,
+    payload: {
+      farm_seq: 3,
+      relation: 'SELF',
+      snapshot: { owner_uid: 42, coin: 9 },
+    },
+  })
   assert.equal(h.state.gold, 9)
 })
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/routing"
 	"farm/server/internal/social"
 	"farm/server/internal/store"
@@ -137,6 +139,124 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	}
 }
 
+func TestGatewayPublishesTaskNotifyToEveryLocalSession(t *testing.T) {
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+	)
+	first := openWebSocket(t, gateway.Handler())
+	second := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, first, "token-42")
+	handshakeWebSocket(t, second, "token-42")
+	task := store.Task{
+		ID: 1, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
+	}
+
+	if err := gateway.PublishTaskNotify(t.Context(), 42, task); err != nil {
+		t.Fatalf("PublishTaskNotify: %v", err)
+	}
+
+	for _, connection := range []*websocket.Conn{first, second} {
+		message := readEnvelope(t, connection)
+		if message.Cmd != CommandTaskNotify || message.ClientSeq != 0 || message.Err != pkgerr.OK {
+			t.Fatalf("TaskNotify envelope = %#v", message)
+		}
+		var got store.Task
+		if err := json.Unmarshal(message.Payload, &got); err != nil {
+			t.Fatalf("decode TaskNotify payload: %v", err)
+		}
+		if got != task {
+			t.Fatalf("TaskNotify payload = %#v, want %#v", got, task)
+		}
+	}
+}
+
+func TestHandshakeResponsePrecedesQueuedTaskNotify(t *testing.T) {
+	task := store.Task{ID: store.TaskPlantID, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+	)
+	var serverConnection *wsConnection
+	gateway.afterConnectionRegistered = func(registered *wsConnection) {
+		serverConnection = registered
+		_ = gateway.PublishTaskNotify(t.Context(), 42, task)
+	}
+	connection := openWebSocket(t, gateway.Handler())
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   marshalPayload(handshakeRequest{Token: "token-42", ClientConfigVer: 1}),
+	})
+	handshake := readEnvelope(t, connection)
+	if handshake.Cmd != CommandHandshake || handshake.ClientSeq != 1 || handshake.Err != pkgerr.OK {
+		t.Fatalf("Handshake = %#v", handshake)
+	}
+	notify := readEnvelope(t, connection)
+	if notify.Cmd != CommandTaskNotify || notify.ClientSeq != 0 || notify.Err != pkgerr.OK {
+		t.Fatalf("TaskNotify = %#v", notify)
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close websocket: %v", err)
+	}
+	select {
+	case <-serverConnection.taskNotifyDone:
+	case <-time.After(time.Second):
+		t.Fatal("TaskNotify dispatcher did not exit after WebSocket close")
+	}
+}
+
+func TestFriendEnterEmitsTaskNotifyAfterVisitProgressChanges(t *testing.T) {
+	const (
+		ownerUID   = uint64(42)
+		visitorUID = uint64(7)
+	)
+	friends := newFriendStoreStub()
+	friends.add(ownerUID, visitorUID)
+	gateway := New(
+		authStub{},
+		sessionMapStub{"visitor-token": visitorUID},
+		runtimeStub{aggregate: farm.NewAggregate(ownerUID, "owner")},
+		WithFriendStore(friends),
+		WithTaskMailStore(newTaskMailStoreStub()),
+	)
+	connection := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, connection, "visitor-token")
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"owner_uid":42}`),
+	})
+	first := readEnvelope(t, connection)
+	second := readEnvelope(t, connection)
+	var entered, notified Envelope
+	for _, message := range []Envelope{first, second} {
+		switch message.Cmd {
+		case CommandEnterFarm:
+			entered = message
+		case CommandTaskNotify:
+			notified = message
+		}
+	}
+	if entered.Err != pkgerr.OK || entered.ClientSeq != 2 {
+		t.Fatalf("EnterFarm = %#v", entered)
+	}
+	if notified.Err != pkgerr.OK || notified.ClientSeq != 0 {
+		t.Fatalf("TaskNotify = %#v", notified)
+	}
+	var task store.Task
+	if err := json.Unmarshal(notified.Payload, &task); err != nil {
+		t.Fatalf("decode TaskNotify payload: %v", err)
+	}
+	if task.ID != store.TaskVisitID || task.Progress != task.Target {
+		t.Fatalf("visit TaskNotify payload = %#v", task)
+	}
+}
+
 func TestWebSocketRegistersAndUnregistersConnection(t *testing.T) {
 	t.Parallel()
 
@@ -175,6 +295,22 @@ func TestWebSocketRegistersAndUnregistersConnection(t *testing.T) {
 			t.Fatalf("Lookup after close = %#v, want empty", refs)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestRegisterConnectionRejectsUnauthenticatedConnection(t *testing.T) {
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+	)
+	connection := &wsConnection{id: 1, uid: 42}
+
+	if err := gateway.registerConnection(t.Context(), connection); err == nil {
+		t.Fatal("registerConnection accepted an unauthenticated connection")
+	}
+	if _, ok := gateway.connections.Load(connection.id); ok {
+		t.Fatal("unauthenticated connection was published to push fan-out")
 	}
 }
 
@@ -256,6 +392,95 @@ func TestGatewayPushEndpointDeliversDeltaToRemoteRoomSubscriber(t *testing.T) {
 	}
 }
 
+func TestGatewayTaskNotifyPushEndpointRoutesOnlyAuthenticatedMatchingSession(t *testing.T) {
+	const (
+		uid       = uint64(42)
+		token     = "player-token"
+		pushToken = "push-token"
+	)
+	registry := connreg.NewWithBackend(newConnectionRegistryBackend())
+	gateway := New(
+		authStub{},
+		sessionMapStub{token: uid},
+		runtimeStub{aggregate: farm.NewAggregate(uid, "alice")},
+		WithConnectionRegistry(registry, "gateway-0"),
+		WithInternalPushToken(pushToken),
+	)
+	server := httptest.NewServer(gateway.Handler())
+	t.Cleanup(server.Close)
+	connection := openWebSocketAt(t, server.URL)
+	handshakeWebSocket(t, connection, token)
+	refs, err := registry.Lookup(t.Context(), uid)
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("Lookup connection = %#v, %v", refs, err)
+	}
+	task := store.Task{ID: store.TaskPlantID, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20}
+	post := func(authorization string, request farmrpc.TaskNotifyPushRequest) *http.Response {
+		t.Helper()
+		body, err := json.Marshal(request)
+		if err != nil {
+			t.Fatalf("marshal TaskNotify request: %v", err)
+		}
+		httpRequest, err := http.NewRequest(http.MethodPost, server.URL+"/internal/v1/push/task-notify", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("new TaskNotify request: %v", err)
+		}
+		if authorization != "" {
+			httpRequest.Header.Set("Authorization", authorization)
+		}
+		response, err := http.DefaultClient.Do(httpRequest)
+		if err != nil {
+			t.Fatalf("TaskNotify request: %v", err)
+		}
+		return response
+	}
+
+	unauthorized := post("", farmrpc.TaskNotifyPushRequest{ConnectionID: refs[0].ConnID, UID: uid, Task: task})
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated TaskNotify status = %d, want %d", unauthorized.StatusCode, http.StatusUnauthorized)
+	}
+
+	accepted := post("Bearer "+pushToken, farmrpc.TaskNotifyPushRequest{ConnectionID: refs[0].ConnID, UID: uid, Task: task})
+	accepted.Body.Close()
+	if accepted.StatusCode != http.StatusNoContent {
+		t.Fatalf("TaskNotify status = %d, want %d", accepted.StatusCode, http.StatusNoContent)
+	}
+	notified := readEnvelope(t, connection)
+	if notified.Cmd != CommandTaskNotify || notified.ClientSeq != 0 || notified.Err != pkgerr.OK {
+		t.Fatalf("TaskNotify envelope = %#v", notified)
+	}
+
+	mismatched := post("Bearer "+pushToken, farmrpc.TaskNotifyPushRequest{ConnectionID: refs[0].ConnID, UID: uid + 1, Task: task})
+	mismatched.Body.Close()
+	if mismatched.StatusCode != http.StatusNoContent {
+		t.Fatalf("mismatched TaskNotify status = %d, want %d", mismatched.StatusCode, http.StatusNoContent)
+	}
+	_ = connection.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, _, err := connection.ReadMessage(); err == nil {
+		t.Fatal("UID-mismatched TaskNotify reached the session")
+	}
+
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close websocket: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, ok := gateway.connections.Load(refs[0].ConnID); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("closed connection remained registered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	disconnected := post("Bearer "+pushToken, farmrpc.TaskNotifyPushRequest{ConnectionID: refs[0].ConnID, UID: uid, Task: task})
+	disconnected.Body.Close()
+	if disconnected.StatusCode != http.StatusNoContent {
+		t.Fatalf("disconnected TaskNotify status = %d, want %d", disconnected.StatusCode, http.StatusNoContent)
+	}
+}
+
 func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 	t.Parallel()
 
@@ -290,12 +515,24 @@ func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 		Payload:   json.RawMessage(`{"owner_uid":42}`),
 	})
 	friendEnter := readEnvelope(t, friend)
-	var friendEnterPayload enterFarmResponse
+	var friendEnterPayload struct {
+		Snapshot farm.FarmSnapshotJSON `json:"snapshot"`
+		FarmSeq  uint64                `json:"farm_seq"`
+		Relation string                `json:"relation"`
+	}
 	if err := json.Unmarshal(friendEnter.Payload, &friendEnterPayload); err != nil {
 		t.Fatalf("decode friend EnterFarm: %v", err)
 	}
 	if friendEnter.Err != pkgerr.OK || friendEnterPayload.Relation != "FRIEND" {
 		t.Fatalf("friend EnterFarm = %#v, payload = %#v", friendEnter, friendEnterPayload)
+	}
+	if friendEnterPayload.Snapshot.Coin != 0 || friendEnterPayload.Snapshot.Exp != 0 {
+		t.Fatalf("friend EnterFarm leaked economy: coin=%d exp=%d",
+			friendEnterPayload.Snapshot.Coin, friendEnterPayload.Snapshot.Exp)
+	}
+	if friendEnterPayload.Snapshot.Bag != nil || friendEnterPayload.Snapshot.Warehouse != nil {
+		t.Fatalf("friend EnterFarm leaked bag/warehouse: bag=%v warehouse=%v",
+			friendEnterPayload.Snapshot.Bag, friendEnterPayload.Snapshot.Warehouse)
 	}
 
 	writeEnvelope(t, owner, Envelope{
@@ -745,7 +982,7 @@ func TestEnterFarmBuffersDeltaUntilSnapshotResponse(t *testing.T) {
 	writeEnvelope(t, connection, Envelope{
 		Cmd:       CommandEnterFarm,
 		ClientSeq: 2,
-		Payload:   marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+		Payload:   marshalPayload(enterFarmRequest{OwnerUID: pkgjson.UID(ownerUID)}),
 	})
 	if response := readEnvelope(t, connection); response.Cmd != CommandEnterFarm || response.Err != pkgerr.OK {
 		t.Fatalf("first response = %#v, want successful EnterFarm", response)
@@ -772,7 +1009,7 @@ func TestEnterFarmRechecksFriendshipAfterSubscription(t *testing.T) {
 
 	response := gateway.handleEnterFarm(connection, Envelope{
 		Cmd:     CommandEnterFarm,
-		Payload: marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+		Payload: marshalPayload(enterFarmRequest{OwnerUID: pkgjson.UID(ownerUID)}),
 	})
 	if response.Err != pkgerr.NotFriend {
 		t.Fatalf("EnterFarm error = %d, want %d", response.Err, pkgerr.NotFriend)
@@ -930,13 +1167,15 @@ func TestSearchUserReturnsExactMatchAndNotFound(t *testing.T) {
 			t.Fatalf("SearchUser err = %d, want OK", response.Err)
 		}
 		var payload struct {
-			UID      uint64 `json:"uid"`
-			Nickname string `json:"nickname"`
+			Users []struct {
+				UID      pkgjson.UID `json:"uid"`
+				Nickname string      `json:"nickname"`
+			} `json:"users"`
 		}
 		if err := json.Unmarshal(response.Payload, &payload); err != nil {
 			t.Fatalf("decode SearchUser payload: %v", err)
 		}
-		if payload.UID != 7 || payload.Nickname != "Alice's farm" {
+		if len(payload.Users) != 1 || uint64(payload.Users[0].UID) != 7 || payload.Users[0].Nickname != "Alice's farm" {
 			t.Fatalf("SearchUser payload = %#v", payload)
 		}
 	})
@@ -948,6 +1187,17 @@ func TestSearchUserReturnsExactMatchAndNotFound(t *testing.T) {
 		})
 		if response.Err != pkgerr.UserNotFound {
 			t.Fatalf("SearchUser err = %d, want %d", response.Err, pkgerr.UserNotFound)
+		}
+	})
+
+	t.Run("self is not found", func(t *testing.T) {
+		friends.users["self"] = searchUserStub{UID: 42, Nickname: "me"}
+		response := gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandSearchUser,
+			Payload: json.RawMessage(`{"username":"self"}`),
+		})
+		if response.Err != pkgerr.UserNotFound {
+			t.Fatalf("SearchUser self err = %d, want %d", response.Err, pkgerr.UserNotFound)
 		}
 	})
 }
@@ -1189,6 +1439,75 @@ func TestGatewayRoutesAuthoritativeCommandsThroughFarmRPC(t *testing.T) {
 	}
 }
 
+func TestGatewayFarmRPCSharesTask4ClaimsAcrossLocalDays(t *testing.T) {
+	const (
+		uid   = uint64(42)
+		token = "internal-token"
+	)
+	routes, err := routing.ParseRouteTable([]byte(`{
+		"logical_shards": 1024,
+		"routes": [{"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}]
+	}`))
+	if err != nil {
+		t.Fatalf("parse route table: %v", err)
+	}
+
+	dayOne := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
+	dayTwo := time.Date(2026, time.July, 31, 0, 0, 0, 0, time.Local).UnixMilli()
+	now := dayOne
+	claimer := &farmRPCTask4Claimer{}
+	farmHandler := farmrpc.NewHandler(
+		runtimeStub{aggregate: farm.NewAggregate(uid, "alice")},
+		[]byte(token),
+		func(farmUID uint64) bool { return farmUID == uid },
+		func() int64 { return now },
+		farmrpc.WithTaskClaimer(claimer),
+	)
+	farmServer := httptest.NewServer(farmHandler)
+	t.Cleanup(farmServer.Close)
+
+	gateway := New(
+		authStub{},
+		sessionStub{uid: uid},
+		nil,
+		WithFarmRPC(farmrpc.NewHTTPClient(map[string]string{"farm-0": farmServer.URL}, token), routes),
+		WithTaskMailStore(newTaskMailStoreStub()),
+	)
+	connection := &wsConnection{id: 7, uid: uid, authed: true}
+	claimTask4 := func() Envelope {
+		return gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandTaskClaim,
+			Payload: json.RawMessage(`{"task_id":4}`),
+		})
+	}
+	claimDailyLogin := func() Envelope {
+		return gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandClaimDailyLogin,
+			Payload: emptyPayload,
+		})
+	}
+
+	if response := claimTask4(); response.Err != pkgerr.OK {
+		t.Fatalf("day one TaskClaim(4) = %#v, want OK", response)
+	}
+	if response := claimDailyLogin(); response.Err != pkgerr.DuplicateOK {
+		t.Fatalf("day one ClaimDailyLogin after TaskClaim(4) = %#v, want %d", response, pkgerr.DuplicateOK)
+	}
+
+	now = dayTwo
+	if response := claimDailyLogin(); response.Err != pkgerr.OK {
+		t.Fatalf("day two ClaimDailyLogin = %#v, want newly claimable task", response)
+	}
+	if response := claimTask4(); response.Err != pkgerr.TaskAlreadyClaimed {
+		t.Fatalf("day two TaskClaim(4) after ClaimDailyLogin = %#v, want %d", response, pkgerr.TaskAlreadyClaimed)
+	}
+	if got := claimer.claimedDays(); !reflect.DeepEqual(got, []int64{
+		gameconf.LocalDayKey(dayOne), gameconf.LocalDayKey(dayTwo),
+	}) {
+		t.Fatalf("FarmRPC successful Task 4 claims used days %#v", got)
+	}
+}
+
 func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
 	routes, err := routing.ParseRouteTable([]byte(`{
 		"logical_shards": 1024,
@@ -1400,7 +1719,7 @@ func TestFriendCommandsRejectSelfAndDuplicate(t *testing.T) {
 			name: "add existing friend",
 			request: Envelope{
 				Cmd:     CommandAddFriendByUID,
-				Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+				Payload: marshalPayload(friendPeerRequest{PeerUID: pkgjson.UID(peerUID)}),
 			},
 			prepare: func(friends *friendStoreStub) {
 				friends.add(selfUID, peerUID)
@@ -1444,10 +1763,77 @@ func TestAddFriendByUIDMapsMissingPlayerToBadRequest(t *testing.T) {
 
 	response := gateway.handleFriendRequest(&wsConnection{uid: selfUID}, Envelope{
 		Cmd:     CommandAddFriendByUID,
-		Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+		Payload: marshalPayload(friendPeerRequest{PeerUID: pkgjson.UID(peerUID)}),
 	})
 	if response.Err != pkgerr.BadRequest {
 		t.Fatalf("AddFriendByUID error = %d, want %d", response.Err, pkgerr.BadRequest)
+	}
+}
+
+func TestFriendRequestFlowRequestAcceptReject(t *testing.T) {
+	t.Parallel()
+
+	const (
+		alice = uint64(42)
+		bob   = uint64(7)
+	)
+	friends := newFriendStoreStub()
+	friends.nicknames[alice] = "Alice"
+	friends.nicknames[bob] = "Bob"
+	gateway := New(
+		authStub{},
+		sessionStub{uid: alice},
+		runtimeStub{},
+		WithFriendStore(friends),
+	)
+
+	aliceConn := &wsConnection{uid: alice, authed: true}
+	bobConn := &wsConnection{uid: bob, authed: true}
+
+	req := gateway.handleWSRequest(aliceConn, Envelope{
+		Cmd:     CommandRequestFriend,
+		Payload: json.RawMessage(`{"peer_uid":7}`),
+	})
+	if req.Err != pkgerr.OK {
+		t.Fatalf("RequestFriend err = %d", req.Err)
+	}
+	dup := gateway.handleWSRequest(aliceConn, Envelope{
+		Cmd:     CommandRequestFriend,
+		Payload: json.RawMessage(`{"peer_uid":7}`),
+	})
+	if dup.Err != pkgerr.FriendRequestPending {
+		t.Fatalf("duplicate RequestFriend err = %d, want %d", dup.Err, pkgerr.FriendRequestPending)
+	}
+
+	list := gateway.handleWSRequest(bobConn, Envelope{Cmd: CommandListFriendRequests, Payload: emptyPayload})
+	if list.Err != pkgerr.OK {
+		t.Fatalf("ListFriendRequests err = %d", list.Err)
+	}
+	var listPayload listFriendRequestsResponse
+	if err := json.Unmarshal(list.Payload, &listPayload); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(listPayload.Requests) != 1 || uint64(listPayload.Requests[0].FromUID) != alice {
+		t.Fatalf("incoming = %#v", listPayload)
+	}
+
+	rejectOther := gateway.handleWSRequest(bobConn, Envelope{
+		Cmd:     CommandRejectFriendRequest,
+		Payload: json.RawMessage(`{"from_uid":99}`),
+	})
+	if rejectOther.Err != pkgerr.FriendRequestNotFound {
+		t.Fatalf("Reject missing err = %d", rejectOther.Err)
+	}
+
+	accept := gateway.handleWSRequest(bobConn, Envelope{
+		Cmd:     CommandAcceptFriendRequest,
+		Payload: json.RawMessage(`{"from_uid":42}`),
+	})
+	if accept.Err != pkgerr.OK {
+		t.Fatalf("AcceptFriendRequest err = %d", accept.Err)
+	}
+	if !friends.has(alice, bob) {
+		t.Fatalf("expected friendship after accept")
 	}
 }
 
@@ -1487,7 +1873,7 @@ func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
 	if err := json.Unmarshal(list.Payload, &listPayload); err != nil {
 		t.Fatalf("decode FriendList response: %v", err)
 	}
-	if len(listPayload.Friends) != 1 || listPayload.Friends[0].UID != existingUID || listPayload.Friends[0].Nickname != "existing" {
+	if len(listPayload.Friends) != 1 || uint64(listPayload.Friends[0].UID) != existingUID || listPayload.Friends[0].Nickname != "existing" {
 		t.Fatalf("FriendList payload = %#v", listPayload)
 	}
 
@@ -1516,7 +1902,7 @@ func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
 
 	remove := gateway.handleWSRequest(connection, Envelope{
 		Cmd:     CommandRemoveFriend,
-		Payload: marshalPayload(friendPeerRequest{PeerUID: existingUID}),
+		Payload: marshalPayload(friendPeerRequest{PeerUID: pkgjson.UID(existingUID)}),
 	})
 	if remove.Err != pkgerr.OK || friends.has(selfUID, existingUID) {
 		t.Fatalf("RemoveFriend response = %#v, friendship=%t", remove, friends.has(selfUID, existingUID))
@@ -1524,7 +1910,7 @@ func TestFriendCommandsListGenerateAcceptRemoveAndAdd(t *testing.T) {
 
 	add := gateway.handleWSRequest(connection, Envelope{
 		Cmd:     CommandAddFriendByUID,
-		Payload: marshalPayload(friendPeerRequest{PeerUID: newFriendUID}),
+		Payload: marshalPayload(friendPeerRequest{PeerUID: pkgjson.UID(newFriendUID)}),
 	})
 	if add.Err != pkgerr.OK || !friends.has(selfUID, newFriendUID) {
 		t.Fatalf("AddFriendByUID response = %#v, friendship=%t", add, friends.has(selfUID, newFriendUID))
@@ -1556,7 +1942,7 @@ func TestRemoveFriendRevokesBothRoomDirections(t *testing.T) {
 
 	response := gateway.handleFriendRequest(&wsConnection{uid: selfUID}, Envelope{
 		Cmd:     CommandRemoveFriend,
-		Payload: marshalPayload(friendPeerRequest{PeerUID: peerUID}),
+		Payload: marshalPayload(friendPeerRequest{PeerUID: pkgjson.UID(peerUID)}),
 	})
 	if response.Err != pkgerr.OK {
 		t.Fatalf("RemoveFriend err = %d, want OK", response.Err)
@@ -1915,10 +2301,36 @@ func (s *farmRPCStub) Execute(_ context.Context, farmID string, request farmrpc.
 	return response, nil
 }
 
+type farmRPCTask4Claimer struct {
+	claimed map[[2]int64]bool
+	days    []int64
+}
+
+func (s *farmRPCTask4Claimer) ClaimTask(_ context.Context, uid uint64, dayKey int64, taskID uint32) (store.TaskReward, error) {
+	if taskID != store.TaskDailyLoginID {
+		return store.TaskReward{}, errors.New("unexpected task ID")
+	}
+	key := [2]int64{int64(uid), dayKey}
+	if s.claimed == nil {
+		s.claimed = make(map[[2]int64]bool)
+	}
+	if s.claimed[key] {
+		return store.TaskReward{}, store.ErrTaskAlreadyClaimed
+	}
+	s.claimed[key] = true
+	s.days = append(s.days, dayKey)
+	return store.TaskReward{Coin: 100}, nil
+}
+
+func (s *farmRPCTask4Claimer) claimedDays() []int64 {
+	return append([]int64(nil), s.days...)
+}
+
 type friendStoreStub struct {
 	pairs     map[[2]uint64]bool
 	nicknames map[uint64]string
 	users     map[string]searchUserStub
+	requests  map[[2]uint64]int64 // [from,to] -> created_at
 }
 
 type searchUserStub struct {
@@ -1931,6 +2343,7 @@ func newFriendStoreStub() *friendStoreStub {
 		pairs:     make(map[[2]uint64]bool),
 		nicknames: make(map[uint64]string),
 		users:     make(map[string]searchUserStub),
+		requests:  make(map[[2]uint64]int64),
 	}
 }
 
@@ -1983,6 +2396,64 @@ func (s *friendStoreStub) CountFriends(_ context.Context, uid uint64) (int, erro
 	return count, nil
 }
 
+func (s *friendStoreStub) CreateFriendRequest(_ context.Context, fromUID, toUID uint64) error {
+	if fromUID == toUID {
+		return store.ErrCannotFriendSelf
+	}
+	if s.has(fromUID, toUID) {
+		return store.ErrAlreadyFriend
+	}
+	if _, ok := s.requests[[2]uint64{toUID, fromUID}]; ok {
+		s.add(fromUID, toUID)
+		delete(s.requests, [2]uint64{toUID, fromUID})
+		delete(s.requests, [2]uint64{fromUID, toUID})
+		return nil
+	}
+	key := [2]uint64{fromUID, toUID}
+	if _, ok := s.requests[key]; ok {
+		return store.ErrFriendRequestPending
+	}
+	s.requests[key] = 1
+	return nil
+}
+
+func (s *friendStoreStub) ListIncomingFriendRequests(_ context.Context, uid uint64) ([]store.FriendRequestRow, error) {
+	var out []store.FriendRequestRow
+	for pair, created := range s.requests {
+		if pair[1] != uid {
+			continue
+		}
+		out = append(out, store.FriendRequestRow{
+			FromUID:   pair[0],
+			Nickname:  s.nicknames[pair[0]],
+			CreatedAt: created,
+		})
+	}
+	return out, nil
+}
+
+func (s *friendStoreStub) AcceptFriendRequest(_ context.Context, toUID, fromUID uint64) error {
+	key := [2]uint64{fromUID, toUID}
+	if _, ok := s.requests[key]; !ok {
+		return store.ErrFriendRequestNotFound
+	}
+	delete(s.requests, key)
+	delete(s.requests, [2]uint64{toUID, fromUID})
+	if !s.has(fromUID, toUID) {
+		s.add(fromUID, toUID)
+	}
+	return nil
+}
+
+func (s *friendStoreStub) RejectFriendRequest(_ context.Context, toUID, fromUID uint64) error {
+	key := [2]uint64{fromUID, toUID}
+	if _, ok := s.requests[key]; !ok {
+		return store.ErrFriendRequestNotFound
+	}
+	delete(s.requests, key)
+	return nil
+}
+
 func (s *friendStoreStub) add(a, b uint64) {
 	s.pairs[friendPair(a, b)] = true
 }
@@ -2027,6 +2498,22 @@ func (s friendStoreErrorStub) FindUserByUsername(context.Context, string) (store
 
 func (s friendStoreErrorStub) CountFriends(context.Context, uint64) (int, error) {
 	return 0, s.err
+}
+
+func (s friendStoreErrorStub) CreateFriendRequest(context.Context, uint64, uint64) error {
+	return s.err
+}
+
+func (s friendStoreErrorStub) ListIncomingFriendRequests(context.Context, uint64) ([]store.FriendRequestRow, error) {
+	return nil, s.err
+}
+
+func (s friendStoreErrorStub) AcceptFriendRequest(context.Context, uint64, uint64) error {
+	return s.err
+}
+
+func (s friendStoreErrorStub) RejectFriendRequest(context.Context, uint64, uint64) error {
+	return s.err
 }
 
 func friendPair(a, b uint64) [2]uint64 {
@@ -2130,7 +2617,7 @@ func TestFriendListSurfacesStealableHint(t *testing.T) {
 	}
 	byUID := make(map[uint64]bool, len(payload.Friends))
 	for _, f := range payload.Friends {
-		byUID[f.UID] = f.HasStealable
+		byUID[uint64(f.UID)] = f.HasStealable
 	}
 	if !byUID[stealableUID] {
 		t.Fatalf("FriendList = %#v, want stealableUID has_stealable=true", payload)

@@ -169,7 +169,6 @@ onBeforeUnmount(() => {
         </button>
       </form>
 
-      <p class="form-footnote">登录即会连接在线农场，进度以服务器为准。</p>
     </section>
   </main>
 </template>

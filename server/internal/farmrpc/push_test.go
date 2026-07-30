@@ -2,6 +2,7 @@ package farmrpc
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,6 +13,7 @@ import (
 
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
+	"farm/server/internal/store"
 )
 
 func TestFanoutPublisherPushesEverySubscribedConnection(t *testing.T) {
@@ -87,6 +89,61 @@ func TestFanoutPublisherSkipsExpiredRoomSubscribers(t *testing.T) {
 	}
 }
 
+func TestTaskFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
+	backend := newRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	for _, ref := range []connreg.ConnRef{
+		{ConnID: 8, GatewayID: "gateway-1"},
+		{ConnID: 9, GatewayID: "gateway-0"},
+	} {
+		if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+			t.Fatalf("Register %#v: %v", ref, err)
+		}
+	}
+	pusher := &recordingTaskNotifyPusher{}
+	publisher := NewTaskFanoutPublisher(registry, pusher)
+	task := store.Task{
+		ID: 1, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
+	}
+
+	if err := publisher.PublishTaskNotify(t.Context(), 42, task); err != nil {
+		t.Fatalf("PublishTaskNotify: %v", err)
+	}
+
+	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedTaskNotify{
+		{ref: connreg.ConnRef{ConnID: 9, GatewayID: "gateway-0"}, uid: 42, task: task},
+		{ref: connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}, uid: 42, task: task},
+	}) {
+		t.Fatalf("task notifications = %#v", got)
+	}
+}
+
+func TestMailFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
+	backend := newRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	for _, ref := range []connreg.ConnRef{
+		{ConnID: 8, GatewayID: "gateway-1"},
+		{ConnID: 9, GatewayID: "gateway-0"},
+	} {
+		if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+			t.Fatalf("Register %#v: %v", ref, err)
+		}
+	}
+	pusher := &recordingMailNotifyPusher{}
+	publisher := NewMailFanoutPublisher(registry, pusher)
+
+	if err := publisher.PublishMailNotify(t.Context(), 42, "friend_request"); err != nil {
+		t.Fatalf("PublishMailNotify: %v", err)
+	}
+
+	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedMailNotify{
+		{ref: connreg.ConnRef{ConnID: 9, GatewayID: "gateway-0"}, uid: 42, kind: "friend_request"},
+		{ref: connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}, uid: 42, kind: "friend_request"},
+	}) {
+		t.Fatalf("mail notifications = %#v", got)
+	}
+}
+
 func TestHTTPDeltaPusherSendsAuthenticatedPushRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != deltaPushBatchPath {
@@ -108,6 +165,32 @@ func TestHTTPDeltaPusherSendsAuthenticatedPushRequest(t *testing.T) {
 	}
 }
 
+func TestHTTPTaskNotifyPusherSendsAuthenticatedPushRequest(t *testing.T) {
+	var got TaskNotifyPushRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != taskNotifyPushPath {
+			t.Fatalf("path = %q, want %q", r.URL.Path, taskNotifyPushPath)
+		}
+		if r.Header.Get("Authorization") != "Bearer internal-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode TaskNotify push: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	task := store.Task{ID: 3, Title: "拜访一次好友农场", Progress: 1, Target: 1, RewardCoin: 40}
+	pusher := NewHTTPTaskNotifyPusher(map[string]string{"gateway-0": server.URL}, "internal-token")
+
+	if err := pusher.PushTaskNotify(t.Context(), connreg.ConnRef{ConnID: 7, GatewayID: "gateway-0"}, 42, task); err != nil {
+		t.Fatalf("PushTaskNotify: %v", err)
+	}
+	if got.ConnectionID != 7 || got.UID != 42 || got.Task != task {
+		t.Fatalf("TaskNotify push = %#v", got)
+	}
+}
+
 func connIDsByGateway(items []pushedBatch) map[string][]uint64 {
 	out := make(map[string][]uint64, len(items))
 	for _, item := range items {
@@ -115,6 +198,62 @@ func connIDsByGateway(items []pushedBatch) map[string][]uint64 {
 		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 		out[item.gatewayID] = ids
 	}
+	return out
+}
+
+type pushedTaskNotify struct {
+	ref  connreg.ConnRef
+	uid  uint64
+	task store.Task
+}
+
+type pushedMailNotify struct {
+	ref  connreg.ConnRef
+	uid  uint64
+	kind string
+}
+
+type recordingTaskNotifyPusher struct {
+	mu    sync.Mutex
+	items []pushedTaskNotify
+}
+
+func (p *recordingTaskNotifyPusher) PushTaskNotify(_ context.Context, ref connreg.ConnRef, uid uint64, task store.Task) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.items = append(p.items, pushedTaskNotify{ref: ref, uid: uid, task: task})
+	return nil
+}
+
+func (p *recordingTaskNotifyPusher) notifications() []pushedTaskNotify {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := append([]pushedTaskNotify(nil), p.items...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ref.GatewayID < out[j].ref.GatewayID
+	})
+	return out
+}
+
+type recordingMailNotifyPusher struct {
+	mu    sync.Mutex
+	items []pushedMailNotify
+}
+
+func (p *recordingMailNotifyPusher) PushMailNotify(_ context.Context, ref connreg.ConnRef, uid uint64, kind string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.items = append(p.items, pushedMailNotify{ref: ref, uid: uid, kind: kind})
+	return nil
+}
+
+func (p *recordingMailNotifyPusher) notifications() []pushedMailNotify {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := append([]pushedMailNotify(nil), p.items...)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ref.GatewayID < out[j].ref.GatewayID
+	})
 	return out
 }
 

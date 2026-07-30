@@ -13,12 +13,15 @@ import (
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/obs"
+	"farm/server/internal/store"
 	"farm/server/internal/wireenv"
 )
 
 const (
 	deltaPushBatchPath  = "/internal/v1/push/farm-delta-batch"
 	playerDeltaPushPath = "/internal/v1/push/player-delta"
+	taskNotifyPushPath  = "/internal/v1/push/task-notify"
+	mailNotifyPushPath  = "/internal/v1/push/mail-notify"
 
 	// Bound concurrent Gateway callbacks so one Publish cannot spawn unbounded
 	// goroutines when a room spans many Gateways.
@@ -47,6 +50,22 @@ type PlayerDeltaPushRequest struct {
 	Delta        farm.PlayerDelta `json:"delta"`
 }
 
+// TaskNotifyPushRequest is sent to the Gateway that owns a player's WebSocket.
+// UID is repeated so the Gateway can reject a stale or forged connection ID.
+type TaskNotifyPushRequest struct {
+	ConnectionID uint64     `json:"connection_id"`
+	UID          uint64     `json:"uid"`
+	Task         store.Task `json:"task"`
+}
+
+// MailNotifyPushRequest is a refresh hint for the Gateway owning one player
+// session. Kind is advisory only; clients reload MailList for authority.
+type MailNotifyPushRequest struct {
+	ConnectionID uint64 `json:"connection_id"`
+	UID          uint64 `json:"uid"`
+	Kind         string `json:"kind"`
+}
+
 // DeltaPublisher fans a FarmDelta out after an authoritative mutation commits.
 type DeltaPublisher interface {
 	Publish(ctx context.Context, delta farm.FarmDelta, originator connreg.ConnRef) error
@@ -68,10 +87,32 @@ type PlayerDeltaPublisher interface {
 	PublishPlayerDelta(ctx context.Context, uid uint64, delta farm.PlayerDelta) error
 }
 
+// TaskNotifyPublisher fans task progress updates to every active connection
+// for one player, regardless of which farm room that player is viewing.
+type TaskNotifyPublisher interface {
+	PublishTaskNotify(ctx context.Context, uid uint64, task store.Task) error
+}
+
+// MailNotifyPublisher fans an advisory mail-state refresh signal to every
+// active connection for a player.
+type MailNotifyPublisher interface {
+	PublishMailNotify(ctx context.Context, uid uint64, kind string) error
+}
+
 // PlayerDeltaPusher delivers one PlayerDelta to the Gateway that owns a
 // connection.
 type PlayerDeltaPusher interface {
 	PushPlayerDelta(ctx context.Context, ref connreg.ConnRef, uid uint64, delta farm.PlayerDelta) error
+}
+
+// TaskNotifyPusher delivers one TaskNotify to the Gateway that owns a connection.
+type TaskNotifyPusher interface {
+	PushTaskNotify(ctx context.Context, ref connreg.ConnRef, uid uint64, task store.Task) error
+}
+
+// MailNotifyPusher delivers one MailNotify to the Gateway that owns a session.
+type MailNotifyPusher interface {
+	PushMailNotify(ctx context.Context, ref connreg.ConnRef, uid uint64, kind string) error
 }
 
 // FanoutPublisher resolves room subscribers from the shared connection registry,
@@ -235,6 +276,66 @@ func (p *PlayerFanoutPublisher) PublishPlayerDelta(ctx context.Context, uid uint
 	return firstErr
 }
 
+// TaskFanoutPublisher resolves every active connection of a player and forwards
+// task progress updates to their owning Gateways.
+type TaskFanoutPublisher struct {
+	registry *connreg.Registry
+	pusher   TaskNotifyPusher
+}
+
+// MailFanoutPublisher resolves every active connection of a player and forwards
+// the MailNotify refresh hint to its owning Gateways.
+type MailFanoutPublisher struct {
+	registry *connreg.Registry
+	pusher   MailNotifyPusher
+}
+
+// NewMailFanoutPublisher constructs the cross-Gateway MailNotify broadcaster.
+func NewMailFanoutPublisher(registry *connreg.Registry, pusher MailNotifyPusher) *MailFanoutPublisher {
+	return &MailFanoutPublisher{registry: registry, pusher: pusher}
+}
+
+// PublishMailNotify attempts every active player connection.
+func (p *MailFanoutPublisher) PublishMailNotify(ctx context.Context, uid uint64, kind string) error {
+	if p == nil || p.registry == nil || p.pusher == nil || uid == 0 || strings.TrimSpace(kind) == "" {
+		return fmt.Errorf("farmrpc: MailNotify publisher is not configured")
+	}
+	refs, err := p.registry.Lookup(ctx, uid)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, ref := range refs {
+		if err := p.pusher.PushMailNotify(ctx, ref, uid, kind); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// NewTaskFanoutPublisher constructs the Farm-side TaskNotify broadcaster.
+func NewTaskFanoutPublisher(registry *connreg.Registry, pusher TaskNotifyPusher) *TaskFanoutPublisher {
+	return &TaskFanoutPublisher{registry: registry, pusher: pusher}
+}
+
+// PublishTaskNotify attempts all active player connections.
+func (p *TaskFanoutPublisher) PublishTaskNotify(ctx context.Context, uid uint64, task store.Task) error {
+	if p == nil || p.registry == nil || p.pusher == nil || uid == 0 {
+		return fmt.Errorf("farmrpc: TaskNotify publisher is not configured")
+	}
+	refs, err := p.registry.Lookup(ctx, uid)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, ref := range refs {
+		if err := p.pusher.PushTaskNotify(ctx, ref, uid, task); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // HTTPDeltaPusher implements Farm-to-Gateway callbacks over authenticated HTTP.
 type HTTPDeltaPusher struct {
 	endpoints map[string]string
@@ -332,6 +433,108 @@ func (p *HTTPPlayerDeltaPusher) PushPlayerDelta(ctx context.Context, ref connreg
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("farmrpc: PlayerDelta push returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// HTTPTaskNotifyPusher implements Farm-to-Gateway TaskNotify callbacks over
+// the same authenticated internal HTTP boundary as PlayerDelta.
+type HTTPTaskNotifyPusher struct {
+	endpoints map[string]string
+	token     string
+	client    *http.Client
+}
+
+// NewHTTPTaskNotifyPusher constructs a callback client from Gateway ID to URL.
+func NewHTTPTaskNotifyPusher(endpoints map[string]string, token string) *HTTPTaskNotifyPusher {
+	copied := make(map[string]string, len(endpoints))
+	for gatewayID, endpoint := range endpoints {
+		copied[gatewayID] = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	return &HTTPTaskNotifyPusher{
+		endpoints: copied,
+		token:     token,
+		client:    &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+// PushTaskNotify sends a task progress update to one Gateway-owned connection.
+func (p *HTTPTaskNotifyPusher) PushTaskNotify(ctx context.Context, ref connreg.ConnRef, uid uint64, task store.Task) error {
+	if p == nil {
+		return fmt.Errorf("farmrpc: HTTP TaskNotify pusher is nil")
+	}
+	endpoint := p.endpoints[ref.GatewayID]
+	if endpoint == "" {
+		return fmt.Errorf("farmrpc: no Gateway endpoint configured for %q", ref.GatewayID)
+	}
+	body, err := json.Marshal(TaskNotifyPushRequest{ConnectionID: ref.ConnID, UID: uid, Task: task})
+	if err != nil {
+		return fmt.Errorf("farmrpc: encode TaskNotify push: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+taskNotifyPushPath, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("farmrpc: build TaskNotify push: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+p.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := p.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("farmrpc: push TaskNotify: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("farmrpc: TaskNotify push returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// HTTPMailNotifyPusher implements MailNotify callbacks over the authenticated
+// Gateway internal HTTP boundary.
+type HTTPMailNotifyPusher struct {
+	endpoints map[string]string
+	token     string
+	client    *http.Client
+}
+
+// NewHTTPMailNotifyPusher constructs a callback client from Gateway ID to URL.
+func NewHTTPMailNotifyPusher(endpoints map[string]string, token string) *HTTPMailNotifyPusher {
+	copied := make(map[string]string, len(endpoints))
+	for gatewayID, endpoint := range endpoints {
+		copied[gatewayID] = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	return &HTTPMailNotifyPusher{
+		endpoints: copied,
+		token:     token,
+		client:    &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+// PushMailNotify sends an advisory MailNotify hint to one Gateway-owned session.
+func (p *HTTPMailNotifyPusher) PushMailNotify(ctx context.Context, ref connreg.ConnRef, uid uint64, kind string) error {
+	if p == nil {
+		return fmt.Errorf("farmrpc: HTTP MailNotify pusher is nil")
+	}
+	endpoint := p.endpoints[ref.GatewayID]
+	if endpoint == "" {
+		return fmt.Errorf("farmrpc: no Gateway endpoint configured for %q", ref.GatewayID)
+	}
+	body, err := json.Marshal(MailNotifyPushRequest{ConnectionID: ref.ConnID, UID: uid, Kind: kind})
+	if err != nil {
+		return fmt.Errorf("farmrpc: encode MailNotify push: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+mailNotifyPushPath, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("farmrpc: build MailNotify push: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+p.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := p.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("farmrpc: push MailNotify: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("farmrpc: MailNotify push returned HTTP %d", response.StatusCode)
 	}
 	return nil
 }

@@ -89,3 +89,23 @@ test('pagehide 幂等：重复触发不二次 dispose / close', () => {
   assert.deepEqual(sceneDisposed, [1])
   assert.deepEqual(netClosed, [1])
 })
+
+test('pagehide 会调用 onCleanup（任务跨日 timer 等）', () => {
+  const env = makeEnv()
+  const cleaned = []
+  bindPageUnload({
+    addEventListener: env.addEventListener,
+    removeEventListener: env.removeEventListener,
+    clearInterval: () => {},
+    tickIntervalId: null,
+    onPointerMove: null,
+    getReconnectBinding: () => null,
+    setReconnectBinding: () => {},
+    scene: null,
+    getNetClient: () => null,
+    onCleanup: () => cleaned.push(1),
+  })
+  env.emit('pagehide')
+  env.emit('pagehide')
+  assert.deepEqual(cleaned, [1])
+})

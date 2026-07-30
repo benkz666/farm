@@ -6,6 +6,8 @@ import { session } from '../net/session.js'
 const online = ref(false)
 const uid = ref(null)
 const dump = ref('（等待游戏桥接）')
+/** 默认收起，避免挡住农场操作；需要时再展开 */
+const open = ref(false)
 let timer = 0
 
 const statusLabel = computed(() => (online.value ? 'online' : 'offline'))
@@ -13,6 +15,7 @@ const statusLabel = computed(() => (online.value ? 'online' : 'offline'))
 function refresh() {
   online.value = session.isOnline === true
   uid.value = session.uid
+  if (!open.value) return
   const farm = window.__farm
   if (!farm?.getState) {
     dump.value = 'game bridge 未就绪'
@@ -34,6 +37,11 @@ function refresh() {
   )
 }
 
+function toggle() {
+  open.value = !open.value
+  refresh()
+}
+
 onMounted(() => {
   refresh()
   timer = window.setInterval(refresh, 1000)
@@ -45,16 +53,27 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="dev-net-panel" aria-label="开发诊断面板">
-    <header class="dev-net-panel__head">
-      <strong>Net 诊断</strong>
+  <aside class="dev-net-panel" :class="{ 'dev-net-panel--collapsed': !open }" aria-label="开发诊断面板">
+    <button
+      type="button"
+      class="dev-net-panel__toggle"
+      :aria-expanded="open"
+      :title="open ? '收起 Net 诊断' : '展开 Net 诊断'"
+      @click="toggle"
+    >
+      {{ open ? '▾ Net' : 'Net' }}
       <span class="dev-net-panel__status">{{ statusLabel }}</span>
-    </header>
-    <p class="dev-net-panel__hint">
-      仅 DEV 可见。登录入口在 <code>/login</code>；此处不提供注册/进房。
-    </p>
-    <p class="dev-net-panel__meta">uid: {{ uid ?? '—' }}</p>
-    <pre class="dev-net-panel__out">{{ dump }}</pre>
+    </button>
+    <template v-if="open">
+      <header class="dev-net-panel__head">
+        <strong>Net 诊断</strong>
+      </header>
+      <p class="dev-net-panel__hint">
+        仅 DEV 可见。登录入口在 <code>/login</code>；此处不提供注册/进房。
+      </p>
+      <p class="dev-net-panel__meta">uid: {{ uid ?? '—' }}</p>
+      <pre class="dev-net-panel__out">{{ dump }}</pre>
+    </template>
   </aside>
 </template>
 
@@ -76,6 +95,27 @@ onUnmounted(() => {
   font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
+}
+
+.dev-net-panel--collapsed {
+  width: auto;
+  max-height: none;
+  padding: 6px 8px;
+}
+
+.dev-net-panel__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
 }
 
 .dev-net-panel__head {

@@ -19,6 +19,7 @@ import (
 	"farm/server/internal/gameconf"
 	"farm/server/internal/gateway"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/routing"
 )
 
@@ -33,6 +34,21 @@ type authResponse struct {
 	UID   uint64 `json:"uid"`
 	Token string `json:"token"`
 	WSURL string `json:"ws_url"`
+}
+
+func (r *authResponse) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		UID   pkgjson.UID `json:"uid"`
+		Token string      `json:"token"`
+		WSURL string      `json:"ws_url"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.UID = uint64(wire.UID)
+	r.Token = wire.Token
+	r.WSURL = wire.WSURL
+	return nil
 }
 
 type enterFarmPayload struct {
@@ -1404,7 +1420,7 @@ func readServerPushUntil(conn *websocket.Conn, wantCmd uint32) (gateway.Envelope
 	return gateway.Envelope{}, fmt.Errorf("missing server push cmd=%d", wantCmd)
 }
 
-func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (time.Time, error) {
+func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (time.Time, error) {
 	enterEnv, err := exchangeResponse(conn, gateway.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: *seq,
@@ -1489,7 +1505,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (tim
 	if plantProgress == 0 {
 		return time.Time{}, fmt.Errorf("real Plant event did not advance daily task")
 	}
-	if !verifyMail {
+	if !verifyRewards {
 		return plantedAt, nil
 	}
 
@@ -1502,20 +1518,12 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (tim
 	if err != nil {
 		return time.Time{}, fmt.Errorf("TaskClaim: %w", err)
 	}
-	var taskMail struct {
-		ID             uint64 `json:"id"`
-		AttachmentCoin int64  `json:"attachment_coin"`
+	var taskReward struct {
+		Coin int64 `json:"coin"`
 	}
-	if err := json.Unmarshal(taskClaimEnv.Payload, &taskMail); err != nil ||
-		taskMail.ID == 0 || taskMail.AttachmentCoin <= 0 {
-		return time.Time{}, fmt.Errorf("decode task mail: id=%d coin=%d err=%v", taskMail.ID, taskMail.AttachmentCoin, err)
-	}
-	if _, err := exchangeResponse(conn, gateway.Envelope{
-		Cmd:       gateway.CommandMailClaim,
-		ClientSeq: *seq,
-		Payload:   mustJSON(map[string]any{"mail_id": taskMail.ID}),
-	}); err != nil {
-		return time.Time{}, fmt.Errorf("TaskClaim MailClaim: %w", err)
+	if err := json.Unmarshal(taskClaimEnv.Payload, &taskReward); err != nil ||
+		taskReward.Coin <= 0 {
+		return time.Time{}, fmt.Errorf("decode task reward: coin=%d err=%v", taskReward.Coin, err)
 	}
 	*seq++
 
@@ -1528,20 +1536,11 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (tim
 	if err != nil {
 		return time.Time{}, fmt.Errorf("ClaimDailyLogin: %w", err)
 	}
-	var dailyMail struct {
-		ID             uint64 `json:"id"`
-		AttachmentCoin int64  `json:"attachment_coin"`
+	var dailyReward struct {
+		Coin int64 `json:"coin"`
 	}
-	if err := json.Unmarshal(dailyEnv.Payload, &dailyMail); err != nil ||
-		dailyMail.ID == 0 || dailyMail.AttachmentCoin <= 0 {
-		return time.Time{}, fmt.Errorf("decode daily mail: id=%d coin=%d err=%v", dailyMail.ID, dailyMail.AttachmentCoin, err)
-	}
-	if _, err := exchangeResponse(conn, gateway.Envelope{
-		Cmd:       gateway.CommandMailClaim,
-		ClientSeq: *seq,
-		Payload:   mustJSON(map[string]any{"mail_id": dailyMail.ID}),
-	}); err != nil {
-		return time.Time{}, fmt.Errorf("MailClaim: %w", err)
+	if err := json.Unmarshal(dailyEnv.Payload, &dailyReward); err != nil || dailyReward.Coin <= 0 {
+		return time.Time{}, fmt.Errorf("decode daily reward: coin=%d err=%v", dailyReward.Coin, err)
 	}
 	*seq++
 	afterEnv, err := exchangeResponse(conn, gateway.Envelope{
@@ -1551,19 +1550,19 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyMail bool) (tim
 	})
 	*seq++
 	if err != nil {
-		return time.Time{}, fmt.Errorf("EnterFarm after MailClaim: %w", err)
+		return time.Time{}, fmt.Errorf("EnterFarm after direct rewards: %w", err)
 	}
 	var after enterFarmResponse
 	if err := json.Unmarshal(afterEnv.Payload, &after); err != nil {
-		return time.Time{}, fmt.Errorf("decode farm after MailClaim: %w", err)
+		return time.Time{}, fmt.Errorf("decode farm after direct rewards: %w", err)
 	}
 	crop, ok := gameconf.CropByID(1)
 	if !ok {
 		return time.Time{}, fmt.Errorf("missing white radish crop config")
 	}
-	wantCoin := initial.Snapshot.Coin - int64(crop.SeedPrice) + taskMail.AttachmentCoin + dailyMail.AttachmentCoin
+	wantCoin := initial.Snapshot.Coin - int64(crop.SeedPrice) + taskReward.Coin + dailyReward.Coin
 	if after.Snapshot.Coin != wantCoin {
-		return time.Time{}, fmt.Errorf("coin after actor MailClaim=%d, want %d", after.Snapshot.Coin, wantCoin)
+		return time.Time{}, fmt.Errorf("coin after direct rewards=%d, want %d", after.Snapshot.Coin, wantCoin)
 	}
 	return plantedAt, nil
 }

@@ -132,7 +132,7 @@
 
 ### D1 全惰性状态推进，零后台定时器
 
-**决策**：农场中的所有随时间演化的状态——作物成熟、枯萎、缺水、长草、生虫、狗粮消耗、逻辑日重置、日常任务刷新——一律不设定时器，全部在被访问时按需推进到当前时刻。
+**决策**：农场中的所有随时间演化的状态——作物成熟、枯萎、缺水、长草、生虫、狗粮消耗、逻辑日重置——一律不设定时器，全部在被访问时按需推进到当前时刻。日常任务同样不需要定时器：读取时用服务器 `time.Local` 的自然日 key 查询或初始化当天记录。
 
 **驱动理由**
 
@@ -486,7 +486,7 @@ FarmAggregate (Actor 内存态)
 ├── Plots       [18]Plot                地块，5.2 节
 ├── Items       map[ItemKey]uint32      背包 + 仓库
 ├── Codex       uint64                  图鉴 bitmap，29 条作物
-├── Daily       DailyState              逻辑日计数器与任务进度，5.6 节
+├── Daily       DailyState              逻辑日维护计数器；任务进度按自然日持久化，5.6 节
 ├── Pet         PetState                看家狗与狗盆，5.7 节
 ├── FriendIDs   []uint64                好友视图缓存，权威在 Social（决策 D5）
 ├── MailSummary 未读数 / 待领附件数      邮件正文按需拉取
@@ -797,7 +797,7 @@ func computeYield(p *Plot, ctx *Ctx) uint16 {
 
 溢出检查：`base ≤ 35`，`D ≤ 139 缩放小时 = 5.004×10⁸ ms`（策划 6.3 最长的葫芦），`250 × D × base ≈ 4.4×10¹²`，远小于 int64 上界 `9.2×10¹⁸`。
 
-### 5.6 逻辑日与日常任务：又两处消灭定时器
+### 5.6 逻辑日与自然日任务：两类边界都不需要定时器
 
 #### 逻辑日的惰性重置
 
@@ -813,8 +813,6 @@ func logicalDayID(ctx *Ctx, now int64) uint32 {
 type DailyState struct {
     DayID        uint32
     MaintainCnt  uint16    // 维护动作计经验计数，上限 150（策划 4.4）
-    TaskProgress [3]uint16
-    TaskClaimed  uint8     // 位掩码
 }
 
 // 每次访问前调用。DayID 不匹配即整体归零，无需任何定时任务。
@@ -825,21 +823,20 @@ func (d *DailyState) sync(dayID uint32) {
 }
 ```
 
-如果没有这个惰性重置，「每逻辑日重置 3000w 用户的计数器」在 `bench` 档下会变成每 5 分钟一次全量刷写，是一个纯粹自找的瓶颈。
+如果没有这个惰性重置，「每逻辑日重置 3000w 用户的维护计数器」在 `bench` 档下会变成每 5 分钟一次全量刷写，是一个纯粹自找的瓶颈。
 
-#### 日常任务的确定性抽取
+#### 日常任务的自然日按需初始化
 
-策划 14.1 节：任务池 7 条，每逻辑日随机抽 3 条。`C(7,3) = 35`，打表即可：
+任务不跟随 demo 逻辑日。`TaskList`、玩法进度推进与领奖都根据服务器 `time.Local` 计算 `YYYYMMDD` 日 key，并以 `(uid, day_key, task_id)` 持久化。首次访问当天时用幂等插入初始化固定四项：播种、收获、拜访好友农场、每日登录；其中每日登录的进度与目标均为 1。
 
 ```go
-var taskCombos = [35][3]uint8{{0, 1, 2}, {0, 1, 3}, /* ... */ {4, 5, 6}}
-
-func dailyTasks(uid uint64, dayID uint32, salt uint64) [3]uint8 {
-    return taskCombos[xxhash.Sum64(encode(uid, dayID, salt))%35]
+func localDayKey(now time.Time) int64 {
+    local := now.In(time.Local)
+    return int64(local.Year()*10_000 + int(local.Month())*100 + local.Day())
 }
 ```
 
-抽取结果**不需要存储**——它是 `(uid, dayID)` 的纯函数，任何时候重算都一样。逻辑日推进时任务组合自动变化，进度自动归零，同样不需要定时任务。这是 D1 的思想在玩法系统上的复用。
+到下一个本地 00:00 时，新的 day key 自然指向一组新记录，不需要批量重置。任务奖励通过任务页直接入账；每日登录复用 task_id=4，旧 `ClaimDailyLogin` 命令仅代理同一状态。任务与每日登录奖励不进入邮箱。
 
 ### 5.7 狗盆：自描述的时间
 
@@ -1093,7 +1090,7 @@ type Effect struct {
     Rsp       proto.Message
 }
 
-// 事件清单，覆盖策划 14.1 任务池的全部 7 种条件
+// 任务只消费播种、收获与拜访事件；其余事件仍可供邮件、数据上报和风控消费。
 type (
     Planted        struct{ UID uint64; CropID uint16 }
     Watered        struct{ UID, TargetUID uint64 }

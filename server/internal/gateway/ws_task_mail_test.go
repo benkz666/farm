@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/store"
 )
 
-func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
+func TestDailyLoginAndTaskRewardsAreDirectAndIdempotent(t *testing.T) {
 	t.Parallel()
 
 	storage := newTaskMailStoreStub()
@@ -23,8 +25,9 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 		runtimeStub{aggregate: aggregate},
 		WithTaskMailStore(storage),
 	)
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
 	gateway.SetClock(func() int64 {
-		return 7 * gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+		return now
 	})
 	connection := &wsConnection{uid: 42, authed: true}
 
@@ -35,12 +38,12 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	if firstDaily.Err != pkgerr.OK {
 		t.Fatalf("first ClaimDailyLogin err = %d, want OK", firstDaily.Err)
 	}
-	var dailyMail store.Mail
-	if err := json.Unmarshal(firstDaily.Payload, &dailyMail); err != nil {
-		t.Fatalf("decode daily mail: %v", err)
+	var dailyReward store.TaskReward
+	if err := json.Unmarshal(firstDaily.Payload, &dailyReward); err != nil {
+		t.Fatalf("decode daily reward: %v", err)
 	}
-	if dailyMail.ID == 0 || dailyMail.AttachmentCoin == 0 {
-		t.Fatalf("daily mail = %#v, want persisted attachment", dailyMail)
+	if dailyReward.Coin != 100 {
+		t.Fatalf("daily reward = %#v, want 100 coins", dailyReward)
 	}
 
 	secondDaily := gateway.handleWSRequest(connection, Envelope{
@@ -56,13 +59,28 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 		Payload: emptyPayload,
 	})
 	var taskList struct {
-		Tasks []store.Task `json:"tasks"`
+		Tasks   []store.Task `json:"tasks"`
+		ResetAt int64        `json:"reset_at"`
 	}
 	if err := json.Unmarshal(tasks.Payload, &taskList); err != nil {
 		t.Fatalf("decode TaskList: %v", err)
 	}
-	if tasks.Err != pkgerr.OK || len(taskList.Tasks) != 3 {
+	if tasks.Err != pkgerr.OK || len(taskList.Tasks) != 4 {
 		t.Fatalf("TaskList = %#v, payload = %#v", tasks, taskList)
+	}
+	if taskList.ResetAt != gameconf.NextLocalDayResetMs(now) {
+		t.Fatalf("TaskList reset_at = %d, want %d", taskList.ResetAt, gameconf.NextLocalDayResetMs(now))
+	}
+	dailyTask := taskList.Tasks[store.TaskDailyLoginID-1]
+	if dailyTask.Progress != 1 || dailyTask.Target != 1 || !dailyTask.Claimed {
+		t.Fatalf("daily login task = %#v, want completed and claimed", dailyTask)
+	}
+	duplicateDailyTask := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandTaskClaim,
+		Payload: json.RawMessage(`{"task_id":4}`),
+	})
+	if duplicateDailyTask.Err != pkgerr.TaskAlreadyClaimed {
+		t.Fatalf("TaskClaim daily after ClaimDailyLogin err = %d, want %d", duplicateDailyTask.Err, pkgerr.TaskAlreadyClaimed)
 	}
 
 	taskClaim := gateway.handleWSRequest(connection, Envelope{
@@ -72,12 +90,12 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	if taskClaim.Err != pkgerr.OK {
 		t.Fatalf("TaskClaim err = %d, want OK", taskClaim.Err)
 	}
-	var taskMail store.Mail
-	if err := json.Unmarshal(taskClaim.Payload, &taskMail); err != nil {
-		t.Fatalf("decode task mail: %v", err)
+	var taskReward store.TaskReward
+	if err := json.Unmarshal(taskClaim.Payload, &taskReward); err != nil {
+		t.Fatalf("decode task reward: %v", err)
 	}
-	if taskMail.ID == 0 {
-		t.Fatal("TaskClaim did not deliver a mail")
+	if taskReward.Coin != 20 {
+		t.Fatalf("task reward = %#v, want 20 coins", taskReward)
 	}
 
 	mails := gateway.handleWSRequest(connection, Envelope{
@@ -90,8 +108,8 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 	if err := json.Unmarshal(mails.Payload, &mailList); err != nil {
 		t.Fatalf("decode MailList: %v", err)
 	}
-	if mails.Err != pkgerr.OK || len(mailList.Mails) != 2 {
-		t.Fatalf("MailList = %#v, payload = %#v", mails, mailList)
+	if mails.Err != pkgerr.OK || len(mailList.Mails) != 0 {
+		t.Fatalf("MailList = %#v, payload = %#v, want no reward mail", mails, mailList)
 	}
 
 	duplicateTaskClaim := gateway.handleWSRequest(connection, Envelope{
@@ -102,22 +120,8 @@ func TestDailyLoginAndTaskRewardsUseMailAndStayIdempotent(t *testing.T) {
 		t.Fatalf("repeated TaskClaim err = %d, want %d", duplicateTaskClaim.Err, pkgerr.TaskAlreadyClaimed)
 	}
 
-	firstMailClaim := gateway.handleWSRequest(connection, Envelope{
-		Cmd:     CommandMailClaim,
-		Payload: marshalPayload(mailClaimRequest{MailID: taskMail.ID}),
-	})
-	if firstMailClaim.Err != pkgerr.OK {
-		t.Fatalf("first MailClaim err = %d, want OK", firstMailClaim.Err)
-	}
-	if aggregate.Coin != gameconf.InitialCoin+taskMail.AttachmentCoin {
-		t.Fatalf("online actor coin = %d, want %d", aggregate.Coin, gameconf.InitialCoin+taskMail.AttachmentCoin)
-	}
-	secondMailClaim := gateway.handleWSRequest(connection, Envelope{
-		Cmd:     CommandMailClaim,
-		Payload: marshalPayload(mailClaimRequest{MailID: taskMail.ID}),
-	})
-	if secondMailClaim.Err != pkgerr.MailAlreadyClaimed {
-		t.Fatalf("repeated MailClaim err = %d, want %d", secondMailClaim.Err, pkgerr.MailAlreadyClaimed)
+	if aggregate.Coin != gameconf.InitialCoin+dailyReward.Coin+taskReward.Coin {
+		t.Fatalf("online actor coin = %d, want %d", aggregate.Coin, gameconf.InitialCoin+dailyReward.Coin+taskReward.Coin)
 	}
 
 	missingMail := gateway.handleWSRequest(connection, Envelope{
@@ -148,8 +152,9 @@ func TestSuccessfulPlantAdvancesDailyTaskProgress(t *testing.T) {
 		runtimeStub{aggregate: aggregate},
 		WithTaskMailStore(storage),
 	)
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
 	gateway.SetClock(func() int64 {
-		return 7 * gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+		return now
 	})
 
 	response := gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
@@ -160,9 +165,109 @@ func TestSuccessfulPlantAdvancesDailyTaskProgress(t *testing.T) {
 	if response.Err != pkgerr.OK {
 		t.Fatalf("Plant err = %d, want OK", response.Err)
 	}
-	want := taskProgressCall{uid: 42, logicDay: 7, taskID: store.TaskPlantID, amount: 1}
+	want := taskProgressCall{uid: 42, dayKey: gameconf.LocalDayKey(now), taskID: store.TaskPlantID, amount: 1}
 	if len(storage.progressCalls) != 1 || storage.progressCalls[0] != want {
 		t.Fatalf("progress calls = %#v, want %#v", storage.progressCalls, want)
+	}
+}
+
+func TestTaskNotifyDoesNotBlockPlantOnSlowConnection(t *testing.T) {
+	storage := newTaskMailStoreStub()
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0].State = farm.StateTilled
+	aggregate.Items[farm.SeedItem(1)] = 1
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+		WithTaskMailStore(storage),
+	)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	firstDelivery := true
+	gateway.taskNotifyDelivery = func(_ *wsConnection, _ store.Task) error {
+		if !firstDelivery {
+			return nil
+		}
+		firstDelivery = false
+		close(started)
+		<-release
+		return nil
+	}
+	slow := &wsConnection{id: 1, uid: 42, authed: true}
+	slow.enableTaskNotify(gateway)
+	defer slow.closeTaskNotify()
+	gateway.connections.Store(uint64(1), slow)
+	gateway.PublishTaskNotify(t.Context(), 42, store.Task{ID: store.TaskPlantID})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("slow TaskNotify delivery did not start")
+	}
+	defer close(release)
+
+	responses := make(chan Envelope, 1)
+	go func() {
+		responses <- gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
+			Cmd:     CommandPlant,
+			Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":1}`),
+		})
+	}()
+	select {
+	case response := <-responses:
+		if response.Err != pkgerr.OK {
+			t.Fatalf("Plant err = %d, want OK", response.Err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Plant waited for slow TaskNotify connection")
+	}
+}
+
+func TestSuccessfulHarvestAdvancesTaskAndPublishesTaskNotify(t *testing.T) {
+	storage := newTaskMailStoreStub()
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateMature,
+		CropID:         1,
+		SeasonDuration: gameconf.HourMs(gameconf.TimeProfileDemo),
+		MatureAt:       1,
+		FinalYield:     16,
+	}
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+		WithTaskMailStore(storage),
+	)
+	gateway.SetClock(func() int64 { return 1 })
+	notified := make(chan store.Task, 1)
+	gateway.taskNotifyDelivery = func(_ *wsConnection, task store.Task) error {
+		notified <- task
+		return nil
+	}
+	connection := &wsConnection{id: 1, uid: 42, authed: true}
+	connection.enableTaskNotify(gateway)
+	defer connection.closeTaskNotify()
+	gateway.connections.Store(uint64(1), connection)
+
+	response := gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
+		Cmd:     CommandHarvest,
+		Payload: json.RawMessage(`{"owner_uid":0,"plot_index":0,"arg":0}`),
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("Harvest err = %d, want OK", response.Err)
+	}
+	want := taskProgressCall{uid: 42, dayKey: gameconf.LocalDayKey(gateway.Now()), taskID: store.TaskHarvestID, amount: 1}
+	if len(storage.progressCalls) != 1 || storage.progressCalls[0] != want {
+		t.Fatalf("progress calls = %#v, want %#v", storage.progressCalls, want)
+	}
+	select {
+	case task := <-notified:
+		if task.ID != store.TaskHarvestID || task.Progress != task.Target {
+			t.Fatalf("Harvest TaskNotify = %#v", task)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Harvest did not publish TaskNotify")
 	}
 }
 
@@ -181,19 +286,20 @@ func TestFriendEnterAdvancesDailyVisitTask(t *testing.T) {
 		WithFriendStore(friends),
 		WithTaskMailStore(storage),
 	)
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
 	gateway.SetClock(func() int64 {
-		return 7 * gameconf.LogicDayMs(gameconf.TimeProfileDemo)
+		return now
 	})
 
 	response := gateway.handleWSRequest(&wsConnection{uid: visitorUID, authed: true}, Envelope{
 		Cmd:     CommandEnterFarm,
-		Payload: marshalPayload(enterFarmRequest{OwnerUID: ownerUID}),
+		Payload: marshalPayload(enterFarmRequest{OwnerUID: pkgjson.UID(ownerUID)}),
 	})
 
 	if response.Err != pkgerr.OK {
 		t.Fatalf("EnterFarm err = %d, want OK", response.Err)
 	}
-	want := taskProgressCall{uid: visitorUID, logicDay: 7, taskID: store.TaskVisitID, amount: 1}
+	want := taskProgressCall{uid: visitorUID, dayKey: gameconf.LocalDayKey(now), taskID: store.TaskVisitID, amount: 1}
 	if len(storage.progressCalls) != 1 || storage.progressCalls[0] != want {
 		t.Fatalf("progress calls = %#v, want %#v", storage.progressCalls, want)
 	}
@@ -231,7 +337,6 @@ func TestTaskProgressFailureDoesNotFailCommittedPlant(t *testing.T) {
 }
 
 type taskMailStoreStub struct {
-	daily         map[int64]bool
 	mails         map[uint64]store.Mail
 	tasks         map[uint32]bool
 	progressCalls []taskProgressCall
@@ -240,15 +345,14 @@ type taskMailStoreStub struct {
 }
 
 type taskProgressCall struct {
-	uid      uint64
-	logicDay int64
-	taskID   uint32
-	amount   uint32
+	uid    uint64
+	dayKey int64
+	taskID uint32
+	amount uint32
 }
 
 func newTaskMailStoreStub() *taskMailStoreStub {
 	return &taskMailStoreStub{
-		daily: make(map[int64]bool),
 		mails: make(map[uint64]store.Mail),
 		tasks: make(map[uint32]bool),
 	}
@@ -259,15 +363,19 @@ func (s *taskMailStoreStub) ListTasks(_ context.Context, _ uint64, _ int64) ([]s
 		{ID: 1, Title: "stub plant", Progress: 1, Target: 1, RewardCoin: 20},
 		{ID: 2, Title: "stub harvest", Progress: 1, Target: 1, RewardCoin: 30},
 		{ID: 3, Title: "stub visit", Progress: 1, Target: 1, RewardCoin: 40},
+		{ID: store.TaskDailyLoginID, Title: "每日登录", Progress: 1, Target: 1, RewardCoin: 100, Claimed: s.tasks[store.TaskDailyLoginID]},
 	}, nil
 }
 
-func (s *taskMailStoreStub) ClaimTask(_ context.Context, _ uint64, _ int64, taskID uint32) (store.Mail, error) {
+func (s *taskMailStoreStub) ClaimTask(_ context.Context, _ uint64, _ int64, taskID uint32) (store.TaskReward, error) {
 	if s.tasks[taskID] {
-		return store.Mail{}, store.ErrTaskAlreadyClaimed
+		return store.TaskReward{}, store.ErrTaskAlreadyClaimed
 	}
 	s.tasks[taskID] = true
-	return s.addMail("task reward", 20), nil
+	if taskID == store.TaskDailyLoginID {
+		return store.TaskReward{Coin: 100}, nil
+	}
+	return store.TaskReward{Coin: 20}, nil
 }
 
 func (s *taskMailStoreStub) ListMails(_ context.Context, _ uint64) ([]store.Mail, error) {
@@ -294,19 +402,18 @@ func (s *taskMailStoreStub) ClaimMail(_ context.Context, _ uint64, mailID uint64
 	return mail, nil
 }
 
-func (s *taskMailStoreStub) ClaimDailyLogin(_ context.Context, _ uint64, logicDay int64) (store.Mail, error) {
-	if s.daily[logicDay] {
-		return store.Mail{}, store.ErrDailyLoginAlreadyClaimed
-	}
-	s.daily[logicDay] = true
-	return s.addMail("daily login", 100), nil
+func (s *taskMailStoreStub) ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (store.TaskReward, error) {
+	return s.ClaimTask(ctx, uid, dayKey, store.TaskDailyLoginID)
 }
 
-func (s *taskMailStoreStub) AdvanceTask(_ context.Context, uid uint64, logicDay int64, taskID, amount uint32) error {
+func (s *taskMailStoreStub) AdvanceTask(_ context.Context, uid uint64, dayKey int64, taskID, amount uint32) (store.TaskAdvanceResult, error) {
 	s.progressCalls = append(s.progressCalls, taskProgressCall{
-		uid: uid, logicDay: logicDay, taskID: taskID, amount: amount,
+		uid: uid, dayKey: dayKey, taskID: taskID, amount: amount,
 	})
-	return s.advanceErr
+	return store.TaskAdvanceResult{
+		Task:    store.Task{ID: taskID, Progress: 1, Target: 1},
+		Changed: s.advanceErr == nil,
+	}, s.advanceErr
 }
 
 func (s *taskMailStoreStub) addMail(title string, coin int64) store.Mail {

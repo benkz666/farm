@@ -6,11 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
-
-const dailyLoginRewardCoin int64 = 100
 
 // ListMails 返回玩家的个人邮件，附件状态由 Claimed 明示。
 func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
@@ -85,32 +81,10 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	return mail, nil
 }
 
-// ClaimDailyLogin creates exactly one reward mail per logical day.
-func (s *Store) ClaimDailyLogin(ctx context.Context, uid uint64, logicDay int64) (Mail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Mail{}, fmt.Errorf("store: begin claim daily login tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO daily_login (uid, logic_day, created_at)
-		VALUES (?, ?, ?)`, uid, logicDay, now); err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlDuplicateKeyErrNo {
-			return Mail{}, ErrDailyLoginAlreadyClaimed
-		}
-		return Mail{}, fmt.Errorf("store: record daily login: %w", err)
-	}
-	mail, err := createMailTx(ctx, tx, uid, "每日登录奖励", dailyLoginRewardCoin, now)
-	if err != nil {
-		return Mail{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Mail{}, fmt.Errorf("store: commit daily login: %w", err)
-	}
-	return mail, nil
+// ClaimDailyLogin keeps command 614 compatible by delegating it to the same
+// task 4 state used by ordinary ClaimTask requests.
+func (s *Store) ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (TaskReward, error) {
+	return s.ClaimTask(ctx, uid, dayKey, TaskDailyLoginID)
 }
 
 func createMailTx(ctx context.Context, tx *sql.Tx, uid uint64, title string, attachmentCoin, now int64) (Mail, error) {

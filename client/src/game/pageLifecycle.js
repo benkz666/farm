@@ -16,6 +16,7 @@
  * @param {(v: null) => void} deps.setReconnectBinding
  * @param {{ dispose?: () => void }|null|undefined} deps.scene
  * @param {() => { close?: () => void }|null|undefined} deps.getNetClient
+ * @param {() => void} [deps.onCleanup] 额外清理（如任务跨日 timer）
  * @returns {() => void} 解除 pagehide 监听（一般无需调用）
  */
 export function bindPageUnload(deps) {
@@ -30,6 +31,7 @@ export function bindPageUnload(deps) {
     deps.setReconnectBinding?.(null);
     deps.scene?.dispose?.();
     deps.getNetClient?.()?.close?.();
+    deps.onCleanup?.();
   };
   deps.addEventListener('pagehide', onPageHide);
   return () => deps.removeEventListener('pagehide', onPageHide);

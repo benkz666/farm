@@ -8,6 +8,7 @@
  *   uid: number|null,
  *   token: string|null,
  *   viewingOwnerUid: number|null,
+ *   viewingOwnerName: string|null,
  *   lastFarmSeq: number,
  *   farmViewGeneration: number,
  *   relation: 'SELF'|'FRIEND'|null,
@@ -17,6 +18,7 @@ export const session = {
   uid: null,
   token: null,
   viewingOwnerUid: null,
+  viewingOwnerName: null,
   lastFarmSeq: 0,
   farmViewGeneration: 0,
   relation: null,
@@ -39,20 +41,31 @@ export function enterOnline({ uid, token }) {
 export function leaveOnline() {
   session.isOnline = false
   session.viewingOwnerUid = null
+  session.viewingOwnerName = null
   session.lastFarmSeq = 0
   session.farmViewGeneration++
   session.relation = null
 }
 
+/** 退出登录：除在线农场视图外，一并丢弃内存中的认证凭证。 */
+export function logout() {
+  leaveOnline()
+  session.uid = null
+  session.token = null
+}
+
 /**
  * 记录 EnterFarm 快照确定的当前房间与 FarmDelta 基准序列。
- * @param {{ ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND' }} view
+ * @param {{ ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND', ownerName?: string|null }} view
  */
-export function setFarmView({ ownerUid, farmSeq, relation }) {
+export function setFarmView({ ownerUid, farmSeq, relation, ownerName = null }) {
   session.farmViewGeneration++
   session.viewingOwnerUid = ownerUid
   session.lastFarmSeq = farmSeq
   session.relation = relation
+  session.viewingOwnerName = relation === 'FRIEND'
+    ? (typeof ownerName === 'string' && ownerName.trim() ? ownerName.trim() : null)
+    : null
 }
 
 /** 是否处于 online 意图路径。 */

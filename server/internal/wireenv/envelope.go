@@ -17,6 +17,8 @@ import (
 const (
 	CommandFarmDelta   uint32 = 9000
 	CommandPlayerDelta uint32 = 9002
+	CommandMailNotify  uint32 = 9004 // 新邮件/邻里申请等个人通知（只推提示，不推全文）
+	CommandTaskNotify  uint32 = 9008
 )
 
 // Envelope is the public JSON shape written on the WebSocket wire.

@@ -1,9 +1,11 @@
 // ============================================================
 // DOM UI：顶栏、工具栏、模态面板、tooltip、toast
 // ============================================================
-import { CROP_MAP, CROPS, FERTILIZERS, DOGS, TASK_POOL, CODEX_MILESTONES, EXPANSION, TIME_SCALES, DOG_BOWL_CAP, MAX_PLOTS } from './config.js';
+import { CROP_MAP, CROPS, FERTILIZERS, DOGS, CODEX_MILESTONES, EXPANSION, TIME_SCALES, DOG_BOWL_CAP, MAX_PLOTS } from './config.js';
 import { levelOf, expProgress } from './state.js';
 import { EXP_PER_LEVEL } from './config.js';
+import { mailDotVisible, taskDotVisible } from './sideDots.js';
+import { taskCardViewModel } from './taskCardView.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -26,16 +28,38 @@ export const fmtTime = (ms) => {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 };
 
+/** 返回影响 HUD 的可见状态，避免游戏 tick 重复写入相同 DOM。 */
+export function hudSignature(state, readOnly) {
+  const gold = Math.floor(Number(state.gold) || 0);
+  const exp = Number(state.exp) || 0;
+  const dogBowl = Math.floor(Number(state.dogBowl) || 0);
+  const mailDot = mailDotVisible(state.mails, state.friendRequests);
+  const taskDot = taskDotVisible(state.tasks);
+  const lv = levelOf(exp);
+  const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
+  const canExpand = !readOnly && !!next && lv >= next[1] && gold >= next[2];
+  return [gold, exp, state.dog?.id || '', dogBowl, mailDot, taskDot, canExpand].join('|');
+}
+
 export class UI {
   constructor(cb) {
     this.cb = cb;               // { onTool, onSubSelect, onPanel, onBuy..., onVisit, onBackHome, onExpand, onSetting }
     this.activeTool = null;
+    this.activePanel = null;
     this.readOnly = false;
+    this.lastHUDSignature = null;
     this.toastWrap = $('#toast-wrap');
     this.tooltip = $('#tooltip');
 
     $('#modal-close').onclick = () => this.closeModal();
     $('#modal-mask').addEventListener('click', (e) => { if (e.target.id === 'modal-mask') this.closeModal(); });
+    // Esc 关闭当前模态（商店/邻里簿/邮箱等共用 #modal-mask）
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' && e.code !== 'Escape') return;
+      if (!this.modalOpen) return;
+      e.preventDefault();
+      this.closeModal();
+    });
     $('#btn-settings').onclick = () => this.renderSettings();
     $('#btn-back-home').onclick = () => cb.onBackHome();
     $('#btn-expand').onclick = () => cb.onExpand();
@@ -48,11 +72,17 @@ export class UI {
 
   // ---------------- HUD ----------------
   updateHUD(state) {
-    $('#gold-num').textContent = Math.floor(state.gold).toLocaleString();
-    const lv = levelOf(state.exp);
+    const signature = hudSignature(state, this.readOnly);
+    if (signature === this.lastHUDSignature) return;
+    this.lastHUDSignature = signature;
+
+    const gold = Math.floor(Number(state.gold) || 0);
+    const exp = Number(state.exp) || 0;
+    $('#gold-num').textContent = gold.toLocaleString();
+    const lv = levelOf(exp);
     $('#level-badge').textContent = `Lv.${lv}`;
-    $('#exp-fill').style.width = `${expProgress(state.exp) * 100}%`;
-    $('#exp-text').textContent = `${state.exp % EXP_PER_LEVEL}/${EXP_PER_LEVEL}`;
+    $('#exp-fill').style.width = `${expProgress(exp) * 100}%`;
+    $('#exp-text').textContent = `${exp % EXP_PER_LEVEL}/${EXP_PER_LEVEL}`;
     const dogChip = $('#dog-status');
     if (state.dog) {
       dogChip.classList.remove('hidden');
@@ -61,13 +91,11 @@ export class UI {
       dogChip.style.cursor = 'pointer';
       dogChip.title = '点击管理看家狗';
     } else dogChip.classList.add('hidden');
-    const claimableMail = state.mails.some(m => !m.claimed && (m.gold || m.attachmentCoin));
-    const unreadMail = state.mails.some(m => !m.read);
-    $('#dot-mail').classList.toggle('hidden', !(claimableMail || unreadMail));
-    $('#dot-tasks').classList.toggle('hidden', !state.tasks.some(t => (t.done || t.progress >= (t.target || 1)) && !t.claimed && !t.seen));
+    $('#dot-mail').classList.toggle('hidden', !mailDotVisible(state.mails, state.friendRequests));
+    $('#dot-tasks').classList.toggle('hidden', !taskDotVisible(state.tasks));
     // 扩地按钮
     const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-    const canExpand = !this.readOnly && !!next && lv >= next[1] && state.gold >= next[2];
+    const canExpand = !this.readOnly && !!next && lv >= next[1] && gold >= next[2];
     $('#btn-expand').classList.toggle('hidden', !canExpand);
   }
 
@@ -135,19 +163,27 @@ export class UI {
   }
 
   // ---------------- 模态 ----------------
-  openModal(title) {
+  openModal(title, panel) {
+    this.activePanel = panel || null;
     $('#modal-title').textContent = title;
-    $('#modal-body').innerHTML = '';
+    const body = $('#modal-body');
+    body.innerHTML = '';
+    body.className = '';
+    $('#modal')?.classList.toggle('modal--neighbors', /邻里/.test(title));
     this.showTooltip(null);
     $('#modal-mask').classList.remove('hidden');
-    return $('#modal-body');
+    return body;
   }
-  closeModal() { $('#modal-mask').classList.add('hidden'); }
+  closeModal() {
+    this.activePanel = null;
+    $('#modal-mask').classList.add('hidden');
+  }
   get modalOpen() { return !$('#modal-mask').classList.contains('hidden'); }
+  isPanelOpen(panel) { return this.modalOpen && this.activePanel === panel; }
 
   // ---------------- 商店 ----------------
   renderShop(state, tab = 'seeds') {
-    const body = this.openModal('🛒 商店');
+    const body = this.openModal('🛒 商店', 'shop');
     const tabs = document.createElement('div');
     tabs.className = 'tabs';
     const defs = [['seeds', '种子'], ['fert', '化肥'], ['food', '狗粮'], ['dog', '看家狗']];
@@ -234,7 +270,7 @@ export class UI {
 
   // ---------------- 背包 ----------------
   renderBag(state) {
-    const body = this.openModal('🎒 背包');
+    const body = this.openModal('🎒 背包', 'bag');
     const seeds = Object.entries(state.inventory.seeds).filter(([, n]) => n > 0);
     const ferts = Object.entries(state.inventory.fertilizers).filter(([, n]) => n > 0);
     const dogFood = state.inventory?.dogFood || 0;
@@ -271,7 +307,7 @@ export class UI {
 
   // ---------------- 仓库 ----------------
   renderBarn(state) {
-    const body = this.openModal('🏠 仓库');
+    const body = this.openModal('🏠 仓库', 'barn');
     const items = Object.entries(state.warehouse).filter(([, n]) => n > 0);
     const total = items.reduce((s, [id, n]) => s + n * CROP_MAP[id].fruitPrice, 0);
     if (!items.length) {
@@ -302,18 +338,10 @@ export class UI {
 
   // ---------------- 任务 ----------------
   renderTasks(state, dayRemainMs) {
-    const body = this.openModal('📋 日常任务');
+    const body = this.openModal('📋 日常任务', 'tasks');
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap';
-    head.innerHTML = `<div style="font-size:12.5px;color:var(--ink-soft)">每日任务 · 奖励发送至邮箱 📮${dayRemainMs != null ? ` · <b>${fmtTime(dayRemainMs)}</b> 后刷新` : ''}</div>`;
-    const dailyBtn = document.createElement('button');
-    dailyBtn.className = 'act-btn green';
-    dailyBtn.textContent = '领取每日登录';
-    dailyBtn.onclick = async () => {
-      await this.cb.onClaimDailyLogin?.();
-      if (this.modalOpen) this.cb.onPanel?.('tasks');
-    };
-    head.appendChild(dailyBtn);
+    head.innerHTML = `<div style="font-size:12.5px;color:var(--ink-soft)">每日任务 · 完成后可直接领取奖励 💰${dayRemainMs != null ? ` · <b>${fmtTime(dayRemainMs)}</b> 后刷新` : ''}</div>`;
     body.appendChild(head);
 
     if (!state.tasks?.length) {
@@ -321,39 +349,32 @@ export class UI {
       return;
     }
     for (const t of state.tasks) {
-      const name = t.title || TASK_POOL.find(d => d.id === t.taskId)?.name || `任务 ${t.id || t.taskId}`;
-      const target = t.target || TASK_POOL.find(d => d.id === t.taskId)?.target || 1;
-      const progress = t.progress || 0;
-      const reward = t.rewardCoin ?? TASK_POOL.find(d => d.id === t.taskId)?.gold;
-      const done = t.done || progress >= target;
-      const claimed = !!t.claimed;
-      const pct = Math.min(1, progress / target);
+      const vm = taskCardViewModel(t);
       const card = document.createElement('div');
-      card.className = 'task-card' + (done ? ' done' : '');
-      card.innerHTML = `<div class="head"><span class="name">${name}</span>
-        ${claimed ? '<span class="done-tag">✓ 已领取</span>' : done ? '' : `<span class="reward">💰${reward ?? 0}</span>`}</div>
-        <div class="pbar"><i style="width:${pct * 100}%"></i></div>
-        <div class="ptext">${Math.min(progress, target)} / ${target}</div>`;
-      if (done && !claimed && t.id != null) {
+      card.className = 'task-card' + (vm.done ? ' done' : '');
+      card.innerHTML = `<div class="head"><span class="name">${vm.name}</span>
+        ${vm.statusTag === 'claimed' ? '<span class="done-tag">✓ 已领取</span>' : vm.statusTag === 'claimable' ? '' : `<span class="reward">💰${vm.reward}</span>`}</div>
+        <div class="pbar"><i style="width:${vm.pct * 100}%"></i></div>
+        <div class="ptext">${vm.progress} / ${vm.target}</div>`;
+      if (vm.claimAction?.type === 'claimTask') {
         const btn = document.createElement('button');
         btn.className = 'act-btn';
         btn.textContent = '领取奖励';
         btn.style.marginTop = '8px';
         btn.onclick = async () => {
-          await this.cb.onClaimTask?.(t.id);
+          await this.cb.onClaimTask?.(vm.claimAction.taskId);
           if (this.modalOpen) this.cb.onPanel?.('tasks');
         };
         card.appendChild(btn);
       }
       body.appendChild(card);
-      t.seen = true;
     }
     this.updateHUD(state);
   }
 
   // ---------------- 图鉴 ----------------
   renderCodex(state) {
-    const body = this.openModal('📖 作物图鉴');
+    const body = this.openModal('📖 作物图鉴', 'codex');
     const unlocked = new Set(state.codex);
     body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">首次收获即解锁 · 已收集 <b style="color:var(--green-dark)">${unlocked.size}</b> / ${CROPS.length}</div>`);
     const grid = document.createElement('div');
@@ -379,14 +400,57 @@ export class UI {
     body.appendChild(ms);
   }
 
-  // ---------------- 邮件 ----------------
+  // ---------------- 邮件（含邻里申请待办） ----------------
   renderMail(state) {
-    const body = this.openModal('📮 邮箱');
-    if (!state.mails.length) {
+    const body = this.openModal('📮 邮箱', 'mail');
+    const requests = Array.isArray(state.friendRequests) ? state.friendRequests : [];
+    const mails = Array.isArray(state.mails) ? state.mails : [];
+    if (!requests.length && !mails.length) {
       body.innerHTML = `<div class="empty-tip">暂无邮件</div>`;
       return;
     }
-    const list = [...state.mails].reverse();
+
+    if (requests.length) {
+      const sec = document.createElement('div');
+      sec.className = 'mail-section';
+      sec.innerHTML = `<div class="mail-section__title">邻里申请</div>`;
+      requests.forEach((r) => {
+        const name = r.nickname || `UID ${r.from_uid}`;
+        const row = document.createElement('div');
+        row.className = 'list-row mail-row unread mail-row--friend-req';
+        row.innerHTML = `<span class="unread-dot"></span>
+          <div class="grow"><div class="title">${name} 申请加你为邻里</div>
+          <div class="sub">同意后即可互相串门</div></div>`;
+        const actions = document.createElement('div');
+        actions.className = 'mail-req-actions';
+        const accept = document.createElement('button');
+        accept.type = 'button';
+        accept.className = 'act-btn';
+        accept.textContent = '同意';
+        accept.onclick = async (e) => {
+          e.stopPropagation();
+          if (await this.cb.onAcceptFriendRequest?.(r.from_uid)) {
+            if (this.modalOpen) this.cb.onPanel?.('mail');
+          }
+        };
+        const reject = document.createElement('button');
+        reject.type = 'button';
+        reject.className = 'act-btn ghost';
+        reject.textContent = '拒绝';
+        reject.onclick = async (e) => {
+          e.stopPropagation();
+          if (await this.cb.onRejectFriendRequest?.(r.from_uid)) {
+            if (this.modalOpen) this.cb.onPanel?.('mail');
+          }
+        };
+        actions.append(accept, reject);
+        row.appendChild(actions);
+        sec.appendChild(row);
+      });
+      body.appendChild(sec);
+    }
+
+    const list = [...mails].reverse();
     for (const m of list) {
       const row = document.createElement('div');
       row.className = 'list-row mail-row' + (m.read ? '' : ' unread');
@@ -417,7 +481,7 @@ export class UI {
 
   // ---------------- 看家狗 ----------------
   renderPet(state) {
-    const body = this.openModal('🐶 看家狗');
+    const body = this.openModal('🐶 看家狗', 'pet');
     const dog = state.dog;
     const bagFood = state.inventory?.dogFood || 0;
     if (!dog) {
@@ -461,102 +525,228 @@ export class UI {
     body.appendChild(row);
   }
 
-  // ---------------- 好友 ----------------
+  // ---------------- 邻里簿（好友） ----------------
   renderFriends(state) {
-    const body = this.openModal('👥 好友');
+    const body = this.openModal('🏡 邻里簿', 'friends');
+    body.classList.add('neighbors-book');
     const { uid } = this.cb.getSession?.() || {};
-    const info = document.createElement('div');
-    info.style.cssText = 'font-size:12.5px;color:var(--ink-soft);margin-bottom:12px';
-    info.textContent = `我的 UID：${uid ?? '—'}`;
-    body.appendChild(info);
+    const myName = state.nickname || '我的农场';
 
-    const shareRow = document.createElement('div');
-    shareRow.className = 'set-row';
-    shareRow.style.marginBottom = '10px';
-    const shareButton = document.createElement('button');
-    shareButton.className = 'act-btn blue';
-    shareButton.textContent = '复制分享链接';
-    shareButton.onclick = async () => {
+    // 顶栏身份卡：昵称主位，UID 可复制
+    const identity = document.createElement('section');
+    identity.className = 'nb-identity';
+    const meAvatar = document.createElement('span');
+    meAvatar.className = 'nb-plate';
+    meAvatar.textContent = myName[0] || '我';
+    const meDetail = document.createElement('div');
+    meDetail.className = 'nb-identity__text';
+    const meName = document.createElement('div');
+    meName.className = 'nb-identity__name';
+    meName.textContent = myName;
+    const meLabel = document.createElement('div');
+    meLabel.className = 'nb-identity__label';
+    meLabel.textContent = '我的门牌';
+    meDetail.append(meName, meLabel);
+    const copyUid = document.createElement('button');
+    copyUid.type = 'button';
+    copyUid.className = 'nb-uid-chip';
+    copyUid.title = '点击复制 UID';
+    copyUid.textContent = uid != null ? `UID ${uid}` : 'UID —';
+    copyUid.onclick = async () => {
+      if (uid == null) return;
+      try {
+        await navigator.clipboard?.writeText(String(uid));
+        this.toast('已复制我的 UID', 'ok');
+      } catch {
+        this.toast('复制失败，请手动选择', 'info');
+      }
+    };
+    identity.append(meAvatar, meDetail, copyUid);
+    body.appendChild(identity);
+
+    // 邀请邻里：主按钮；链接默认收起
+    const invite = document.createElement('section');
+    invite.className = 'nb-section';
+    invite.innerHTML = `<h3 class="nb-section__title">邀请邻里</h3>`;
+    const inviteBtn = document.createElement('button');
+    inviteBtn.type = 'button';
+    inviteBtn.className = 'nb-btn nb-btn--invite';
+    inviteBtn.textContent = '生成并复制邀请';
+    const linkWrap = document.createElement('div');
+    linkWrap.className = 'nb-link-wrap hidden';
+    const linkInput = document.createElement('input');
+    linkInput.readOnly = true;
+    linkInput.className = 'nb-input';
+    linkInput.placeholder = '邀请链接会出现在这里';
+    linkWrap.appendChild(linkInput);
+    inviteBtn.onclick = async () => {
       const link = await this.cb.onGenShareLink?.();
       if (!link) return;
+      linkInput.value = link;
+      linkWrap.classList.remove('hidden');
       try {
         await navigator.clipboard?.writeText(link);
-        this.toast('分享链接已复制', 'ok');
+        this.toast('邀请链接已复制', 'ok');
       } catch {
-        this.toast('请手动复制分享链接', 'info');
+        this.toast('请手动复制邀请链接', 'info');
       }
-      shareInput.value = link;
     };
-    const shareInput = document.createElement('input');
-    shareInput.readOnly = true;
-    shareInput.placeholder = '生成后可分享给好友';
-    shareInput.style.cssText = 'flex:1;min-width:0';
-    shareRow.append(shareInput, shareButton);
-    body.appendChild(shareRow);
+    invite.append(inviteBtn, linkWrap);
+    body.appendChild(invite);
 
+    // 搜索邻里：精确用户名 → 结果列表 → 申请；邀请链接仍一键成好友
+    const addSec = document.createElement('section');
+    addSec.className = 'nb-section';
+    addSec.innerHTML = `<h3 class="nb-section__title">搜索邻里</h3>`;
     const addRow = document.createElement('div');
-    addRow.className = 'set-row';
-    addRow.style.marginBottom = '10px';
+    addRow.className = 'nb-add-row';
     const addInput = document.createElement('input');
-    addInput.placeholder = '输入用户名、UID 或粘贴分享链接';
-    addInput.style.cssText = 'flex:1;min-width:0';
-    const addButton = document.createElement('button');
-    addButton.className = 'act-btn';
-    addButton.textContent = '搜索并添加';
-    addButton.onclick = async () => {
-      if (await this.cb.onAddFriend?.(addInput.value)) this.renderFriends(this.cb.getState());
+    addInput.className = 'nb-input';
+    addInput.placeholder = '输入用户名，或粘贴邀请链接';
+    const searchBtn = document.createElement('button');
+    searchBtn.type = 'button';
+    searchBtn.className = 'nb-btn nb-btn--add';
+    searchBtn.textContent = '搜索';
+    const resultBox = document.createElement('div');
+    resultBox.className = 'nb-search-results';
+    const runSearch = async () => {
+      resultBox.innerHTML = '';
+      const result = await this.cb.onSearchNeighbors?.(addInput.value);
+      if (!result) return;
+      if (result.invited) {
+        this.renderFriends(this.cb.getState());
+        return;
+      }
+      if (!result.ok) return;
+      const users = result.users || [];
+      if (!users.length) {
+        resultBox.innerHTML = `<div class="nb-search-empty">未找到该用户</div>`;
+        return;
+      }
+      users.forEach((u) => {
+        const card = document.createElement('div');
+        card.className = 'nb-search-card';
+        const plate = document.createElement('span');
+        plate.className = 'nb-plate nb-plate--sm';
+        const name = u.nickname || `UID ${u.uid}`;
+        plate.textContent = name[0] || '?';
+        const info = document.createElement('div');
+        info.className = 'nb-card__info';
+        const title = document.createElement('div');
+        title.className = 'nb-card__name';
+        title.textContent = name;
+        const sub = document.createElement('div');
+        sub.className = 'nb-search-uid';
+        sub.textContent = `UID ${u.uid}`;
+        info.append(title, sub);
+        const apply = document.createElement('button');
+        apply.type = 'button';
+        apply.className = 'nb-btn nb-btn--visit';
+        apply.textContent = '申请';
+        apply.onclick = async () => {
+          if (await this.cb.onRequestFriend?.(u.uid)) {
+            this.renderFriends(this.cb.getState());
+          }
+        };
+        card.append(plate, info, apply);
+        resultBox.appendChild(card);
+      });
     };
-    addRow.append(addInput, addButton);
-    body.appendChild(addRow);
+    searchBtn.onclick = () => { void runSearch(); };
+    addInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void runSearch();
+      }
+    });
+    addRow.append(addInput, searchBtn);
+    addSec.append(addRow, resultBox);
+    body.appendChild(addSec);
 
-    if (!state.friends?.length) {
-      body.insertAdjacentHTML('beforeend', `<div style="font-size:13px;color:var(--ink-soft);padding:18px 4px">暂无好友</div>`);
+    // 邻里列表
+    const listSec = document.createElement('section');
+    listSec.className = 'nb-section nb-section--list';
+    const count = state.friends?.length || 0;
+    listSec.innerHTML = `<h3 class="nb-section__title">邻里 <span class="nb-count">${count}</span></h3>`;
+
+    if (!count) {
+      const empty = document.createElement('div');
+      empty.className = 'nb-empty';
+      empty.innerHTML = `<span class="nb-empty__icon" aria-hidden="true">🌾</span>
+        <p>还没有邻里</p>
+        <p class="nb-empty__hint">生成邀请，或按用户名添加</p>`;
+      listSec.appendChild(empty);
+      body.appendChild(listSec);
       return;
     }
-    for (const f of state.friends) {
-      const row = document.createElement('div');
-      row.className = 'list-row';
-      const avatar = document.createElement('span');
-      avatar.className = 'crop-badge';
-      avatar.style.background = 'linear-gradient(135deg,#a8d5a2,#5a8f54)';
-      avatar.textContent = (f.nickname || String(f.uid))[0];
-      const detail = document.createElement('div');
-      detail.className = 'grow';
+
+    const list = document.createElement('div');
+    list.className = 'nb-list';
+    state.friends.forEach((f, i) => {
+      const name = f.nickname || `农场主 ${f.uid}`;
+      const card = document.createElement('article');
+      card.className = 'nb-card' + (f.has_stealable ? ' nb-card--ripe' : '');
+      card.style.setProperty('--nb-i', String(i));
+
+      const plate = document.createElement('span');
+      plate.className = 'nb-plate';
+      plate.textContent = name[0] || '?';
+
+      const info = document.createElement('div');
+      info.className = 'nb-card__info';
       const title = document.createElement('div');
-      title.className = 'title';
-      title.textContent = f.nickname || `农场主 ${f.uid}`;
-      const sub = document.createElement('div');
-      sub.className = 'sub';
-      sub.textContent = `UID：${f.uid}`;
-      detail.append(title, sub);
+      title.className = 'nb-card__name';
+      title.textContent = name;
+      info.appendChild(title);
       if (f.has_stealable) {
-        const badge = document.createElement('span');
-        badge.className = 'friend-dog';
-        badge.style.marginTop = '4px';
-        badge.style.display = 'inline-block';
-        badge.textContent = '🥷 有菜可偷';
-        detail.appendChild(badge);
+        const ripe = document.createElement('span');
+        ripe.className = 'nb-ripe';
+        ripe.textContent = '有菜可偷';
+        info.appendChild(ripe);
       }
+
+      const actions = document.createElement('div');
+      actions.className = 'nb-card__actions';
       const visit = document.createElement('button');
-      visit.className = 'act-btn blue';
-      visit.textContent = '访问农场';
-      visit.onclick = () => { this.closeModal(); this.cb.onVisit(f.uid, f.nickname); };
+      visit.type = 'button';
+      visit.className = 'nb-btn nb-btn--visit';
+      visit.textContent = '串门';
+      visit.onclick = () => {
+        this.closeModal();
+        this.cb.onVisit(f.uid, f.nickname);
+      };
       const remove = document.createElement('button');
-      remove.className = 'danger-btn';
-      remove.style.marginLeft = '6px';
+      remove.type = 'button';
+      remove.className = 'nb-btn nb-btn--ghost';
       remove.textContent = '删除';
       remove.onclick = async () => {
+        if (remove.dataset.confirm !== '1') {
+          remove.dataset.confirm = '1';
+          remove.textContent = '确认？';
+          remove.classList.add('nb-btn--warn');
+          window.setTimeout(() => {
+            if (remove.dataset.confirm === '1') {
+              remove.dataset.confirm = '';
+              remove.textContent = '删除';
+              remove.classList.remove('nb-btn--warn');
+            }
+          }, 2600);
+          return;
+        }
         if (await this.cb.onRemoveFriend?.(f.uid)) this.renderFriends(this.cb.getState());
       };
-      row.append(avatar, detail, visit, remove);
-      body.appendChild(row);
-    }
+      actions.append(visit, remove);
+      card.append(plate, info, actions);
+      list.appendChild(card);
+    });
+    listSec.appendChild(list);
+    body.appendChild(listSec);
   }
 
   // ---------------- 设置 ----------------
   renderSettings() {
     const s = this.cb.getState();
-    const body = this.openModal('⚙️ 设置');
+    const body = this.openModal('⚙️ 设置', 'settings');
     const tsRow = document.createElement('div');
     tsRow.className = 'set-row';
     tsRow.innerHTML = `<div><div class="lab">⏳ 时间档</div><div class="desc">新播种的作物按当前时间档折算（在途作物不受影响）</div></div>`;
@@ -588,17 +778,17 @@ export class UI {
     sndRow.appendChild(sndSeg);
     body.appendChild(sndRow);
 
-    const resetRow = document.createElement('div');
-    resetRow.className = 'set-row';
-    resetRow.style.borderBottom = 'none';
-    resetRow.innerHTML = `<div><div class="lab">🗑️ 清理本地残留</div><div class="desc">清除旧版 localStorage 键（进度以服务器为准）</div></div>`;
-    const resetBtn = document.createElement('button');
-    resetBtn.className = 'danger-btn'; resetBtn.textContent = '清理并刷新';
-    resetBtn.onclick = () => {
-      if (confirm('确定清理本地残留并刷新？服务器进度不受影响。')) { this.cb.onReset(); this.closeModal(); }
+    const logoutRow = document.createElement('div');
+    logoutRow.className = 'set-row';
+    logoutRow.style.borderBottom = 'none';
+    logoutRow.innerHTML = `<div><div class="lab">🚪 退出登录</div><div class="desc">断开当前连接并返回登录页</div></div>`;
+    const logoutBtn = document.createElement('button');
+    logoutBtn.className = 'danger-btn'; logoutBtn.textContent = '退出登录';
+    logoutBtn.onclick = () => {
+      if (confirm('确定退出当前账号？')) { this.cb.onLogout?.(); this.closeModal(); }
     };
-    resetRow.appendChild(resetBtn);
-    body.appendChild(resetRow);
+    logoutRow.appendChild(logoutBtn);
+    body.appendChild(logoutRow);
   }
 
   setVisitor(name) {
