@@ -41,6 +41,10 @@ const (
 	keyTTLSafetyMargin = time.Second
 )
 
+// ErrAlreadyConnected means another live WebSocket already owns the player's
+// lifecycle lease. Room subscriptions remain multi-member.
+var ErrAlreadyConnected = errors.New("connreg: player already connected")
+
 // keyFallbackTTL returns the whole-key EXPIRE duration: 2*leaseTTL plus the
 // granularity margin. It never returns a non-positive duration and clamps on
 // int64 overflow instead of wrapping to a negative TTL.
@@ -74,6 +78,12 @@ type Backend interface {
 	// supplied by Registry from its injectable clock — backends must not read
 	// a separate wall clock.
 	Upsert(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) error
+	// Claim removes expired members and writes member only when no other live
+	// member owns the key. The check-and-write must be atomic.
+	Claim(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) (bool, error)
+	// Replace atomically transfers ownership to member and returns the live
+	// members that were evicted. Renewing the same sole member evicts nobody.
+	Replace(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) ([]string, error)
 	Delete(ctx context.Context, key, member string) error
 	// AliveMembers removes members with expiresAt <= nowUnixMilli and returns
 	// the remaining members. Removal may be best-effort as long as expired
@@ -133,7 +143,64 @@ func NewWithBackend(backend Backend, opts ...Option) *Registry {
 
 // Register records or renews a connected player's WebSocket lifecycle lease.
 func (r *Registry) Register(ctx context.Context, uid, connID uint64, gatewayID string) error {
-	return r.upsert(ctx, connectionKey(uid), connID, gatewayID)
+	if r == nil || r.backend == nil {
+		return errors.New("connreg: registry backend is nil")
+	}
+	if connID == 0 || strings.TrimSpace(gatewayID) == "" {
+		return errors.New("connreg: connection ID and gateway ID are required")
+	}
+	now := r.now()
+	claimed, err := r.backend.Claim(
+		ctx,
+		connectionKey(uid),
+		encodeRefField(gatewayID, connID),
+		now.Add(r.leaseTTL).UnixMilli(),
+		now.UnixMilli(),
+		keyFallbackTTL(r.leaseTTL),
+	)
+	if err != nil {
+		return fmt.Errorf("connreg: claim connection: %w", err)
+	}
+	if !claimed {
+		return ErrAlreadyConnected
+	}
+	return nil
+}
+
+// ReplaceConnection atomically makes the new WebSocket the sole lifecycle
+// owner and returns the previous owners that must receive Kick.
+func (r *Registry) ReplaceConnection(ctx context.Context, uid, connID uint64, gatewayID string) ([]ConnRef, error) {
+	if r == nil || r.backend == nil {
+		return nil, errors.New("connreg: registry backend is nil")
+	}
+	if connID == 0 || strings.TrimSpace(gatewayID) == "" {
+		return nil, errors.New("connreg: connection ID and gateway ID are required")
+	}
+	now := r.now()
+	members, err := r.backend.Replace(
+		ctx,
+		connectionKey(uid),
+		encodeRefField(gatewayID, connID),
+		now.Add(r.leaseTTL).UnixMilli(),
+		now.UnixMilli(),
+		keyFallbackTTL(r.leaseTTL),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("connreg: replace connection: %w", err)
+	}
+	refs := make([]ConnRef, 0, len(members))
+	for _, member := range members {
+		if ref, ok := decodeRefField(member); ok {
+			refs = append(refs, ref)
+		}
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].GatewayID == refs[j].GatewayID {
+			return refs[i].ConnID < refs[j].ConnID
+		}
+		return refs[i].GatewayID < refs[j].GatewayID
+	})
+	return refs, nil
 }
 
 // Unregister removes a disconnected player's WebSocket lifecycle record.
@@ -141,7 +208,7 @@ func (r *Registry) Unregister(ctx context.Context, uid, connID uint64, gatewayID
 	return r.delete(ctx, connectionKey(uid), connID, gatewayID)
 }
 
-// Lookup returns every currently leased connection for uid.
+// Lookup returns the sole currently leased connection for uid, if any.
 func (r *Registry) Lookup(ctx context.Context, uid uint64) ([]ConnRef, error) {
 	return r.lookup(ctx, connectionKey(uid))
 }
@@ -246,6 +313,75 @@ func roomKey(ownerUID uint64) string {
 
 type redisBackend struct {
 	client redis.UniversalClient
+}
+
+var claimConnectionScript = redis.NewScript(`
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[2])
+local members = redis.call("ZRANGE", KEYS[1], 0, -1)
+if #members > 0 and not (#members == 1 and members[1] == ARGV[1]) then
+	return 0
+end
+redis.call("ZADD", KEYS[1], ARGV[3], ARGV[1])
+redis.call("PEXPIRE", KEYS[1], ARGV[4])
+return 1
+`)
+
+var replaceConnectionScript = redis.NewScript(`
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[2])
+local members = redis.call("ZRANGE", KEYS[1], 0, -1)
+if #members == 1 and members[1] == ARGV[1] then
+	redis.call("ZADD", KEYS[1], ARGV[3], ARGV[1])
+	redis.call("PEXPIRE", KEYS[1], ARGV[4])
+	return {}
+end
+redis.call("DEL", KEYS[1])
+redis.call("ZADD", KEYS[1], ARGV[3], ARGV[1])
+redis.call("PEXPIRE", KEYS[1], ARGV[4])
+return members
+`)
+
+func (b redisBackend) Claim(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) (bool, error) {
+	if b.client == nil {
+		return false, errors.New("redis client is nil")
+	}
+	if keyTTL <= 0 {
+		return false, errors.New("key TTL must be positive")
+	}
+	result, err := claimConnectionScript.Run(
+		ctx,
+		b.client,
+		[]string{key},
+		member,
+		nowUnixMilli,
+		expiresAtUnixMilli,
+		keyTTL.Milliseconds(),
+	).Int64()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+func (b redisBackend) Replace(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) ([]string, error) {
+	if b.client == nil {
+		return nil, errors.New("redis client is nil")
+	}
+	if keyTTL <= 0 {
+		return nil, errors.New("key TTL must be positive")
+	}
+	members, err := replaceConnectionScript.Run(
+		ctx,
+		b.client,
+		[]string{key},
+		member,
+		nowUnixMilli,
+		expiresAtUnixMilli,
+		keyTTL.Milliseconds(),
+	).StringSlice()
+	if err != nil {
+		return nil, err
+	}
+	return members, nil
 }
 
 func (b redisBackend) Upsert(ctx context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) error {

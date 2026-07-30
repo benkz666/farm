@@ -54,7 +54,9 @@ func (s *Service) Register(ctx context.Context, username, password string) (uint
 	return uid, token, nil
 }
 
-// Login verifies credentials and creates a new seven-day session token.
+// Login verifies credentials and atomically makes a new seven-day token the
+// account's sole active session. A previous token remains distinguishable for
+// a short grace period so its WebSocket can report ERR_KICKED.
 func (s *Service) Login(ctx context.Context, username, password string) (uint64, string, error) {
 	uid, passwordHash, err := s.accounts.GetAccountByUsername(ctx, username)
 	if err != nil {

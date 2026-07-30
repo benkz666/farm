@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { CMD_TASK_NOTIFY, NetClient } from './client.js'
+import { CMD_SESSION_KICK, CMD_TASK_NOTIFY, NetClient } from './client.js'
 
 test('AcceptInvite 使用 404 命令发送邀请凭证', async () => {
   const client = new NetClient()
@@ -59,7 +59,9 @@ test('Steal / Pet / Task / Mail / DailyLogin 使用约定命令和载荷', async
   assert.deepEqual(await client.taskList(), { cmd: 600, payload: {} })
   assert.deepEqual(await client.taskClaim(2), { cmd: 602, payload: { task_id: 2 } })
   assert.deepEqual(await client.mailList(), { cmd: 604, payload: {} })
+  assert.deepEqual(await client.mailReadAll(), { cmd: 606, payload: { all: true } })
   assert.deepEqual(await client.mailClaim(8), { cmd: 608, payload: { mail_id: 8 } })
+  assert.deepEqual(await client.mailDeleteAll(), { cmd: 610, payload: { all: true } })
   assert.deepEqual(await client.claimDailyLogin(), { cmd: 614, payload: {} })
 })
 
@@ -109,6 +111,39 @@ test('PlayerDelta 主动推送交给个人状态订阅者', () => {
 
 test('CMD_TASK_NOTIFY 为协议 9008', () => {
   assert.equal(CMD_TASK_NOTIFY, 9008)
+})
+
+test('SessionKick 推送终止重连并通知恢复失败', () => {
+  let closed = 0
+  const client = new NetClient({
+    WebSocket: { CONNECTING: 0, OPEN: 1 },
+  })
+  client._autoReconnect = true
+  client._hadOpenConnection = true
+  client._ws = {
+    readyState: 1,
+    close() {
+      closed++
+    },
+  }
+  let failed
+  client.onFarmRestoreFailed((reason) => {
+    failed = reason
+  })
+
+  client._onMessage({
+    data: JSON.stringify({
+      cmd: CMD_SESSION_KICK,
+      client_seq: 0,
+      err: 0,
+      payload: { reason: 1105 },
+    }),
+  })
+
+  assert.equal(client._fatalStopped, true)
+  assert.equal(client._autoReconnect, false)
+  assert.equal(closed, 1)
+  assert.equal(failed.err, 1105)
 })
 
 test('TaskNotify 主动推送交给 onTaskNotify 订阅者，取消后不再投递', () => {

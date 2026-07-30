@@ -84,6 +84,33 @@ test('协议错误保留错误码且不进入农场', async () => {
   )
 })
 
+test('同账号已有在线连接时保留 1105 且不进入农场', async () => {
+  const events = []
+  const client = createClient(events)
+  client.handshake = async () => {
+    events.push(['handshake'])
+    return { err: 1105, payload: {} }
+  }
+
+  await assert.rejects(
+    authenticateAndEnter({
+      client,
+      mode: 'login',
+      username: 'alice',
+      password: 'secret12',
+      getFarmBridge: async () => {
+        throw new Error('不应加载农场')
+      },
+    }),
+    (error) => error instanceof ProtocolError && error.code === 1105,
+  )
+  assert.deepEqual(events, [
+    ['login', 'alice', 'secret12'],
+    ['connect'],
+    ['handshake'],
+  ])
+})
+
 test('已登录邀请落地复用 404 并返回响应', async () => {
   const events = []
   const client = createClient(events)

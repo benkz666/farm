@@ -13,6 +13,7 @@ import (
 	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/obs"
+	"farm/server/internal/pkgerr"
 	"farm/server/internal/store"
 	"farm/server/internal/wireenv"
 )
@@ -22,6 +23,7 @@ const (
 	playerDeltaPushPath = "/internal/v1/push/player-delta"
 	taskNotifyPushPath  = "/internal/v1/push/task-notify"
 	mailNotifyPushPath  = "/internal/v1/push/mail-notify"
+	sessionKickPushPath = "/internal/v1/push/session-kick"
 
 	// Bound concurrent Gateway callbacks so one Publish cannot spawn unbounded
 	// goroutines when a room spans many Gateways.
@@ -64,6 +66,14 @@ type MailNotifyPushRequest struct {
 	ConnectionID uint64 `json:"connection_id"`
 	UID          uint64 `json:"uid"`
 	Kind         string `json:"kind"`
+}
+
+// SessionKickPushRequest asks the Gateway owning an old connection to notify
+// and close it after a newer login replaces the player's online lease.
+type SessionKickPushRequest struct {
+	ConnectionID uint64      `json:"connection_id"`
+	UID          uint64      `json:"uid"`
+	Reason       pkgerr.Code `json:"reason"`
 }
 
 // DeltaPublisher fans a FarmDelta out after an authoritative mutation commits.
@@ -113,6 +123,11 @@ type TaskNotifyPusher interface {
 // MailNotifyPusher delivers one MailNotify to the Gateway that owns a session.
 type MailNotifyPusher interface {
 	PushMailNotify(ctx context.Context, ref connreg.ConnRef, uid uint64, kind string) error
+}
+
+// SessionKickPusher closes an evicted player connection on its owning Gateway.
+type SessionKickPusher interface {
+	PushSessionKick(ctx context.Context, ref connreg.ConnRef, uid uint64, reason pkgerr.Code) error
 }
 
 // FanoutPublisher resolves room subscribers from the shared connection registry,
@@ -535,6 +550,58 @@ func (p *HTTPMailNotifyPusher) PushMailNotify(ctx context.Context, ref connreg.C
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("farmrpc: MailNotify push returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+// HTTPSessionKickPusher implements cross-Gateway session replacement callbacks.
+type HTTPSessionKickPusher struct {
+	endpoints map[string]string
+	token     string
+	client    *http.Client
+}
+
+func NewHTTPSessionKickPusher(endpoints map[string]string, token string) *HTTPSessionKickPusher {
+	copied := make(map[string]string, len(endpoints))
+	for gatewayID, endpoint := range endpoints {
+		copied[gatewayID] = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	}
+	return &HTTPSessionKickPusher{
+		endpoints: copied,
+		token:     token,
+		client:    &http.Client{Timeout: 5 * time.Second},
+	}
+}
+
+func (p *HTTPSessionKickPusher) PushSessionKick(ctx context.Context, ref connreg.ConnRef, uid uint64, reason pkgerr.Code) error {
+	if p == nil {
+		return fmt.Errorf("farmrpc: HTTP SessionKick pusher is nil")
+	}
+	endpoint := p.endpoints[ref.GatewayID]
+	if endpoint == "" {
+		return fmt.Errorf("farmrpc: no Gateway endpoint configured for %q", ref.GatewayID)
+	}
+	body, err := json.Marshal(SessionKickPushRequest{
+		ConnectionID: ref.ConnID,
+		UID:          uid,
+		Reason:       reason,
+	})
+	if err != nil {
+		return fmt.Errorf("farmrpc: encode SessionKick push: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+sessionKickPushPath, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("farmrpc: build SessionKick push: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+p.token)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := p.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("farmrpc: push SessionKick: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("farmrpc: SessionKick push returned HTTP %d", response.StatusCode)
 	}
 	return nil
 }

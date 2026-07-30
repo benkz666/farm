@@ -124,6 +124,37 @@ func TestSessionStorePutGetDelete(t *testing.T) {
 	}
 }
 
+func TestSessionStoreLatestLoginReplacesPreviousToken(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	suffix := time.Now().Format("150405.000000")
+	firstToken := "it-first-token-" + suffix
+	secondToken := "it-second-token-" + suffix
+	uid := testUID(t)
+
+	if err := s.Put(ctx, firstToken, uid, time.Minute); err != nil {
+		t.Fatalf("Put first token: %v", err)
+	}
+	if err := s.Put(ctx, secondToken, uid, time.Minute); err != nil {
+		t.Fatalf("Put second token: %v", err)
+	}
+	if _, err := s.Get(ctx, firstToken); !errors.Is(err, store.ErrSessionReplaced) {
+		t.Fatalf("first token Get = %v, want ErrSessionReplaced", err)
+	}
+	got, err := s.Get(ctx, secondToken)
+	if err != nil || got != uid {
+		t.Fatalf("second token Get = (%d, %v), want (%d, nil)", got, err, uid)
+	}
+
+	if err := s.Delete(ctx, firstToken); err != nil {
+		t.Fatalf("Delete first token: %v", err)
+	}
+	got, err = s.Get(ctx, secondToken)
+	if err != nil || got != uid {
+		t.Fatalf("second token after old Delete = (%d, %v), want (%d, nil)", got, err, uid)
+	}
+}
+
 // TestSaveAccountDuplicateUsername 覆盖规格 4.5 节：用户名已占用应可判定（ErrUsernameTaken）。
 func TestSaveAccountDuplicateUsername(t *testing.T) {
 	s := newTestStore(t)

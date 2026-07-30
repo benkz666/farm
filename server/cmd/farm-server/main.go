@@ -341,6 +341,7 @@ func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime
 		gateway.WithInviteSecret([]byte(config.inviteSecret)),
 		gateway.WithConnectionRegistry(storage.ConnectionRegistry(), config.instanceID),
 		gateway.WithInternalPushToken(config.internalToken),
+		gateway.WithSessionKickPusher(farmrpc.NewHTTPSessionKickPusher(config.gatewayURLs, config.internalToken)),
 		gateway.WithMetrics(metrics),
 	}
 	return gateway.New(auth.New(storage, storage), storage, runtime, append(baseOptions, options...)...)

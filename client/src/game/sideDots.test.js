@@ -15,23 +15,26 @@ test('无可领附件的已读邮件不显示红点', () => {
   ]), false)
 })
 
-test('有未领取金币附件时显示红点', () => {
+test('已读但有未领取金币附件时不显示红点', () => {
   assert.equal(mailDotVisible([
     { read: true, claimed: false, gold: 50, attachmentCoin: 50 },
-  ]), true)
-})
-
-test('纯提示未读且无附件不显示红点（避免本地假邮件误报）', () => {
-  assert.equal(mailDotVisible([
-    { read: false, claimed: false, gold: 0, attachmentCoin: 0, title: '新的一天' },
   ]), false)
 })
 
-test('同意/拒绝类通知邮件无附件不点亮侧栏红点', () => {
+test('纯提示新邮件未读且无附件时显示红点', () => {
+  assert.equal(mailDotVisible([
+    { read: false, claimed: false, gold: 0, attachmentCoin: 0, title: '新的一天' },
+  ]), true)
+})
+
+test('同意/拒绝类通知邮件按已读状态决定红点', () => {
   assert.equal(mailDotVisible([
     { read: true, claimed: false, gold: 0, title: 'lxy 同意了你的邻里申请' },
     { read: true, claimed: false, gold: 0, title: 'lxy 拒绝了你的邻里申请' },
   ], []), false)
+  assert.equal(mailDotVisible([
+    { read: false, claimed: false, gold: 0, title: 'lxy 同意了你的邻里申请' },
+  ], []), true)
 })
 
 test('有待处理邻里申请时显示红点', () => {

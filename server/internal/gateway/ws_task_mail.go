@@ -20,6 +20,11 @@ type mailClaimRequest struct {
 	MailID uint64 `json:"mail_id"`
 }
 
+type mailMutationRequest struct {
+	MailID uint64 `json:"mail_id"`
+	All    bool   `json:"all"`
+}
+
 type taskListResponse struct {
 	Tasks   []store.Task `json:"tasks"`
 	ResetAt int64        `json:"reset_at"`
@@ -27,6 +32,10 @@ type taskListResponse struct {
 
 type mailListResponse struct {
 	Mails []store.Mail `json:"mails"`
+}
+
+type mailMutationResponse struct {
+	Affected int64 `json:"affected"`
 }
 
 func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelope) Envelope {
@@ -119,6 +128,29 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 			return response
 		}
 		response.Payload = marshalPayload(mailListResponse{Mails: mails})
+	case CommandMailRead, CommandMailDelete:
+		var payload mailMutationRequest
+		if err := unmarshalPayload(request.Payload, &payload); err != nil ||
+			(!payload.All && payload.MailID == 0) ||
+			(payload.All && payload.MailID != 0) {
+			response.Err = pkgerr.BadRequest
+			return response
+		}
+		mailID := payload.MailID
+		var (
+			affected int64
+			err      error
+		)
+		if request.Cmd == CommandMailRead {
+			affected, err = g.taskMail.MarkMailsRead(ctx, connection.uid, mailID)
+		} else {
+			affected, err = g.taskMail.DeleteMails(ctx, connection.uid, mailID)
+		}
+		if err != nil {
+			response.Err = taskMailErrorCode(err)
+			return response
+		}
+		response.Payload = marshalPayload(mailMutationResponse{Affected: affected})
 	case CommandMailClaim:
 		var payload mailClaimRequest
 		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.MailID == 0 {

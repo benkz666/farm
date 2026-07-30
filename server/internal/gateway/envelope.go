@@ -42,12 +42,15 @@ const (
 	CommandTaskList            uint32 = 600
 	CommandTaskClaim           uint32 = 602
 	CommandMailList            uint32 = 604
+	CommandMailRead            uint32 = 606
 	CommandMailClaim           uint32 = 608
+	CommandMailDelete          uint32 = 610
 	CommandClaimDailyLogin     uint32 = 614
 
 	CommandFarmDelta   = wireenv.CommandFarmDelta
 	CommandPlayerDelta = wireenv.CommandPlayerDelta
 	CommandMailNotify  = wireenv.CommandMailNotify
+	CommandSessionKick = wireenv.CommandSessionKick
 	CommandTaskNotify  = wireenv.CommandTaskNotify
 
 	JSONSubprotocol = "farm.v1.json"

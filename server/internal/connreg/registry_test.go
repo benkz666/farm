@@ -2,6 +2,7 @@ package connreg
 
 import (
 	"context"
+	"errors"
 	"math"
 	"reflect"
 	"sync"
@@ -38,7 +39,7 @@ func TestRegistryRegistersLooksUpAndUnregistersConnection(t *testing.T) {
 	}
 }
 
-func TestRegistryKeepsSameLocalConnectionIDFromDifferentGateways(t *testing.T) {
+func TestRegistryRejectsSecondLiveConnectionFromAnotherGateway(t *testing.T) {
 	backend := newMemoryBackend()
 	registry := NewWithBackend(backend)
 	ctx := context.Background()
@@ -46,18 +47,15 @@ func TestRegistryKeepsSameLocalConnectionIDFromDifferentGateways(t *testing.T) {
 	if err := registry.Register(ctx, 42, 1, "gateway-0"); err != nil {
 		t.Fatalf("Register gateway-0: %v", err)
 	}
-	if err := registry.Register(ctx, 42, 1, "gateway-1"); err != nil {
-		t.Fatalf("Register gateway-1: %v", err)
+	if err := registry.Register(ctx, 42, 1, "gateway-1"); !errors.Is(err, ErrAlreadyConnected) {
+		t.Fatalf("Register gateway-1 = %v, want ErrAlreadyConnected", err)
 	}
 
 	got, err := registry.Lookup(ctx, 42)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
-	want := []ConnRef{
-		{ConnID: 1, GatewayID: "gateway-0"},
-		{ConnID: 1, GatewayID: "gateway-1"},
-	}
+	want := []ConnRef{{ConnID: 1, GatewayID: "gateway-0"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Lookup = %#v, want %#v", got, want)
 	}
@@ -69,9 +67,94 @@ func TestRegistryKeepsSameLocalConnectionIDFromDifferentGateways(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup after Unregister: %v", err)
 	}
-	want = []ConnRef{{ConnID: 1, GatewayID: "gateway-1"}}
+	if len(got) != 0 {
+		t.Fatalf("Lookup after Unregister = %#v, want empty", got)
+	}
+	if err := registry.Register(ctx, 42, 1, "gateway-1"); err != nil {
+		t.Fatalf("Register gateway-1 after release: %v", err)
+	}
+}
+
+func TestRegistryReplaceConnectionEvictsPreviousOwner(t *testing.T) {
+	backend := newMemoryBackend()
+	registry := NewWithBackend(backend)
+	ctx := context.Background()
+
+	evicted, err := registry.ReplaceConnection(ctx, 42, 7, "gateway-0")
+	if err != nil {
+		t.Fatalf("first ReplaceConnection: %v", err)
+	}
+	if len(evicted) != 0 {
+		t.Fatalf("first ReplaceConnection evicted = %#v, want empty", evicted)
+	}
+
+	evicted, err = registry.ReplaceConnection(ctx, 42, 8, "gateway-1")
+	if err != nil {
+		t.Fatalf("second ReplaceConnection: %v", err)
+	}
+	wantEvicted := []ConnRef{{ConnID: 7, GatewayID: "gateway-0"}}
+	if !reflect.DeepEqual(evicted, wantEvicted) {
+		t.Fatalf("second ReplaceConnection evicted = %#v, want %#v", evicted, wantEvicted)
+	}
+	got, err := registry.Lookup(ctx, 42)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	want := []ConnRef{{ConnID: 8, GatewayID: "gateway-1"}}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("Lookup after Unregister = %#v, want %#v", got, want)
+		t.Fatalf("Lookup = %#v, want %#v", got, want)
+	}
+
+	evicted, err = registry.ReplaceConnection(ctx, 42, 8, "gateway-1")
+	if err != nil {
+		t.Fatalf("renew ReplaceConnection: %v", err)
+	}
+	if len(evicted) != 0 {
+		t.Fatalf("renew ReplaceConnection evicted = %#v, want empty", evicted)
+	}
+}
+
+func TestRegistryConcurrentClaimsAllowExactlyOneConnection(t *testing.T) {
+	backend := newMemoryBackend()
+	registry := NewWithBackend(backend)
+	const contenders = 16
+
+	start := make(chan struct{})
+	results := make(chan error, contenders)
+	var wg sync.WaitGroup
+	for i := 1; i <= contenders; i++ {
+		wg.Add(1)
+		go func(connID uint64) {
+			defer wg.Done()
+			<-start
+			results <- registry.Register(context.Background(), 42, connID, "gateway-0")
+		}(uint64(i))
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	conflicts := 0
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrAlreadyConnected):
+			conflicts++
+		default:
+			t.Fatalf("unexpected Register error: %v", err)
+		}
+	}
+	if successes != 1 || conflicts != contenders-1 {
+		t.Fatalf("claims: successes=%d conflicts=%d, want 1/%d", successes, conflicts, contenders-1)
+	}
+	refs, err := registry.Lookup(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("Lookup = %#v, want exactly one owner", refs)
 	}
 }
 
@@ -202,9 +285,10 @@ func TestSubscribeRenewsRoomLeaseExpiry(t *testing.T) {
 
 func TestStaleLeaseDoesNotHitDifferentConnectionID(t *testing.T) {
 	// Same gatewayID, old connID=1 left behind; a restarted process uses connID=9001.
+	var nowMs int64 = 1_000_000
 	backend := newMemoryBackend()
 	registry := NewWithBackend(backend,
-		WithClock(func() time.Time { return time.UnixMilli(1_000_000) }),
+		WithClock(func() time.Time { return time.UnixMilli(nowMs) }),
 		WithLeaseTTL(time.Hour),
 	)
 	ctx := context.Background()
@@ -215,29 +299,28 @@ func TestStaleLeaseDoesNotHitDifferentConnectionID(t *testing.T) {
 	if err := registry.Subscribe(ctx, 42, 1, "gateway-0"); err != nil {
 		t.Fatalf("Subscribe stale: %v", err)
 	}
-	if err := registry.Register(ctx, 42, 9001, "gateway-0"); err != nil {
-		t.Fatalf("Register new: %v", err)
+	if err := registry.Register(ctx, 42, 9001, "gateway-0"); !errors.Is(err, ErrAlreadyConnected) {
+		t.Fatalf("Register new before stale lease expiry = %v, want ErrAlreadyConnected", err)
 	}
 
 	lifecycle, err := registry.Lookup(ctx, 42)
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
-	if len(lifecycle) != 2 {
-		t.Fatalf("Lookup = %#v, want both stale and new until expiry", lifecycle)
+	if len(lifecycle) != 1 || lifecycle[0].ConnID != 1 {
+		t.Fatalf("Lookup = %#v, want only the live old lease", lifecycle)
 	}
-	// Fan-out keyed by the new process ID must not treat connID=1 as the new socket.
-	foundNew := false
-	for _, ref := range lifecycle {
-		if ref.ConnID == 9001 && ref.GatewayID == "gateway-0" {
-			foundNew = true
-		}
-		if ref.ConnID == 0 {
-			t.Fatalf("Lookup returned zero conn id: %#v", lifecycle)
-		}
+
+	nowMs += int64(time.Hour / time.Millisecond)
+	if err := registry.Register(ctx, 42, 9001, "gateway-0"); err != nil {
+		t.Fatalf("Register new after stale lease expiry: %v", err)
 	}
-	if !foundNew {
-		t.Fatalf("Lookup missing new connID: %#v", lifecycle)
+	lifecycle, err = registry.Lookup(ctx, 42)
+	if err != nil {
+		t.Fatalf("Lookup after replacement: %v", err)
+	}
+	if len(lifecycle) != 1 || lifecycle[0].ConnID != 9001 {
+		t.Fatalf("Lookup after replacement = %#v, want only connID 9001", lifecycle)
 	}
 
 	rooms, err := registry.LookupSubscribers(ctx, 42)
@@ -342,21 +425,21 @@ func TestUpsertRemovesExpiredMembersButKeepsAlivePeers(t *testing.T) {
 	)
 	ctx := context.Background()
 
-	if err := registry.Register(ctx, 42, 1, "gateway-old"); err != nil {
-		t.Fatalf("Register old: %v", err)
+	if err := registry.Subscribe(ctx, 42, 1, "gateway-old"); err != nil {
+		t.Fatalf("Subscribe old: %v", err)
 	}
 	nowMs += int64(30 * time.Second / time.Millisecond)
-	if err := registry.Register(ctx, 42, 2, "gateway-alive"); err != nil {
-		t.Fatalf("Register alive: %v", err)
+	if err := registry.Subscribe(ctx, 42, 2, "gateway-alive"); err != nil {
+		t.Fatalf("Subscribe alive: %v", err)
 	}
 
 	// Advance past gateway-old's member expiry but not gateway-alive's.
 	nowMs += int64(40 * time.Second / time.Millisecond) // now = t0+70s; old expired at t0+60s
-	if err := registry.Register(ctx, 42, 3, "gateway-new"); err != nil {
-		t.Fatalf("Register new (triggers upsert cleanup): %v", err)
+	if err := registry.Subscribe(ctx, 42, 3, "gateway-new"); err != nil {
+		t.Fatalf("Subscribe new (triggers upsert cleanup): %v", err)
 	}
 
-	members := backend.members(connectionKey(42), nowMs)
+	members := backend.members(roomKey(42), nowMs)
 	if _, ok := members["gateway-old:1"]; ok {
 		t.Fatalf("expired peer still present: %#v", members)
 	}
@@ -396,6 +479,51 @@ func (b *memoryBackend) Upsert(_ context.Context, key, member string, expiresAtU
 	b.zsets[key][member] = expiresAtUnixMilli
 	b.keyExpireAt[key] = nowUnixMilli + keyTTL.Milliseconds()
 	return nil
+}
+
+func (b *memoryBackend) Claim(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.expireKeysLocked(nowUnixMilli)
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+		}
+	}
+	if len(b.zsets[key]) > 0 {
+		if _, renewing := b.zsets[key][member]; !renewing || len(b.zsets[key]) != 1 {
+			return false, nil
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	b.keyExpireAt[key] = nowUnixMilli + keyTTL.Milliseconds()
+	return true, nil
+}
+
+func (b *memoryBackend) Replace(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, keyTTL time.Duration) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.expireKeysLocked(nowUnixMilli)
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	evicted := make([]string, 0, len(b.zsets[key]))
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+			continue
+		}
+		if existing != member {
+			evicted = append(evicted, existing)
+			delete(b.zsets[key], existing)
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	b.keyExpireAt[key] = nowUnixMilli + keyTTL.Milliseconds()
+	return evicted, nil
 }
 
 func (b *memoryBackend) Delete(_ context.Context, key, member string) error {

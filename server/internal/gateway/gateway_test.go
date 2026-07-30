@@ -139,7 +139,7 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	}
 }
 
-func TestGatewayPublishesTaskNotifyToEveryLocalSession(t *testing.T) {
+func TestGatewaySecondLocalSessionKicksFirst(t *testing.T) {
 	gateway := New(
 		authStub{},
 		sessionStub{uid: 42},
@@ -148,27 +148,98 @@ func TestGatewayPublishesTaskNotifyToEveryLocalSession(t *testing.T) {
 	first := openWebSocket(t, gateway.Handler())
 	second := openWebSocket(t, gateway.Handler())
 	handshakeWebSocket(t, first, "token-42")
-	handshakeWebSocket(t, second, "token-42")
-	task := store.Task{
-		ID: 1, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
+	writeEnvelope(t, second, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   marshalPayload(handshakeRequest{Token: "token-42", ClientConfigVer: 1}),
+	})
+	if got := readEnvelope(t, second); got.Err != pkgerr.OK {
+		t.Fatalf("second handshake = %#v, want OK", got)
 	}
 
-	if err := gateway.PublishTaskNotify(t.Context(), 42, task); err != nil {
-		t.Fatalf("PublishTaskNotify: %v", err)
+	kick := readEnvelope(t, first)
+	var kickPayload struct {
+		Reason pkgerr.Code `json:"reason"`
+	}
+	if err := json.Unmarshal(kick.Payload, &kickPayload); err != nil {
+		t.Fatalf("decode SessionKick: %v", err)
+	}
+	if kick.Cmd != CommandSessionKick || kick.ClientSeq != 0 || kick.Err != pkgerr.OK || kickPayload.Reason != pkgerr.Kicked {
+		t.Fatalf("first session kick = %#v payload=%#v", kick, kickPayload)
 	}
 
-	for _, connection := range []*websocket.Conn{first, second} {
-		message := readEnvelope(t, connection)
-		if message.Cmd != CommandTaskNotify || message.ClientSeq != 0 || message.Err != pkgerr.OK {
-			t.Fatalf("TaskNotify envelope = %#v", message)
-		}
-		var got store.Task
-		if err := json.Unmarshal(message.Payload, &got); err != nil {
-			t.Fatalf("decode TaskNotify payload: %v", err)
-		}
-		if got != task {
-			t.Fatalf("TaskNotify payload = %#v, want %#v", got, task)
-		}
+	writeEnvelope(t, second, Envelope{
+		Cmd:       CommandPing,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"client_time":123}`),
+	})
+	if got := readEnvelope(t, second); got.Err != pkgerr.OK {
+		t.Fatalf("second session Ping = %#v, want OK", got)
+	}
+}
+
+func TestGatewaySecondSessionAcrossSharedRegistryKicksFirst(t *testing.T) {
+	const pushToken = "push-token"
+	backend := newConnectionRegistryBackend()
+	registryA := connreg.NewWithBackend(backend)
+	registryB := connreg.NewWithBackend(backend)
+	firstGateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithConnectionRegistry(registryA, "gateway-0"),
+		WithInternalPushToken(pushToken),
+	)
+	firstServer := httptest.NewServer(firstGateway.Handler())
+	t.Cleanup(firstServer.Close)
+	secondGateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithConnectionRegistry(registryB, "gateway-1"),
+		WithSessionKickPusher(farmrpc.NewHTTPSessionKickPusher(
+			map[string]string{"gateway-0": firstServer.URL},
+			pushToken,
+		)),
+	)
+	first := openWebSocketAt(t, firstServer.URL)
+	second := openWebSocket(t, secondGateway.Handler())
+	handshakeWebSocket(t, first, "token-42")
+
+	writeEnvelope(t, second, Envelope{
+		Cmd:       CommandHandshake,
+		ClientSeq: 1,
+		Payload:   marshalPayload(handshakeRequest{Token: "token-42", ClientConfigVer: 1}),
+	})
+	if got := readEnvelope(t, second); got.Err != pkgerr.OK {
+		t.Fatalf("cross-gateway second handshake = %#v, want OK", got)
+	}
+	kick := readEnvelope(t, first)
+	var kickPayload struct {
+		Reason pkgerr.Code `json:"reason"`
+	}
+	if err := json.Unmarshal(kick.Payload, &kickPayload); err != nil {
+		t.Fatalf("decode cross-gateway SessionKick: %v", err)
+	}
+	if kick.Cmd != CommandSessionKick || kick.ClientSeq != 0 || kick.Err != pkgerr.OK || kickPayload.Reason != pkgerr.Kicked {
+		t.Fatalf("cross-gateway kick = %#v payload=%#v", kick, kickPayload)
+	}
+
+	refs, err := registryA.Lookup(t.Context(), 42)
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if len(refs) != 1 || refs[0].GatewayID != "gateway-1" {
+		t.Fatalf("active connection refs = %#v, want only gateway-1", refs)
+	}
+
+	writeEnvelope(t, second, Envelope{
+		Cmd:       CommandPing,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"client_time":123}`),
+	})
+	if got := readEnvelope(t, second); got.Err != pkgerr.OK {
+		t.Fatalf("new cross-gateway session Ping = %#v, want OK", got)
 	}
 }
 
@@ -2170,6 +2241,47 @@ func (b *connectionRegistryBackend) Upsert(_ context.Context, key, member string
 	}
 	b.zsets[key][member] = expiresAtUnixMilli
 	return nil
+}
+
+func (b *connectionRegistryBackend) Claim(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, _ time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+		}
+	}
+	if len(b.zsets[key]) > 0 {
+		if _, renewing := b.zsets[key][member]; !renewing || len(b.zsets[key]) != 1 {
+			return false, nil
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	return true, nil
+}
+
+func (b *connectionRegistryBackend) Replace(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, _ time.Duration) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	evicted := make([]string, 0, len(b.zsets[key]))
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+			continue
+		}
+		if existing != member {
+			evicted = append(evicted, existing)
+			delete(b.zsets[key], existing)
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	return evicted, nil
 }
 
 func (b *connectionRegistryBackend) Delete(_ context.Context, key, member string) error {

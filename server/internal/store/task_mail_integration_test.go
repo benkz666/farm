@@ -323,6 +323,81 @@ func TestDailyLoginClaimConcurrentFirstInitializationCreditsOnlyOnce(t *testing.
 	}
 }
 
+func TestMailReadAndDeleteAllPersistAndStayWithinUID(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	firstUID := testUID(t)
+	secondUID := testUID(t)
+	if err := s.SaveAccount(ctx, firstUID, "mail_first_"+strconv.FormatUint(firstUID, 10), "hash"); err != nil {
+		t.Fatalf("SaveAccount first: %v", err)
+	}
+	if err := s.SaveAccount(ctx, secondUID, "mail_second_"+strconv.FormatUint(secondUID, 10), "hash"); err != nil {
+		t.Fatalf("SaveAccount second: %v", err)
+	}
+
+	db := openIntegrationMySQL(t)
+	now := time.Now().UnixMilli()
+	for _, uid := range []uint64{firstUID, firstUID, secondUID} {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO mail (uid, title, attachment_coin, created_at)
+			VALUES (?, ?, 0, ?)`, uid, "unread notice", now); err != nil {
+			t.Fatalf("insert mail for uid %d: %v", uid, err)
+		}
+	}
+
+	before, err := s.ListMails(ctx, firstUID)
+	if err != nil {
+		t.Fatalf("ListMails before read: %v", err)
+	}
+	if len(before) != 2 || before[0].Read || before[1].Read {
+		t.Fatalf("first mailbox before read = %#v, want two unread mails", before)
+	}
+
+	affected, err := s.MarkMailsRead(ctx, firstUID, 0)
+	if err != nil {
+		t.Fatalf("MarkMailsRead all: %v", err)
+	}
+	if affected != 2 {
+		t.Fatalf("MarkMailsRead affected = %d, want 2", affected)
+	}
+	afterRead, err := s.ListMails(ctx, firstUID)
+	if err != nil {
+		t.Fatalf("ListMails after read: %v", err)
+	}
+	if len(afterRead) != 2 || !afterRead[0].Read || !afterRead[1].Read {
+		t.Fatalf("first mailbox after read = %#v, want two read mails", afterRead)
+	}
+	secondMails, err := s.ListMails(ctx, secondUID)
+	if err != nil {
+		t.Fatalf("ListMails second user: %v", err)
+	}
+	if len(secondMails) != 1 || secondMails[0].Read {
+		t.Fatalf("second mailbox after first user read = %#v, want one unread mail", secondMails)
+	}
+
+	deleted, err := s.DeleteMails(ctx, firstUID, 0)
+	if err != nil {
+		t.Fatalf("DeleteMails all: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("DeleteMails affected = %d, want 2", deleted)
+	}
+	afterDelete, err := s.ListMails(ctx, firstUID)
+	if err != nil {
+		t.Fatalf("ListMails after delete: %v", err)
+	}
+	if len(afterDelete) != 0 {
+		t.Fatalf("first mailbox after delete = %#v, want empty", afterDelete)
+	}
+	secondMails, err = s.ListMails(ctx, secondUID)
+	if err != nil {
+		t.Fatalf("ListMails second user after delete: %v", err)
+	}
+	if len(secondMails) != 1 {
+		t.Fatalf("second mailbox after first user delete = %#v, want preserved", secondMails)
+	}
+}
+
 func openIntegrationMySQL(t *testing.T) *sql.DB {
 	t.Helper()
 

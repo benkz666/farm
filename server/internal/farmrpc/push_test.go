@@ -89,16 +89,12 @@ func TestFanoutPublisherSkipsExpiredRoomSubscribers(t *testing.T) {
 	}
 }
 
-func TestTaskFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
+func TestTaskFanoutPublisherPushesActivePlayerConnection(t *testing.T) {
 	backend := newRegistryBackend()
 	registry := connreg.NewWithBackend(backend)
-	for _, ref := range []connreg.ConnRef{
-		{ConnID: 8, GatewayID: "gateway-1"},
-		{ConnID: 9, GatewayID: "gateway-0"},
-	} {
-		if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
-			t.Fatalf("Register %#v: %v", ref, err)
-		}
+	ref := connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}
+	if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+		t.Fatalf("Register %#v: %v", ref, err)
 	}
 	pusher := &recordingTaskNotifyPusher{}
 	publisher := NewTaskFanoutPublisher(registry, pusher)
@@ -111,23 +107,18 @@ func TestTaskFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
 	}
 
 	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedTaskNotify{
-		{ref: connreg.ConnRef{ConnID: 9, GatewayID: "gateway-0"}, uid: 42, task: task},
 		{ref: connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}, uid: 42, task: task},
 	}) {
 		t.Fatalf("task notifications = %#v", got)
 	}
 }
 
-func TestMailFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
+func TestMailFanoutPublisherPushesActivePlayerConnection(t *testing.T) {
 	backend := newRegistryBackend()
 	registry := connreg.NewWithBackend(backend)
-	for _, ref := range []connreg.ConnRef{
-		{ConnID: 8, GatewayID: "gateway-1"},
-		{ConnID: 9, GatewayID: "gateway-0"},
-	} {
-		if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
-			t.Fatalf("Register %#v: %v", ref, err)
-		}
+	ref := connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}
+	if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+		t.Fatalf("Register %#v: %v", ref, err)
 	}
 	pusher := &recordingMailNotifyPusher{}
 	publisher := NewMailFanoutPublisher(registry, pusher)
@@ -137,7 +128,6 @@ func TestMailFanoutPublisherPushesEveryActivePlayerConnection(t *testing.T) {
 	}
 
 	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedMailNotify{
-		{ref: connreg.ConnRef{ConnID: 9, GatewayID: "gateway-0"}, uid: 42, kind: "friend_request"},
 		{ref: connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}, uid: 42, kind: "friend_request"},
 	}) {
 		t.Fatalf("mail notifications = %#v", got)
@@ -279,6 +269,47 @@ func (b *registryBackend) Upsert(_ context.Context, key, member string, expiresA
 	}
 	b.zsets[key][member] = expiresAtUnixMilli
 	return nil
+}
+
+func (b *registryBackend) Claim(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, _ time.Duration) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+		}
+	}
+	if len(b.zsets[key]) > 0 {
+		if _, renewing := b.zsets[key][member]; !renewing || len(b.zsets[key]) != 1 {
+			return false, nil
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	return true, nil
+}
+
+func (b *registryBackend) Replace(_ context.Context, key, member string, expiresAtUnixMilli, nowUnixMilli int64, _ time.Duration) ([]string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.zsets[key] == nil {
+		b.zsets[key] = make(map[string]int64)
+	}
+	evicted := make([]string, 0, len(b.zsets[key]))
+	for existing, expiresAt := range b.zsets[key] {
+		if expiresAt <= nowUnixMilli {
+			delete(b.zsets[key], existing)
+			continue
+		}
+		if existing != member {
+			evicted = append(evicted, existing)
+			delete(b.zsets[key], existing)
+		}
+	}
+	b.zsets[key][member] = expiresAtUnixMilli
+	return evicted, nil
 }
 
 func (*registryBackend) Delete(context.Context, string, string) error { return nil }

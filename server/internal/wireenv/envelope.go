@@ -18,6 +18,7 @@ const (
 	CommandFarmDelta   uint32 = 9000
 	CommandPlayerDelta uint32 = 9002
 	CommandMailNotify  uint32 = 9004 // 新邮件/邻里申请等个人通知（只推提示，不推全文）
+	CommandSessionKick uint32 = 9006
 	CommandTaskNotify  uint32 = 9008
 )
 

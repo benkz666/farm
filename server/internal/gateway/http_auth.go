@@ -54,6 +54,7 @@ type Gateway struct {
 	nextConnID                atomic.Uint64
 	connRegistry              *connreg.Registry
 	gatewayID                 string
+	connectionMu              sync.Mutex
 	connections               sync.Map
 	pushToken                 []byte
 	allowDebug                bool
@@ -65,7 +66,9 @@ type Gateway struct {
 	stealHints                store.StealHintStore
 	taskMail                  store.TaskMailStore
 	taskNotifyFanout          farmrpc.TaskNotifyPublisher
+	sessionKickPusher         farmrpc.SessionKickPusher
 	taskNotifyDelivery        func(*wsConnection, store.Task) error
+	mailNotifyDelivery        func(*wsConnection, string) error
 	afterConnectionRegistered func(*wsConnection) // test seam for pre-ready pushes
 	debugFarmURLs             map[string]string
 	debugGatewayURLs          map[string]string
@@ -102,6 +105,14 @@ func WithTaskMailStore(taskMail store.TaskMailStore) Option {
 func WithTaskNotifyFanout(publisher farmrpc.TaskNotifyPublisher) Option {
 	return func(gateway *Gateway) {
 		gateway.taskNotifyFanout = publisher
+	}
+}
+
+// WithSessionKickPusher forwards a replacement notice to an evicted connection
+// when that connection is owned by another Gateway instance.
+func WithSessionKickPusher(pusher farmrpc.SessionKickPusher) Option {
+	return func(gateway *Gateway) {
+		gateway.sessionKickPusher = pusher
 	}
 }
 
@@ -253,6 +264,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/internal/v1/push/farm-delta-batch", g.receiveFarmDeltaBatch)
 	mux.HandleFunc("/internal/v1/push/player-delta", g.receivePlayerDelta)
 	mux.HandleFunc("/internal/v1/push/task-notify", g.receiveTaskNotify)
+	mux.HandleFunc("/internal/v1/push/session-kick", g.receiveSessionKick)
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 		mux.HandleFunc("/internal/v1/debug/advance", g.debugAdvanceLocal)
@@ -286,20 +298,78 @@ func (g *Gateway) registerConnection(ctx context.Context, connection *wsConnecti
 	if connection == nil || connection.id == 0 || connection.uid == 0 || !connection.authed {
 		return errors.New("gateway: invalid websocket connection")
 	}
+	g.connectionMu.Lock()
 	if g.connRegistry == nil {
+		var evicted []*wsConnection
+		g.connections.Range(func(_, value any) bool {
+			existing, ok := value.(*wsConnection)
+			if ok && existing != nil && existing.uid == connection.uid && existing.id != connection.id {
+				g.connections.Delete(existing.id)
+				evicted = append(evicted, existing)
+			}
+			return true
+		})
 		g.connections.Store(connection.id, connection)
+		g.connectionMu.Unlock()
 		g.afterRegisterConnection(connection)
+		for _, existing := range evicted {
+			existing.kick(pkgerr.Kicked)
+		}
 		return nil
 	}
 	if g.gatewayID == "" {
+		g.connectionMu.Unlock()
 		return errors.New("gateway: connection registry requires a gateway ID")
 	}
-	if err := g.connRegistry.Register(ctx, connection.uid, connection.id, g.gatewayID); err != nil {
+	evicted, err := g.connRegistry.ReplaceConnection(ctx, connection.uid, connection.id, g.gatewayID)
+	if err != nil {
+		g.connectionMu.Unlock()
 		return err
 	}
 	g.connections.Store(connection.id, connection)
+	g.connectionMu.Unlock()
 	g.afterRegisterConnection(connection)
+	g.kickReplacedConnections(ctx, connection.uid, evicted)
 	return nil
+}
+
+func (g *Gateway) kickReplacedConnections(ctx context.Context, uid uint64, refs []connreg.ConnRef) {
+	for _, ref := range refs {
+		if ref.ConnID == 0 {
+			continue
+		}
+		if ref.GatewayID == g.gatewayID {
+			value, ok := g.connections.Load(ref.ConnID)
+			if !ok {
+				continue
+			}
+			connection, ok := value.(*wsConnection)
+			if ok && connection != nil && connection.uid == uid {
+				connection.kick(pkgerr.Kicked)
+			}
+			continue
+		}
+		if g.sessionKickPusher == nil {
+			obs.L().Error("gateway session kick pusher is not configured",
+				"component", "gateway",
+				"op", "session_kick",
+				"uid", uid,
+				"gateway_id", ref.GatewayID,
+				"conn_id", ref.ConnID,
+			)
+			continue
+		}
+		if err := g.sessionKickPusher.PushSessionKick(ctx, ref, uid, pkgerr.Kicked); err != nil {
+			obs.L().Error("gateway session kick push failed",
+				"component", "gateway",
+				"op", "session_kick",
+				"uid", uid,
+				"gateway_id", ref.GatewayID,
+				"conn_id", ref.ConnID,
+				"err", err.Error(),
+			)
+		}
+	}
 }
 
 func (g *Gateway) afterRegisterConnection(connection *wsConnection) {
@@ -312,22 +382,44 @@ func (g *Gateway) unregisterConnection(ctx context.Context, connection *wsConnec
 	if connection == nil || connection.id == 0 {
 		return
 	}
+	g.connectionMu.Lock()
+	defer g.connectionMu.Unlock()
 	g.connections.Delete(connection.id)
 	if g.connRegistry != nil && connection.uid != 0 {
 		_ = g.connRegistry.Unregister(ctx, connection.uid, connection.id, g.gatewayID)
 	}
 }
 
-// renewConnectionLease best-effort extends lifecycle and current room leases.
-// Failures are logged only: the already-handled WS command must not flip to error.
-func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnection) {
-	if g == nil || g.connRegistry == nil || connection == nil || !connection.authed || connection.uid == 0 || connection.id == 0 {
-		return
+// renewConnectionLease verifies that this connection still owns the player's
+// lifecycle lease, then best-effort extends its lifecycle and room leases.
+// False means a newer connection has replaced it and no command may execute.
+func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnection) bool {
+	if g == nil || connection == nil || !connection.authed || connection.uid == 0 || connection.id == 0 {
+		return false
+	}
+	if g.connRegistry == nil {
+		value, ok := g.connections.Load(connection.id)
+		if ok {
+			return value == connection
+		}
+		replaced := false
+		g.connections.Range(func(_, value any) bool {
+			current, valid := value.(*wsConnection)
+			if valid && current != nil && current.uid == connection.uid {
+				replaced = true
+				return false
+			}
+			return true
+		})
+		return !replaced
 	}
 	if g.gatewayID == "" {
-		return
+		return false
 	}
 	if err := g.connRegistry.Register(ctx, connection.uid, connection.id, g.gatewayID); err != nil {
+		if errors.Is(err, connreg.ErrAlreadyConnected) {
+			return false
+		}
 		obs.L().Error("gateway connreg renew lifecycle failed",
 			"component", "gateway",
 			"op", "connreg_renew_lifecycle",
@@ -335,12 +427,13 @@ func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnec
 			"conn_id", connection.id,
 			"err", err.Error(),
 		)
+		return true
 	}
 	connection.roomMu.Lock()
 	roomUID := connection.roomUID
 	connection.roomMu.Unlock()
 	if roomUID == 0 {
-		return
+		return true
 	}
 	if err := g.connRegistry.Subscribe(ctx, roomUID, connection.id, g.gatewayID); err != nil {
 		obs.L().Error("gateway connreg renew room failed",
@@ -352,6 +445,7 @@ func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnec
 			"err", err.Error(),
 		)
 	}
+	return true
 }
 
 func (g *Gateway) receiveFarmDelta(w http.ResponseWriter, r *http.Request) {
@@ -484,6 +578,31 @@ func (g *Gateway) receiveTaskNotify(w http.ResponseWriter, r *http.Request) {
 	wsConnection := connection.(*wsConnection)
 	if wsConnection.uid == request.UID && wsConnection.authed {
 		wsConnection.enqueueTaskNotify(request.Task)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) receiveSessionKick(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !g.authorizedPush(r.Header.Get("Authorization")) {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	var request farmrpc.SessionKickPushRequest
+	if err := decodeJSON(io.LimitReader(r.Body, 64<<10), &request); err != nil ||
+		request.ConnectionID == 0 || request.UID == 0 || request.Reason != pkgerr.Kicked {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	value, ok := g.connections.Load(request.ConnectionID)
+	if ok {
+		connection, valid := value.(*wsConnection)
+		if valid && connection != nil && connection.authed && connection.uid == request.UID {
+			connection.kick(request.Reason)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

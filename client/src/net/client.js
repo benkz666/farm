@@ -20,6 +20,7 @@ export const CMD_REJECT_FRIEND_REQUEST = 418
 export const CMD_FARM_DELTA = 9000
 export const CMD_PLAYER_DELTA = 9002
 export const CMD_MAIL_NOTIFY = 9004
+export const CMD_SESSION_KICK = 9006
 export const CMD_TASK_NOTIFY = 9008
 
 /** 地块动作（protocol 5.3）。 */
@@ -46,7 +47,9 @@ export const CMD_PET_FEED = 504
 export const CMD_TASK_LIST = 600
 export const CMD_TASK_CLAIM = 602
 export const CMD_MAIL_LIST = 604
+export const CMD_MAIL_READ = 606
 export const CMD_MAIL_CLAIM = 608
+export const CMD_MAIL_DELETE = 610
 export const CMD_CLAIM_DAILY_LOGIN = 614
 
 export const WS_SUBPROTOCOL = 'farm.v1.json'
@@ -368,6 +371,11 @@ export class NetClient {
     return this.request(CMD_MAIL_LIST, {})
   }
 
+  /** 打开邮箱后将当前收件箱全部标记为已读（cmd 606）。 */
+  mailReadAll() {
+    return this.request(CMD_MAIL_READ, { all: true })
+  }
+
   /**
    * 领取邮件附件（cmd 608）。
    * @param {number} mailId
@@ -375,6 +383,11 @@ export class NetClient {
    */
   mailClaim(mailId) {
     return this.request(CMD_MAIL_CLAIM, { mail_id: mailId })
+  }
+
+  /** 删除当前收件箱全部邮件（cmd 610）。 */
+  mailDeleteAll() {
+    return this.request(CMD_MAIL_DELETE, { all: true })
   }
 
   /** 领取每日登录奖励（cmd 614）。 */
@@ -835,6 +848,11 @@ export class NetClient {
     }
     if (!envelope || typeof envelope.client_seq !== 'number') return
     if (envelope.client_seq === 0) {
+      if (envelope.cmd === CMD_SESSION_KICK) {
+        const reason = Number(envelope.payload?.reason) || 1105
+        this._stopReconnectWithFailure({ ...envelope, err: reason })
+        return
+      }
       for (const handler of this._pushHandlers.get(envelope.cmd) || []) {
         handler(envelope)
       }

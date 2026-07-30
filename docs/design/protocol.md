@@ -363,6 +363,11 @@ message StealRsp {
 | 102 | `Ping` | 心跳 + 校时（1.4 节） |
 | 104 | `Logout` | 主动下线 |
 
+同一账号同一时刻只允许一条有效 WebSocket 连接，采用“后登录挤前登录”策略。
+新 token 会原子替换该 UID 的当前 token；新连接 `Handshake` 时再原子接管在线
+租约并正常进入。旧连接收到 `Kick`（9006，`payload.reason=1105`）后停止重连、
+清理本地登录态并返回登录页；即使推送延迟，旧 token 或旧租约也不能再执行命令。
+
 ### 5.3 农场与种植（200—299）
 
 | cmd | 名称 | 执行者 | 说明 |
@@ -437,9 +442,9 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 | 600 | `TaskList` | 当前服务器本地自然日的 4 条任务与进度，含下次 00:00 的 `reset_at` |
 | 602 | `TaskClaim` | 领取任务奖励，奖励直接入账并返回奖励回执；每日登录为 task_id=4 |
 | 604 | `MailList` | 收件箱，个人邮件与全服公告归并 |
-| 606 | `MailRead` | 标记已读 |
+| 606 | `MailRead` | 标记已读；`mail_id` 指定单封，`all=true` 批量标记当前收件箱 |
 | 608 | `MailClaim` | 领取附件（策划 15.2） |
-| 610 | `MailDelete` | 删除 |
+| 610 | `MailDelete` | 删除；`mail_id` 指定单封，`all=true` 清空当前收件箱 |
 | 612 | `CodexList` | 图鉴（策划 16 章） |
 | 614 | `ClaimDailyLogin` | 每日登录 task_id=4 的兼容领取入口；同一服务器本地自然日重复返回 `ERR_DUPLICATE_OK` |
 
@@ -450,12 +455,12 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 | 9000 | `FarmDelta` | 房间内地块或农场状态变更（2.2 节） |
 | 9002 | `PlayerDelta` | 自己的金币 / 经验 / 等级 / 背包变化。跨 Actor 结算（如被偷、被赔付）也走它 |
 | 9004 | `MailNotify` | 新邮件到达，只推数量不推内容 |
-| 9006 | `Kick` | 被踢下线或需要重定向重连，携带原因码 |
+| 9006 | `Kick` | 被新登录挤下线；`payload.reason` 携带错误码（当前为 `ERR_KICKED` / 1105） |
 | 9008 | `TaskNotify` | 一条每日任务的权威状态变化；只在成功玩法动作实际推进任务时推送 |
 
 `PlayerDelta` 的存在是必要的：访客在好友农场浇水获得的经验、被偷菜后的仓库变化、看家狗拦截获得的赔付，这些都不属于任何一个「房间」，无法通过 `FarmDelta` 送达。
 
-`TaskNotify` 的 `payload` 是单条 `Task`，字段为 `id`、`title`、`progress`、`target`、`reward_coin` 与 `claimed`。它独立于当前所在房间，按 uid 推送到该玩家的全部有效连接；重复动作未改变已完成任务时不推送。每日登录（task_id=4）由初始 `TaskList` 呈现完成状态，不额外发送该推送。
+`TaskNotify` 的 `payload` 是单条 `Task`，字段为 `id`、`title`、`progress`、`target`、`reward_coin` 与 `claimed`。它独立于当前所在房间，按 uid 推送到该玩家当前有效连接；重复动作未改变已完成任务时不推送。每日登录（task_id=4）由初始 `TaskList` 呈现完成状态，不额外发送该推送。
 
 ---
 

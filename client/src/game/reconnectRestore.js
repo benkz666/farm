@@ -27,7 +27,7 @@ const boundDisposeByClient = new WeakMap()
  *   leaveOnline: () => void,
  *   fail: (msg: string) => void,
  *   errText: (err: number) => string,
- *   onOfflineCleanup?: () => void,
+ *   onOfflineCleanup?: (reason: Error|object) => void,
  *   onRestored?: () => void,
  * }} BindDeps
  */
@@ -111,7 +111,7 @@ export function bindFarmReconnectRestore(deps) {
     deps.setOnlineBusy?.(false)
     deps.leaveOnline()
     dispose()
-    deps.onOfflineCleanup?.()
+    deps.onOfflineCleanup?.(reason)
     const msg =
       reason && typeof reason === 'object' && 'err' in reason
         ? deps.errText(reason.err) || `恢复失败（${reason.err}）`

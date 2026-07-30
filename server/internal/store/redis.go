@@ -14,11 +14,43 @@ import (
 )
 
 func sessionKey(token string) string { return "session:" + token }
-func farmKey(uid uint64) string      { return "farm:" + strconv.FormatUint(uid, 10) }
+func activeSessionKey(uid uint64) string {
+	return "session:active:" + strconv.FormatUint(uid, 10)
+}
+func farmKey(uid uint64) string { return "farm:" + strconv.FormatUint(uid, 10) }
 
-// Put 写入 session:{token} -> uid，TTL 由调用方指定（规格 5.2 节默认 7 天）。
+const replacedSessionGrace = 5 * time.Minute
+
+var replaceSessionScript = redis.NewScript(`
+local previous = redis.call("GET", KEYS[1])
+if previous and previous ~= ARGV[1] then
+	local previousKey = ARGV[4] .. previous
+	local previousTTL = redis.call("PTTL", previousKey)
+	if previousTTL < 0 or previousTTL > tonumber(ARGV[3]) then
+		redis.call("PEXPIRE", previousKey, ARGV[3])
+	end
+end
+redis.call("SET", KEYS[2], ARGV[2], "PX", ARGV[5])
+redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[5])
+return previous or ""
+`)
+
+// Put 原子轮换 uid 的当前 token。旧 token 短暂保留映射，使已在线连接能明确
+// 区分“被新登录替换”(1105) 与自然过期(1102)，但不再具备鉴权能力。
 func (s *Store) Put(ctx context.Context, token string, uid uint64, ttl time.Duration) error {
-	if err := s.rdb.Set(ctx, sessionKey(token), strconv.FormatUint(uid, 10), ttl).Err(); err != nil {
+	if s == nil || s.rdb == nil || token == "" || uid == 0 || ttl <= 0 {
+		return errors.New("store: invalid session")
+	}
+	if _, err := replaceSessionScript.Run(
+		ctx,
+		s.rdb,
+		[]string{activeSessionKey(uid), sessionKey(token)},
+		token,
+		strconv.FormatUint(uid, 10),
+		replacedSessionGrace.Milliseconds(),
+		"session:",
+		ttl.Milliseconds(),
+	).Result(); err != nil {
 		return fmt.Errorf("store: put session: %w", err)
 	}
 	return nil
@@ -38,12 +70,54 @@ func (s *Store) Get(ctx context.Context, token string) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("store: parse session uid: %w", err)
 	}
+	active, err := s.rdb.Get(ctx, activeSessionKey(uid)).Result()
+	if errors.Is(err, redis.Nil) {
+		ttl, ttlErr := s.rdb.PTTL(ctx, sessionKey(token)).Result()
+		if ttlErr != nil {
+			return 0, fmt.Errorf("store: get session ttl: %w", ttlErr)
+		}
+		if ttl <= 0 {
+			ttl = time.Minute
+		}
+		claimed, claimErr := s.rdb.SetNX(ctx, activeSessionKey(uid), token, ttl).Result()
+		if claimErr != nil {
+			return 0, fmt.Errorf("store: claim legacy session: %w", claimErr)
+		}
+		if claimed {
+			return uid, nil
+		}
+		active, err = s.rdb.Get(ctx, activeSessionKey(uid)).Result()
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: get active session: %w", err)
+	}
+	if active != token {
+		return 0, ErrSessionReplaced
+	}
 	return uid, nil
 }
 
-// Delete 删除 session:{token}（登出/踢下线）。
+var deleteSessionScript = redis.NewScript(`
+local uid = redis.call("GET", KEYS[1])
+redis.call("DEL", KEYS[1])
+if uid then
+	local activeKey = ARGV[2] .. uid
+	if redis.call("GET", activeKey) == ARGV[1] then
+		redis.call("DEL", activeKey)
+	end
+end
+return 1
+`)
+
+// Delete 删除 token；仅当它仍是 uid 的当前 token 时才清理反向索引。
 func (s *Store) Delete(ctx context.Context, token string) error {
-	if err := s.rdb.Del(ctx, sessionKey(token)).Err(); err != nil {
+	if _, err := deleteSessionScript.Run(
+		ctx,
+		s.rdb,
+		[]string{sessionKey(token)},
+		token,
+		"session:active:",
+	).Result(); err != nil {
 		return fmt.Errorf("store: delete session: %w", err)
 	}
 	return nil

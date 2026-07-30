@@ -141,6 +141,70 @@ func TestDailyLoginAndTaskRewardsAreDirectAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestMailReadAndDeleteAllAreScopedToAuthenticatedPlayer(t *testing.T) {
+	storage := newTaskMailStoreStub()
+	first := storage.addMail("new notice", 0)
+	second := storage.addMail("reward", 50)
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithTaskMailStore(storage),
+	)
+	connection := &wsConnection{uid: 42, authed: true}
+
+	read := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandMailRead,
+		Payload: json.RawMessage(`{"all":true}`),
+	})
+	if read.Err != pkgerr.OK {
+		t.Fatalf("MailRead err = %d, want OK", read.Err)
+	}
+	if !storage.mails[first.ID].Read || !storage.mails[second.ID].Read {
+		t.Fatalf("mails after MailRead = %#v, want all read", storage.mails)
+	}
+	if storage.lastMailUID != 42 {
+		t.Fatalf("MailRead uid = %d, want authenticated uid 42", storage.lastMailUID)
+	}
+
+	deleted := gateway.handleWSRequest(connection, Envelope{
+		Cmd:     CommandMailDelete,
+		Payload: json.RawMessage(`{"all":true}`),
+	})
+	if deleted.Err != pkgerr.OK {
+		t.Fatalf("MailDelete err = %d, want OK", deleted.Err)
+	}
+	if len(storage.mails) != 0 {
+		t.Fatalf("mails after MailDelete = %#v, want empty", storage.mails)
+	}
+	if storage.lastMailUID != 42 {
+		t.Fatalf("MailDelete uid = %d, want authenticated uid 42", storage.lastMailUID)
+	}
+}
+
+func TestMailMutationRejectsAmbiguousTarget(t *testing.T) {
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithTaskMailStore(newTaskMailStoreStub()),
+	)
+	connection := &wsConnection{uid: 42, authed: true}
+
+	for _, payload := range []json.RawMessage{
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"all":true,"mail_id":1}`),
+	} {
+		response := gateway.handleWSRequest(connection, Envelope{
+			Cmd:     CommandMailRead,
+			Payload: payload,
+		})
+		if response.Err != pkgerr.BadRequest {
+			t.Fatalf("MailRead payload %s err = %d, want BadRequest", payload, response.Err)
+		}
+	}
+}
+
 func TestSuccessfulPlantAdvancesDailyTaskProgress(t *testing.T) {
 	storage := newTaskMailStoreStub()
 	aggregate := farm.NewAggregate(42, "alice")
@@ -342,6 +406,7 @@ type taskMailStoreStub struct {
 	progressCalls []taskProgressCall
 	advanceErr    error
 	next          uint64
+	lastMailUID   uint64
 }
 
 type taskProgressCall struct {
@@ -386,6 +451,35 @@ func (s *taskMailStoreStub) ListMails(_ context.Context, _ uint64) ([]store.Mail
 	return out, nil
 }
 
+func (s *taskMailStoreStub) MarkMailsRead(_ context.Context, uid uint64, mailID uint64) (int64, error) {
+	s.lastMailUID = uid
+	var affected int64
+	for id, mail := range s.mails {
+		if mailID != 0 && id != mailID {
+			continue
+		}
+		if !mail.Read {
+			mail.Read = true
+			s.mails[id] = mail
+			affected++
+		}
+	}
+	return affected, nil
+}
+
+func (s *taskMailStoreStub) DeleteMails(_ context.Context, uid uint64, mailID uint64) (int64, error) {
+	s.lastMailUID = uid
+	var affected int64
+	for id := range s.mails {
+		if mailID != 0 && id != mailID {
+			continue
+		}
+		delete(s.mails, id)
+		affected++
+	}
+	return affected, nil
+}
+
 func (s *taskMailStoreStub) ClaimMail(_ context.Context, _ uint64, mailID uint64) (store.Mail, error) {
 	mail, ok := s.mails[mailID]
 	if !ok {
@@ -398,6 +492,7 @@ func (s *taskMailStoreStub) ClaimMail(_ context.Context, _ uint64, mailID uint64
 		return store.Mail{}, store.ErrMailAlreadyClaimed
 	}
 	mail.Claimed = true
+	mail.Read = true
 	s.mails[mailID] = mail
 	return mail, nil
 }

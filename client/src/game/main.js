@@ -226,7 +226,7 @@ function reconnectRestoreDeps(client) {
     toast: (msg, type) => ui.toast(msg, type),
     fail,
     errText,
-    onOfflineCleanup: () => {
+    onOfflineCleanup: (reason) => {
       stopDeltaSubscription?.();
       stopDeltaSubscription = null;
       stopPlayerDeltaSubscription?.();
@@ -239,6 +239,10 @@ function reconnectRestoreDeps(client) {
       farmMirror = null;
       netClient = null;
       reconnectBinding = null;
+      if (Number(reason?.err) === 1105) {
+        logout();
+        location.assign('/login?error=1105');
+      }
     },
   };
 }
@@ -706,8 +710,7 @@ function mapServerMails(mails) {
       attachmentCoin: gold,
       exp: 0,
       claimed,
-      // 无附件=纯通知，不占未读；有金币附件且未领=未读（侧栏红点与行内圆点）
-      read: gold <= 0 || claimed,
+      read: m.read === true,
       time: Number(m.created_at) || Date.now(),
     };
   });
@@ -773,6 +776,47 @@ async function refreshMails() {
     }
     state.mails = mapServerMails(response.payload?.mails);
     ui.updateHUD(state);
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function markAllMailsRead() {
+  if (!netClient || !state.mails.some((mail) => !mail.read)) return true;
+  try {
+    const response = await netClient.mailReadAll();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.mails.forEach((mail) => { mail.read = true; });
+    ui.updateHUD(state);
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
+async function openAndRefreshMails() {
+  const [mailOK] = await Promise.all([refreshMails(), refreshFriendRequests()]);
+  if (mailOK) await markAllMailsRead();
+  if (ui.isPanelOpen('mail')) ui.renderMail(state);
+}
+
+async function clearAllMails() {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.mailDeleteAll();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.mails = [];
+    ui.updateHUD(state);
+    ui.toast('邮件已全部清空', 'ok');
     return true;
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -1028,9 +1072,7 @@ const ui = new UI({
       case 'codex': ui.renderCodex(state); break;
       case 'mail':
         ui.renderMail(state);
-        void Promise.all([refreshMails(), refreshFriendRequests()]).then(() => {
-          if (ui.modalOpen) ui.renderMail(state);
-        });
+        void openAndRefreshMails();
         break;
       case 'pet':
         ui.renderPet(state);
@@ -1134,6 +1176,17 @@ const ui = new UI({
       await refreshMails();
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
+  async onClearMails() {
+    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (onlineBusy) return false;
+    onlineBusy = true;
+    try {
+      return await clearAllMails();
     } finally {
       onlineBusy = false;
     }

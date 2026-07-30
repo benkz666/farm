@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// ListMails 返回玩家的个人邮件，附件状态由 Claimed 明示。
+// ListMails 返回玩家的个人邮件，附件与已读状态分别由 Claimed / Read 明示。
 func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, title, attachment_coin, claimed_at IS NOT NULL, created_at
+		SELECT id, title, attachment_coin, claimed_at IS NOT NULL, read_at IS NOT NULL, created_at
 		FROM mail
 		WHERE uid = ?
 		ORDER BY id DESC`, uid)
@@ -23,7 +23,7 @@ func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
 	mails := make([]Mail, 0)
 	for rows.Next() {
 		var mail Mail
-		if err := rows.Scan(&mail.ID, &mail.Title, &mail.AttachmentCoin, &mail.Claimed, &mail.CreatedAt); err != nil {
+		if err := rows.Scan(&mail.ID, &mail.Title, &mail.AttachmentCoin, &mail.Claimed, &mail.Read, &mail.CreatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan mail: %w", err)
 		}
 		mails = append(mails, mail)
@@ -32,6 +32,57 @@ func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
 		return nil, fmt.Errorf("store: iterate mails: %w", err)
 	}
 	return mails, nil
+}
+
+// MarkMailsRead 持久化玩家的阅读进度。mailID=0 时批量处理当前收件箱；
+// UPDATE 只触碰尚未阅读的行，因此重复打开邮箱是幂等的。
+func (s *Store) MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (int64, error) {
+	now := time.Now().UnixMilli()
+	var (
+		result sql.Result
+		err    error
+	)
+	if mailID == 0 {
+		result, err = s.db.ExecContext(ctx,
+			`UPDATE mail SET read_at = ? WHERE uid = ? AND read_at IS NULL`,
+			now, uid,
+		)
+	} else {
+		result, err = s.db.ExecContext(ctx,
+			`UPDATE mail SET read_at = ? WHERE uid = ? AND id = ? AND read_at IS NULL`,
+			now, uid, mailID,
+		)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: mark mails read: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: count marked mails: %w", err)
+	}
+	return affected, nil
+}
+
+// DeleteMails 删除玩家主动清理的邮件。mailID=0 时删除当前玩家的全部邮件；
+// uid 始终进入 WHERE，禁止跨玩家清理。
+func (s *Store) DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int64, error) {
+	var (
+		result sql.Result
+		err    error
+	)
+	if mailID == 0 {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM mail WHERE uid = ?`, uid)
+	} else {
+		result, err = s.db.ExecContext(ctx, `DELETE FROM mail WHERE uid = ? AND id = ?`, uid, mailID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: delete mails: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: count deleted mails: %w", err)
+	}
+	return affected, nil
 }
 
 // ClaimMail 原子标记附件、增加金币，避免重复领取资损。
@@ -68,7 +119,7 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	if _, err := tx.ExecContext(ctx, `UPDATE player SET coin = coin + ?, updated_at = ? WHERE uid = ?`, mail.AttachmentCoin, now, uid); err != nil {
 		return Mail{}, fmt.Errorf("store: credit mail attachment: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mail SET claimed_at = ? WHERE id = ?`, now, mail.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE mail SET claimed_at = ?, read_at = COALESCE(read_at, ?) WHERE id = ?`, now, now, mail.ID); err != nil {
 		return Mail{}, fmt.Errorf("store: mark mail claimed: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -78,6 +129,7 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	// 更新在线聚合；删除缓存同时保护离线调用者不会加载旧金币快照。
 	_ = s.DeleteFarmCache(ctx, uid)
 	mail.Claimed = true
+	mail.Read = true
 	return mail, nil
 }
 

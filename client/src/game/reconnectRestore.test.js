@@ -89,8 +89,8 @@ function makeHarness(sessionOverrides = {}) {
       fails.push(msg)
     },
     errText: (err) => (err === 1102 ? '登录已过期，请重新登录' : `err=${err}`),
-    onOfflineCleanup: () => {
-      cleanupCalls.push(true)
+    onOfflineCleanup: (reason) => {
+      cleanupCalls.push(reason)
     },
   }
 

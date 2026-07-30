@@ -139,21 +139,25 @@ func (g *Gateway) PublishTaskNotify(_ context.Context, uid uint64, task store.Ta
 	return nil
 }
 
-// pushMailNotify 向 uid 的本机在线连接推送 MailNotify（9004）；对方不在本机则静默跳过。
-func (g *Gateway) pushMailNotify(uid uint64, kind string) {
+// PublishMailNotify 向 uid 的本机在线连接投递 MailNotify（9004）。每条连接都有独立
+// 有界 mailbox，因此单个慢客户端不会阻塞同玩家的其他会话。
+func (g *Gateway) PublishMailNotify(_ context.Context, uid uint64, kind string) error {
 	if g == nil || uid == 0 {
-		return
+		return errors.New("gateway: invalid MailNotify target")
 	}
-	payload := marshalPayload(struct {
-		Kind string `json:"kind"`
-	}{Kind: kind})
 	g.connections.Range(func(_, value any) bool {
 		connection, ok := value.(*wsConnection)
 		if ok && connection.uid == uid && connection.authed {
-			connection.pushMailNotify(payload)
+			connection.enqueueMailNotify(kind)
 		}
 		return true
 	})
+	return nil
+}
+
+// pushMailNotify 保留好友写路径的 best-effort 语义。
+func (g *Gateway) pushMailNotify(uid uint64, kind string) {
+	_ = g.PublishMailNotify(context.Background(), uid, kind)
 }
 
 // Broadcast 向 delta.OwnerUID 房间中当前的全部订阅者推送增量。

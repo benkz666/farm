@@ -23,7 +23,7 @@ import (
 	"farm/server/internal/farm"
 )
 
-// SessionStore 管理 token -> uid 的会话映射（Redis `session:{token}`）。
+// SessionStore 管理 token -> uid 以及 uid -> 当前 token 的单会话索引。
 type SessionStore interface {
 	Put(ctx context.Context, token string, uid uint64, ttl time.Duration) error
 	Get(ctx context.Context, token string) (uint64, error)
@@ -71,6 +71,10 @@ type TaskMailStore interface {
 	AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskID, amount uint32) (TaskAdvanceResult, error)
 	ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (TaskReward, error)
 	ListMails(ctx context.Context, uid uint64) ([]Mail, error)
+	// MarkMailsRead 将一封邮件标记为已读；mailID=0 表示当前玩家的全部邮件。
+	MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (int64, error)
+	// DeleteMails 删除一封邮件；mailID=0 表示当前玩家的全部邮件。
+	DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int64, error)
 	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error)
 	ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (TaskReward, error)
 }
@@ -105,6 +109,7 @@ type Mail struct {
 	Title          string `json:"title"`
 	AttachmentCoin int64  `json:"attachment_coin"`
 	Claimed        bool   `json:"claimed"`
+	Read           bool   `json:"read"`
 	CreatedAt      int64  `json:"created_at"`
 }
 
@@ -120,6 +125,7 @@ var (
 	ErrUsernameTaken            = errors.New("store: username already taken")
 	ErrAccountNotFound          = errors.New("store: account not found")
 	ErrSessionNotFound          = errors.New("store: session not found")
+	ErrSessionReplaced          = errors.New("store: session replaced by a newer login")
 	ErrFarmNotFound             = errors.New("store: farm not found")
 	ErrPlayerNotFound           = errors.New("store: player not found")
 	ErrAlreadyFriend            = errors.New("store: already friends")

@@ -14,7 +14,10 @@ const mode = ref('login')
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
-const message = ref('')
+const initialError = Number(
+  Array.isArray(route.query.error) ? route.query.error[0] : route.query.error,
+)
+const message = ref(Number.isFinite(initialError) ? errText(initialError) : '')
 const handedOff = ref(false)
 
 const inviteToken = computed(() => {

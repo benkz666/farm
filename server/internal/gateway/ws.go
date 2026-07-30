@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"farm/server/internal/connreg"
 	"farm/server/internal/farm"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
@@ -30,6 +31,9 @@ var wsUpgrader = websocket.Upgrader{
 const (
 	maxWSMessageSize = 64 << 10
 	wsReadTimeout    = 90 * time.Second
+	// wsHeartbeatInterval 必须明显小于读超时。使用 WebSocket 控制帧而非
+	// 前端定时器，可避免后台标签页节流导致空闲连接被错误断开。
+	wsHeartbeatInterval = 30 * time.Second
 	// wsWriteTimeout 防止慢客户端的 TCP 接收窗口被写阻塞：WriteMessage 持有 writeMu，
 	// 一旦卡住会连带阻塞房间广播循环与上游 Actor 的串行区。
 	wsWriteTimeout = 10 * time.Second
@@ -41,14 +45,16 @@ const (
 // still expire by score at 1*leaseTTL. Unrenewed keys self-delete afterward.
 
 type wsConnection struct {
-	conn    *websocket.Conn
-	id      uint64
-	uid     uint64
-	authed  bool
-	limiter *connectionLimiter
-	writeMu sync.Mutex
-	roomMu  sync.Mutex
-	roomUID uint64
+	conn     *websocket.Conn
+	id       uint64
+	uid      uint64
+	token    string
+	authed   bool
+	limiter  *connectionLimiter
+	writeMu  sync.Mutex
+	kickOnce sync.Once
+	roomMu   sync.Mutex
+	roomUID  uint64
 	// holdFarmDeltas keeps a newly-entered client from observing a delta before
 	// its EnterFarm snapshot has reached the wire.
 	holdFarmDeltas    bool
@@ -61,6 +67,19 @@ type wsConnection struct {
 	taskNotifyWake    chan struct{}
 	taskNotifyStop    chan struct{}
 	taskNotifyDone    chan struct{}
+	mailNotifyMu      sync.Mutex
+	mailNotifyReady   bool
+	mailNotifyClosed  bool
+	mailNotifyStarted bool
+	mailNotifyPending string
+	mailNotifyWake    chan struct{}
+	mailNotifyStop    chan struct{}
+	mailNotifyDone    chan struct{}
+	heartbeatMu       sync.Mutex
+	heartbeatClosed   bool
+	heartbeatStarted  bool
+	heartbeatStop     chan struct{}
+	heartbeatDone     chan struct{}
 }
 
 type handshakeRequest struct {
@@ -121,9 +140,12 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		id:      allocateConnID(&g.nextConnID),
 		limiter: newConnectionLimiter(),
 	}
+	connection.installPongHandler(g, wsReadTimeout)
 	defer func() {
 		g.leaveFarm(&connection)
+		connection.closeHeartbeat()
 		connection.closeTaskNotify()
+		connection.closeMailNotify()
 		if connection.authed {
 			g.unregisterConnection(context.Background(), &connection)
 		}
@@ -160,13 +182,34 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if connection.authed {
+			sessionUID, sessionErr := g.sessions.Get(context.Background(), connection.token)
+			if sessionErr != nil || sessionUID != connection.uid {
+				code := sessionErrorCode(sessionErr)
+				if sessionErr == nil {
+					code = pkgerr.Kicked
+				}
+				_ = connection.respond(Envelope{
+					Cmd:       request.Cmd,
+					ClientSeq: request.ClientSeq,
+					Err:       code,
+					Payload:   emptyPayload,
+				})
+				return
+			}
+			if !g.renewConnectionLease(context.Background(), &connection) {
+				_ = connection.respond(Envelope{
+					Cmd:       request.Cmd,
+					ClientSeq: request.ClientSeq,
+					Err:       pkgerr.Kicked,
+					Payload:   emptyPayload,
+				})
+				return
+			}
+		}
+
 		handledAt := time.Now()
 		response := g.handleWSRequest(&connection, request)
-		// Renew after handling so a transient Redis blip cannot rewrite a
-		// successful command into Internal. No per-connection renewer goroutine.
-		if connection.authed {
-			g.renewConnectionLease(context.Background(), &connection)
-		}
 		if g.metrics != nil {
 			code := uint32(response.Err)
 			if response.Cmd == 0 {
@@ -189,7 +232,9 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if request.Cmd == CommandHandshake && response.Err == pkgerr.OK {
+			connection.enableHeartbeat()
 			connection.enableTaskNotify(g)
+			connection.enableMailNotify(g)
 		}
 	}
 }
@@ -236,11 +281,17 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			return response
 		}
 		connection.uid = uid
+		connection.token = payload.Token
 		connection.authed = true
 		if err := g.registerConnection(context.Background(), connection); err != nil {
 			connection.authed = false
 			connection.uid = 0
-			response.Err = pkgerr.Internal
+			connection.token = ""
+			if errors.Is(err, connreg.ErrAlreadyConnected) {
+				response.Err = pkgerr.Kicked
+			} else {
+				response.Err = pkgerr.Internal
+			}
 			return response
 		}
 		response.Payload = marshalPayload(handshakeResponse{UID: uid})
@@ -279,7 +330,8 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		CommandRequestFriend, CommandListFriendRequests,
 		CommandAcceptFriendRequest, CommandRejectFriendRequest:
 		return g.handleFriendRequest(connection, request)
-	case CommandTaskList, CommandTaskClaim, CommandMailList, CommandMailClaim, CommandClaimDailyLogin:
+	case CommandTaskList, CommandTaskClaim, CommandMailList, CommandMailRead,
+		CommandMailClaim, CommandMailDelete, CommandClaimDailyLogin:
 		return g.handleTaskMailRequest(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest
@@ -291,6 +343,24 @@ func (connection *wsConnection) respond(envelope Envelope) error {
 	connection.writeMu.Lock()
 	defer connection.writeMu.Unlock()
 	return connection.respondLocked(envelope)
+}
+
+func (connection *wsConnection) kick(reason pkgerr.Code) {
+	if connection == nil || connection.conn == nil {
+		return
+	}
+	connection.kickOnce.Do(func() {
+		payload := marshalPayload(struct {
+			Reason pkgerr.Code `json:"reason"`
+		}{Reason: reason})
+		_ = connection.respond(Envelope{
+			Cmd:       CommandSessionKick,
+			ClientSeq: 0,
+			Err:       pkgerr.OK,
+			Payload:   payload,
+		})
+		_ = connection.conn.Close()
+	})
 }
 
 // respondEnterFarm writes the snapshot response before releasing deltas that
@@ -377,17 +447,125 @@ func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) {
 	})
 }
 
-func (connection *wsConnection) pushMailNotify(payload json.RawMessage) {
+func (connection *wsConnection) pushMailNotify(kind string) error {
 	if connection == nil {
-		return
+		return errors.New("gateway: nil MailNotify connection")
 	}
 	connection.writeMu.Lock()
 	defer connection.writeMu.Unlock()
-	_ = connection.respondLocked(Envelope{
+	return connection.respondLocked(Envelope{
 		Cmd:       CommandMailNotify,
 		ClientSeq: 0,
-		Payload:   payload,
+		Payload: marshalPayload(struct {
+			Kind string `json:"kind"`
+		}{Kind: kind}),
 	})
+}
+
+// enqueueMailNotify 只保留最新通知种类。MailNotify 不承载邮件内容，客户端收到
+// 任意一条后都会重拉列表，因此有界单槽既隔离慢连接，也不会丢失状态真相。
+func (connection *wsConnection) enqueueMailNotify(kind string) bool {
+	if connection == nil || kind == "" {
+		return false
+	}
+	connection.mailNotifyMu.Lock()
+	defer connection.mailNotifyMu.Unlock()
+	if connection.mailNotifyClosed {
+		return false
+	}
+	connection.mailNotifyPending = kind
+	if connection.mailNotifyReady {
+		connection.signalMailNotifyLocked()
+	}
+	return true
+}
+
+// enableMailNotify 在 Handshake 响应写入后启动 dispatcher，保证认证响应先于并发通知。
+func (connection *wsConnection) enableMailNotify(gateway *Gateway) {
+	if connection == nil {
+		return
+	}
+	connection.mailNotifyMu.Lock()
+	if connection.mailNotifyClosed || connection.mailNotifyStarted {
+		connection.mailNotifyMu.Unlock()
+		return
+	}
+	connection.mailNotifyReady = true
+	connection.mailNotifyStarted = true
+	connection.mailNotifyWake = make(chan struct{}, 1)
+	connection.mailNotifyStop = make(chan struct{})
+	connection.mailNotifyDone = make(chan struct{})
+	if connection.mailNotifyPending != "" {
+		connection.signalMailNotifyLocked()
+	}
+	connection.mailNotifyMu.Unlock()
+	go connection.runMailNotifyMailbox(gateway)
+}
+
+func (connection *wsConnection) closeMailNotify() {
+	if connection == nil {
+		return
+	}
+	connection.mailNotifyMu.Lock()
+	if connection.mailNotifyClosed {
+		connection.mailNotifyMu.Unlock()
+		return
+	}
+	connection.mailNotifyClosed = true
+	if connection.mailNotifyStarted {
+		close(connection.mailNotifyStop)
+	}
+	connection.mailNotifyPending = ""
+	connection.mailNotifyMu.Unlock()
+}
+
+func (connection *wsConnection) runMailNotifyMailbox(gateway *Gateway) {
+	defer close(connection.mailNotifyDone)
+	for {
+		connection.mailNotifyMu.Lock()
+		if connection.mailNotifyClosed {
+			connection.mailNotifyMu.Unlock()
+			return
+		}
+		kind := connection.mailNotifyPending
+		if kind == "" {
+			wake := connection.mailNotifyWake
+			stop := connection.mailNotifyStop
+			connection.mailNotifyMu.Unlock()
+			select {
+			case <-wake:
+			case <-stop:
+				return
+			}
+			continue
+		}
+		connection.mailNotifyPending = ""
+		connection.mailNotifyMu.Unlock()
+
+		deliver := gateway.mailNotifyDelivery
+		if deliver == nil {
+			deliver = func(connection *wsConnection, kind string) error {
+				return connection.pushMailNotify(kind)
+			}
+		}
+		if err := deliver(connection, kind); err != nil {
+			obs.L().Debug("gateway MailNotify delivery failed",
+				"component", "gateway",
+				"op", "deliver_mail_notify",
+				"uid", connection.uid,
+				"conn_id", connection.id,
+				"kind", kind,
+				"err", err.Error(),
+			)
+		}
+	}
+}
+
+func (connection *wsConnection) signalMailNotifyLocked() {
+	select {
+	case connection.mailNotifyWake <- struct{}{}:
+	default:
+	}
 }
 
 func (connection *wsConnection) pushTaskNotify(task store.Task) error {
@@ -567,6 +745,9 @@ func marshalPayload(payload any) json.RawMessage {
 }
 
 func sessionErrorCode(err error) pkgerr.Code {
+	if errors.Is(err, store.ErrSessionReplaced) {
+		return pkgerr.Kicked
+	}
 	if errors.Is(err, store.ErrSessionNotFound) {
 		return pkgerr.Unauthorized
 	}
