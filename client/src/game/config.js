@@ -86,8 +86,12 @@ export const FERTILIZERS = [
 // ---- 隐藏种子（6.5 / 18.6）----
 export const HIDDEN_DROP_CHANCE = 0.03;     // 每次锄地/清理 3%
 
-// ---- 图鉴里程碑（16 章）：[条数, 金币] ----
-export const CODEX_MILESTONES = [[8, 1000], [15, 3000], [22, 8000], [29, 20000]];
+// ---- 单作物图鉴牌（成功收获次数，不按产量）----
+export const CODEX_PLAQUE_STAGES = Object.freeze([
+  { tier: 'bronze', name: '铜牌', target: 10, reward: 500 },
+  { tier: 'silver', name: '银牌', target: 20, reward: 1000 },
+  { tier: 'gold', name: '金牌', target: 50, reward: 2000 },
+]);
 
 // ---- 日常任务池（14.1 节）----
 export const TASK_POOL = [

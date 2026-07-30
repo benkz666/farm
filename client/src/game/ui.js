@@ -1,13 +1,14 @@
 // ============================================================
 // DOM UI：顶栏、工具栏、模态面板、tooltip、toast
 // ============================================================
-import { CROP_MAP, CROPS, FERTILIZERS, DOGS, CODEX_MILESTONES, EXPANSION, TIME_SCALES, DOG_BOWL_CAP, MAX_PLOTS } from './config.js';
+import { CROP_MAP, CROPS, FERTILIZERS, DOGS, CODEX_PLAQUE_STAGES, EXPANSION, TIME_SCALES, DOG_BOWL_CAP, MAX_PLOTS } from './config.js';
 import { levelOf, expProgress } from './state.js';
 import { EXP_PER_LEVEL } from './config.js';
 import { mailDotVisible, taskDotVisible } from './sideDots.js';
 import { taskCardViewModel } from './taskCardView.js';
 import { cropIconHTML } from './cropIcons.js';
 import { petBadgeHTML } from './petIcons.js';
+import { codexPlaqueViewModel } from './codexPlaque.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -89,9 +90,7 @@ export class UI {
     $('#exp-text').textContent = `${exp % EXP_PER_LEVEL}/${EXP_PER_LEVEL}`;
     const dogChip = $('#dog-status');
     if (state.dog) {
-      const dogDef = DOGS.find((dog) => dog.id === state.dog.id);
       dogChip.classList.remove('hidden');
-      $('#dog-status-icon').innerHTML = petBadgeHTML(dogDef || state.dog, 'chip');
       $('#dog-food-num').textContent = `${Math.floor(state.dogBowl)}g`;
       dogChip.style.opacity = state.dogBowl > 0 ? 1 : 0.5;
       dogChip.style.cursor = 'pointer';
@@ -176,6 +175,7 @@ export class UI {
     body.innerHTML = '';
     body.className = '';
     $('#modal')?.classList.toggle('modal--neighbors', /邻里/.test(title));
+    $('#modal')?.classList.toggle('modal--codex', panel === 'codex');
     this.showTooltip(null);
     $('#modal-mask').classList.remove('hidden');
     return body;
@@ -381,29 +381,53 @@ export class UI {
   // ---------------- 图鉴 ----------------
   renderCodex(state) {
     const body = this.openModal('📖 作物图鉴', 'codex');
-    const unlocked = new Set(state.codex);
-    body.insertAdjacentHTML('beforeend', `<div style="font-size:12.5px;color:var(--ink-soft);margin-bottom:12px">首次收获即解锁 · 已收集 <b style="color:var(--green-dark)">${unlocked.size}</b> / ${CROPS.length}</div>`);
+    body.className = 'codex-body';
+    const progress = state.codexProgress || {};
+    const unlockedCount = CROPS.filter((crop) => Number(progress[crop.id]?.harvestCount) > 0).length;
+    const goldCount = CROPS.filter((crop) => progress[crop.id]?.tier === 'gold').length;
+    const summary = document.createElement('section');
+    summary.className = 'codex-summary';
+    summary.innerHTML = `<div class="codex-summary__copy">
+        <span class="codex-kicker">亲手收获，逐级铸牌</span>
+        <strong>${unlockedCount}<small> / ${CROPS.length} 种已点亮</small></strong>
+        <p>每块地每次成功收获计 1 次，果实产量不影响进度。</p>
+      </div>
+      <div class="codex-summary__seal" aria-label="${goldCount}种作物达到金牌">
+        <span>金牌</span><b>${goldCount}</b>
+      </div>`;
+    body.appendChild(summary);
+
+    const legend = document.createElement('div');
+    legend.className = 'codex-legend';
+    legend.innerHTML = CODEX_PLAQUE_STAGES.map((stage) =>
+      `<span class="codex-legend__item tier-${stage.tier}">
+        <i></i>${stage.name} ${stage.target}次 · 💰${stage.reward.toLocaleString()}
+      </span>`).join('');
+    body.appendChild(legend);
+
     const grid = document.createElement('div');
     grid.className = 'codex-grid';
     for (const c of CROPS) {
-      const has = unlocked.has(c.id);
-      const cell = document.createElement('div');
-      cell.className = 'codex-cell' + (has ? '' : ' locked');
-      cell.innerHTML = `${badgeHTML(c)}<div class="cname">${has ? c.name : '？？？'}</div>
-        <div class="clock">${has ? (c.seasons > 1 ? `${c.seasons}季 · 💰${c.fruitPrice}` : `单季 · 💰${c.fruitPrice}`) : (c.hidden ? '锄地掉落' : `Lv.${c.unlock} 解锁`)}</div>`;
+      const vm = codexPlaqueViewModel(progress[c.id]);
+      const cell = document.createElement('article');
+      cell.className = `codex-cell tier-${vm.tier}${vm.unlocked ? '' : ' locked'}`;
+      const cropName = vm.unlocked ? c.name : '神秘作物';
+      const cropClue = c.hidden ? '田野偶遇' : `Lv.${c.unlock} 种子`;
+      cell.innerHTML = `<div class="codex-plaque">
+          <span class="codex-rivet rivet-a"></span><span class="codex-rivet rivet-b"></span>
+          <div class="codex-plaque__tier">${vm.tierLabel}</div>
+          ${badgeHTML(c)}
+          <div class="cname">${cropName}</div>
+          <div class="codex-plaque__meta">${vm.unlocked ? `${c.seasons}季 · 💰${c.fruitPrice}` : cropClue}</div>
+        </div>
+        <div class="codex-progress">
+          <div class="codex-progress__line"><span>${vm.progressText}</span>${vm.nextReward ? `<b>💰${vm.nextReward.toLocaleString('zh-CN')}</b>` : ''}</div>
+          <div class="codex-progress__track"><i style="--codex-progress:${vm.progressPct}%"></i></div>
+          <div class="codex-progress__hint">${vm.remainingText}</div>
+        </div>`;
       grid.appendChild(cell);
     }
     body.appendChild(grid);
-    const ms = document.createElement('div');
-    ms.className = 'milestone';
-    ms.innerHTML = `<div class="mrow"><span>🏆 收集里程碑</span><span>奖励通过邮件发放</span></div>` +
-      CODEX_MILESTONES.map(([n, g]) => {
-        const got = state.codexMilestones.includes(n);
-        const can = unlocked.size >= n;
-        return `<div class="mrow" style="font-weight:${can ? 800 : 400};color:${got ? 'var(--green-dark)' : can ? '#e0a92e' : 'var(--ink-soft)'}">
-          <span>${got ? '✓' : can ? '🎁' : '○'} 收集 ${n} 种</span><span>💰 ${g.toLocaleString()}</span></div>`;
-      }).join('');
-    body.appendChild(ms);
   }
 
   // ---------------- 邮件（含邻里申请待办） ----------------

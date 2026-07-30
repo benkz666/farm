@@ -45,6 +45,7 @@ const (
 	CommandMailRead            uint32 = 606
 	CommandMailClaim           uint32 = 608
 	CommandMailDelete          uint32 = 610
+	CommandCodexList           uint32 = 612
 	CommandClaimDailyLogin     uint32 = 614
 
 	CommandFarmDelta   = wireenv.CommandFarmDelta

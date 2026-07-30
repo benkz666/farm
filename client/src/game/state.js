@@ -46,7 +46,7 @@ export function defaultState() {
     dog: null,            // { id, level, catches }
     dogBowl: 0,
     codex: [],            // 已解锁作物 id
-    codexMilestones: [],  // 已发放的里程碑条数
+    codexProgress: {},    // crop id -> { harvestCount, tier, nextTarget }
     mails: [],
     mailSeq: 1,
     friends: [],          // 期 3：真实好友由 Task 11 接入；不再预置 NPC

@@ -50,6 +50,7 @@ type Aggregate struct {
 	Items         map[ItemKey]uint32      `json:"items"`
 	Daily         DailyState              `json:"daily"`
 	Pet           PetState                `json:"pet"`
+	CodexHarvests map[uint16]uint32       `json:"codex_harvests,omitempty"`
 	FarmSeq       uint64                  `json:"farm_seq"`
 
 	// CrossPending 是本玩家作为访客时尚未结算的跨农场预占，键为 req_id。
@@ -71,6 +72,7 @@ func NewAggregate(uid uint64, nickname string) *Aggregate {
 		Coin:          gameconf.InitialCoin,
 		UnlockedPlots: gameconf.InitialUnlockedPlots,
 		Items:         make(map[ItemKey]uint32),
+		CodexHarvests: make(map[uint16]uint32),
 		FarmSeq:       0,
 	}
 	for i := range agg.Plots {

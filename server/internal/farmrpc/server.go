@@ -39,6 +39,7 @@ const (
 	OperationTaskClaim    Operation = "task_claim"
 	OperationDailyLogin   Operation = "daily_login_claim"
 	OperationMailClaim    Operation = "mail_claim"
+	OperationCodexList    Operation = "codex_list"
 )
 
 // CommandRequest is the HTTP JSON payload sent from a Gateway to the Farm
@@ -67,8 +68,14 @@ type EnterFarmResponse struct {
 
 // ActionResponse is the Farm-owned result for a plot mutation.
 type ActionResponse struct {
-	FarmSeq uint64         `json:"farm_seq"`
-	Patch   farm.PatchJSON `json:"patch"`
+	FarmSeq      uint64                   `json:"farm_seq"`
+	Patch        farm.PatchJSON           `json:"patch"`
+	CodexRewards []farm.CodexRewardNotice `json:"codex_rewards,omitempty"`
+}
+
+type CodexListResponse struct {
+	Entries []farm.CodexProgress `json:"entries"`
+	Total   int                  `json:"total"`
 }
 
 // PlotActionRequest carries one owner-authoritative plot mutation.
@@ -151,6 +158,8 @@ type Handler struct {
 	taskClaimer          TaskClaimer
 	dailyLoginClaimer    DailyLoginClaimer
 	mailClaimer          MailClaimer
+	codexRewards         store.CodexRewardStore
+	mailNotifyPublisher  MailNotifyPublisher
 }
 
 // StealHintWriter updates the weak-consistent FriendList stealable hint.
@@ -239,6 +248,20 @@ func WithMailClaimer(claimer MailClaimer) Option {
 	}
 }
 
+// WithCodexRewardStore enables idempotent per-crop plaque reward mails.
+func WithCodexRewardStore(rewards store.CodexRewardStore) Option {
+	return func(handler *Handler) {
+		handler.codexRewards = rewards
+	}
+}
+
+// WithMailNotifyPublisher notifies the owning Gateway after a reward mail is created.
+func WithMailNotifyPublisher(publisher MailNotifyPublisher) Option {
+	return func(handler *Handler) {
+		handler.mailNotifyPublisher = publisher
+	}
+}
+
 // NewHandler creates the /internal/v1/cmd handler. owns must only return true
 // for uids assigned to this Farm instance by the loaded route table.
 func NewHandler(runtime Runtime, token []byte, owns func(uint64) bool, now func() int64, options ...Option) *Handler {
@@ -324,6 +347,8 @@ func (h *Handler) execute(request CommandRequest) CommandResponse {
 		return h.dailyLoginClaim(request)
 	case OperationMailClaim:
 		return h.mailClaim(request)
+	case OperationCodexList:
+		return h.codexList(request)
 	default:
 		return CommandResponse{Err: pkgerr.BadRequest}
 	}
@@ -468,6 +493,23 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
 	if result.Err == pkgerr.OK {
+		if response.Patch.Codex != nil && h.codexRewards != nil {
+			rewards, rewardErr := h.codexRewards.IssueCodexRewards(context.Background(), command.FarmUID, *response.Patch.Codex)
+			if rewardErr != nil {
+				obs.L().Error("farmrpc issue codex rewards failed",
+					"component", "farmrpc",
+					"op", "issue_codex_rewards",
+					"uid", command.FarmUID,
+					"crop_id", response.Patch.Codex.CropID,
+					"err", rewardErr.Error(),
+				)
+			} else {
+				response.CodexRewards = rewards
+				if len(rewards) > 0 {
+					h.publishMailNotify(command.FarmUID, "codex_reward")
+				}
+			}
+		}
 		// 任务计数是旁路副作用：动作已在 Actor 里提交、Delta 已广播给房间，此时把
 		// 响应改成 ERR_INTERNAL 会让发起者回滚一次真实发生的变更，比丢一次任务
 		// 进度更糟。失败只记日志，不污染动作结果。
@@ -480,6 +522,29 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		}
 	}
 	return CommandResponse{Err: result.Err, Payload: marshalPayload(response)}
+}
+
+func (h *Handler) codexList(command CommandRequest) CommandResponse {
+	if len(command.Payload) != 0 && string(command.Payload) != "{}" {
+		var payload struct{}
+		if err := decodeJSON(bytes.NewReader(command.Payload), &payload); err != nil {
+			return CommandResponse{Err: pkgerr.BadRequest}
+		}
+	}
+	var response CodexListResponse
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
+		if farmActor == nil || farmActor.Aggregate == nil {
+			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		response = CodexListResponse{
+			Entries: farmActor.Aggregate.CodexSnapshot(),
+			Total:   gameconf.CropCount,
+		}
+		return nil
+	}); err != nil {
+		return CommandResponse{Err: pkgerr.Internal}
+	}
+	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
 func (h *Handler) shop(command CommandRequest) CommandResponse {
@@ -828,6 +893,24 @@ func (h *Handler) publishTaskNotify(uid uint64, task store.Task) {
 				"op", "publish_task_notify",
 				"uid", uid,
 				"task_id", task.ID,
+				"err", err.Error(),
+			)
+		}
+	}()
+}
+
+func (h *Handler) publishMailNotify(uid uint64, kind string) {
+	if h.mailNotifyPublisher == nil || uid == 0 {
+		return
+	}
+	publisher := h.mailNotifyPublisher
+	go func() {
+		if err := publisher.PublishMailNotify(context.Background(), uid, kind); err != nil {
+			obs.L().Error("farmrpc MailNotify publish failed",
+				"component", "farmrpc",
+				"op", "publish_mail_notify",
+				"uid", uid,
+				"kind", kind,
 				"err", err.Error(),
 			)
 		}

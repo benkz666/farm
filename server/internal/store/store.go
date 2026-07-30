@@ -73,7 +73,7 @@ type TaskMailStore interface {
 	ListMails(ctx context.Context, uid uint64) ([]Mail, error)
 	// MarkMailsRead 将一封邮件标记为已读；mailID=0 表示当前玩家的全部邮件。
 	MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (int64, error)
-	// DeleteMails 删除一封邮件；mailID=0 表示当前玩家的全部邮件。
+	// DeleteMails 删除一封可清理邮件；mailID=0 表示批量清理。未领取附件始终保留。
 	DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int64, error)
 	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error)
 	ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (TaskReward, error)

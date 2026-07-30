@@ -39,6 +39,9 @@ type mailMutationResponse struct {
 }
 
 func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelope) Envelope {
+	if request.Cmd == CommandCodexList {
+		return g.handleCodexList(connection, request)
+	}
 	response := Envelope{
 		Cmd:       request.Cmd,
 		ClientSeq: request.ClientSeq,
@@ -252,6 +255,54 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 	default:
 		response.Err = pkgerr.BadRequest
 	}
+	return response
+}
+
+func (g *Gateway) handleCodexList(connection *wsConnection, request Envelope) Envelope {
+	response := Envelope{
+		Cmd:       request.Cmd,
+		ClientSeq: request.ClientSeq,
+		Payload:   emptyPayload,
+	}
+	if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		response.Err = pkgerr.BadRequest
+		return response
+	}
+	if g.farmRPC != nil {
+		remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
+			Operation:  farmrpc.OperationCodexList,
+			Originator: g.connectionRef(connection),
+			Payload:    emptyPayload,
+		})
+		if err != nil {
+			response.Err = pkgerr.Internal
+			return response
+		}
+		response.Err = remote.Err
+		if remote.Err == pkgerr.OK {
+			response.Payload = remote.Payload
+		}
+		return response
+	}
+	if g.runtime == nil {
+		response.Err = pkgerr.Internal
+		return response
+	}
+	var entries []farm.CodexProgress
+	if err := g.runtime.Do(connection.uid, func(farmActor *actor.FarmActor) error {
+		if farmActor == nil || farmActor.Aggregate == nil {
+			return errors.New("gateway: actor aggregate is nil")
+		}
+		entries = farmActor.Aggregate.CodexSnapshot()
+		return nil
+	}); err != nil {
+		response.Err = pkgerr.Internal
+		return response
+	}
+	response.Payload = marshalPayload(farmrpc.CodexListResponse{
+		Entries: entries,
+		Total:   gameconf.CropCount,
+	})
 	return response
 }
 

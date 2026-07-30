@@ -63,17 +63,27 @@ func (s *Store) MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (i
 	return affected, nil
 }
 
-// DeleteMails 删除玩家主动清理的邮件。mailID=0 时删除当前玩家的全部邮件；
-// uid 始终进入 WHERE，禁止跨玩家清理。
+// DeleteMails 删除玩家主动清理的邮件。未领取附件属于玩家资产，单封与批量
+// 清理都必须保留；uid 始终进入 WHERE，禁止跨玩家清理。
 func (s *Store) DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int64, error) {
 	var (
 		result sql.Result
 		err    error
 	)
 	if mailID == 0 {
-		result, err = s.db.ExecContext(ctx, `DELETE FROM mail WHERE uid = ?`, uid)
+		result, err = s.db.ExecContext(ctx, `
+			DELETE FROM mail
+			WHERE uid = ?
+			  AND (attachment_coin = 0 OR claimed_at IS NOT NULL)`,
+			uid,
+		)
 	} else {
-		result, err = s.db.ExecContext(ctx, `DELETE FROM mail WHERE uid = ? AND id = ?`, uid, mailID)
+		result, err = s.db.ExecContext(ctx, `
+			DELETE FROM mail
+			WHERE uid = ? AND id = ?
+			  AND (attachment_coin = 0 OR claimed_at IS NOT NULL)`,
+			uid, mailID,
+		)
 	}
 	if err != nil {
 		return 0, fmt.Errorf("store: delete mails: %w", err)

@@ -143,10 +143,10 @@ func (s *Store) GetAccountByUsername(ctx context.Context, username string) (uint
 func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	agg := &farm.Aggregate{UID: uid}
 
-	var dailyBlob, petBlob, crossBlob []byte
+	var codexBitmap, dailyBlob, petBlob, crossBlob []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT nickname, level, exp, coin, unlocked_plots, daily_blob, pet_blob, cross_blob, farm_seq FROM player WHERE uid = ?`, uid,
-	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &dailyBlob, &petBlob, &crossBlob, &agg.FarmSeq)
+		`SELECT nickname, level, exp, coin, unlocked_plots, codex_bitmap, daily_blob, pet_blob, cross_blob, farm_seq FROM player WHERE uid = ?`, uid,
+	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &codexBitmap, &dailyBlob, &petBlob, &crossBlob, &agg.FarmSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFarmNotFound
 	}
@@ -211,6 +211,11 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 		return nil, err
 	}
 	agg.Items = items
+	codex, err := loadCodexFromMySQL(ctx, s.db, uid, codexBitmap)
+	if err != nil {
+		return nil, err
+	}
+	agg.CodexHarvests = codex
 
 	return agg, nil
 }
@@ -276,8 +281,8 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 	// 不做 RowsAffected==0 → ErrFarmNotFound：MySQL 默认 RowsAffected 只计「实际改动的行」，
 	// 无脏写时会误判；注册路径已保证 player 行存在，缺行由后续业务/读路径暴露。
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, daily_blob = ?, pet_blob = ?, cross_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
-		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, dailyBlob, petBlob, crossBlob, agg.FarmSeq, now, agg.UID,
+		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, codex_bitmap = ?, daily_blob = ?, pet_blob = ?, cross_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
+		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, encodeCodexBitmap(agg.CodexHarvests), dailyBlob, petBlob, crossBlob, agg.FarmSeq, now, agg.UID,
 	); err != nil {
 		return fmt.Errorf("store: update player: %w", err)
 	}
@@ -297,6 +302,9 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 	}
 
 	if err := replaceItemsTx(ctx, tx, agg); err != nil {
+		return err
+	}
+	if err := saveCodexTx(ctx, tx, agg, now); err != nil {
 		return err
 	}
 

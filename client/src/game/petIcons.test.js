@@ -10,6 +10,8 @@ test('每一种看家狗都有独立的 SVG 插画', () => {
     const icon = petIconHTML(dog)
     assert.match(icon, /<svg class="pet-art"/)
     assert.match(icon, new RegExp(`data-pet="${dog.id}"`))
+    assert.match(icon, /data-pose="profile-full-body"/)
+    assert.match(icon, /viewBox="0 0 100 64"/)
   }
 })
 

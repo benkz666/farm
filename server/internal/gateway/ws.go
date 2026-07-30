@@ -331,7 +331,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		CommandAcceptFriendRequest, CommandRejectFriendRequest:
 		return g.handleFriendRequest(connection, request)
 	case CommandTaskList, CommandTaskClaim, CommandMailList, CommandMailRead,
-		CommandMailClaim, CommandMailDelete, CommandClaimDailyLogin:
+		CommandMailClaim, CommandMailDelete, CommandCodexList, CommandClaimDailyLogin:
 		return g.handleTaskMailRequest(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest

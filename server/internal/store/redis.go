@@ -154,6 +154,9 @@ func ensureItems(agg *farm.Aggregate) {
 	if agg.Items == nil {
 		agg.Items = make(map[farm.ItemKey]uint32)
 	}
+	if agg.CodexHarvests == nil {
+		agg.CodexHarvests = make(map[uint16]uint32)
+	}
 }
 
 // SaveFarm 写 MySQL（持久权威）后同步重写 `farm:{uid}` 缓存（规格 5.3 节写路径）。

@@ -50,6 +50,7 @@ export const CMD_MAIL_LIST = 604
 export const CMD_MAIL_READ = 606
 export const CMD_MAIL_CLAIM = 608
 export const CMD_MAIL_DELETE = 610
+export const CMD_CODEX_LIST = 612
 export const CMD_CLAIM_DAILY_LOGIN = 614
 
 export const WS_SUBPROTOCOL = 'farm.v1.json'
@@ -388,6 +389,11 @@ export class NetClient {
   /** 删除当前收件箱全部邮件（cmd 610）。 */
   mailDeleteAll() {
     return this.request(CMD_MAIL_DELETE, { all: true })
+  }
+
+  /** 获取每种作物的权威图鉴牌进度（cmd 612）。 */
+  codexList() {
+    return this.request(CMD_CODEX_LIST, {})
   }
 
   /** 领取每日登录奖励（cmd 614）。 */

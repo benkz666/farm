@@ -14,6 +14,45 @@ import (
 	"farm/server/internal/store"
 )
 
+func TestCodexListReturnsAuthoritativePerCropPlaques(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.CodexHarvests[4] = 50
+	aggregate.CodexHarvests[1] = 10
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+	)
+	response := gateway.handleWSRequest(&wsConnection{uid: 42, authed: true}, Envelope{
+		Cmd:       CommandCodexList,
+		ClientSeq: 7,
+		Payload:   emptyPayload,
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("CodexList err = %d, want OK", response.Err)
+	}
+	var payload struct {
+		Entries []farm.CodexProgress `json:"entries"`
+		Total   int                  `json:"total"`
+	}
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode CodexList: %v", err)
+	}
+	if payload.Total != gameconf.CropCount || len(payload.Entries) != 2 {
+		t.Fatalf("CodexList payload = %#v", payload)
+	}
+	if payload.Entries[0].CropID != 1 || payload.Entries[0].Tier != "bronze" ||
+		payload.Entries[0].NextTarget != 20 {
+		t.Fatalf("first plaque = %#v", payload.Entries[0])
+	}
+	if payload.Entries[1].CropID != 4 || payload.Entries[1].Tier != "gold" ||
+		payload.Entries[1].NextTarget != 0 {
+		t.Fatalf("second plaque = %#v", payload.Entries[1])
+	}
+}
+
 func TestDailyLoginAndTaskRewardsAreDirectAndIdempotent(t *testing.T) {
 	t.Parallel()
 

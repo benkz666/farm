@@ -49,6 +49,27 @@ export function cropKeyToId(key) {
 }
 
 /**
+ * 合并一条服务端图鉴牌进度。
+ * @param {object} state
+ * @param {{crop_id?: number, harvest_count?: number, tier?: string, next_target?: number}} progress
+ */
+export function applyCodexProgress(state, progress) {
+  if (!state || !progress || typeof progress !== 'object') return false
+  const cropKey = cropIdToKey(progress.crop_id)
+  const harvestCount = Number(progress.harvest_count)
+  if (!cropKey || !Number.isFinite(harvestCount) || harvestCount <= 0) return false
+  if (!state.codexProgress || typeof state.codexProgress !== 'object') state.codexProgress = {}
+  state.codexProgress[cropKey] = {
+    harvestCount: Math.floor(harvestCount),
+    tier: ['wood', 'bronze', 'silver', 'gold'].includes(progress.tier) ? progress.tier : 'wood',
+    nextTarget: Math.max(0, Math.floor(Number(progress.next_target) || 0)),
+  }
+  if (!Array.isArray(state.codex)) state.codex = []
+  if (!state.codex.includes(cropKey)) state.codex.push(cropKey)
+  return true
+}
+
+/**
  * @param {number} stateNum
  * @returns {string}
  */
@@ -228,6 +249,9 @@ function applyActionPatch(state, patch) {
   }
   if (patch.warehouse) {
     state.warehouse = warehouseFromServer(patch.warehouse)
+  }
+  if (patch.codex_progress) {
+    applyCodexProgress(state, patch.codex_progress)
   }
 
   if (patch.plot && typeof patch.plot === 'object') {

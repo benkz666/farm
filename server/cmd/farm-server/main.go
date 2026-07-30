@@ -172,6 +172,8 @@ func run() error {
 				farmrpc.WithTaskClaimer(storage),
 				farmrpc.WithDailyLoginClaimer(storage),
 				farmrpc.WithMailClaimer(storage),
+				farmrpc.WithCodexRewardStore(storage),
+				farmrpc.WithMailNotifyPublisher(transport),
 			),
 		)
 	case roleGateway:
@@ -223,6 +225,10 @@ func run() error {
 			storage.ConnectionRegistry(),
 			farmrpc.NewHTTPTaskNotifyPusher(config.gatewayURLs, config.internalToken),
 		)
+		mailNotifyPublisher := farmrpc.NewMailFanoutPublisher(
+			storage.ConnectionRegistry(),
+			farmrpc.NewHTTPMailNotifyPusher(config.gatewayURLs, config.internalToken),
+		)
 		clock := &debugclock.Clock{}
 		owner := cross.NewOwner(runtime, storage, eventBus, clock.Now, deltaPublisher, owns)
 		owner.SetStealHintWriter(storage)
@@ -243,6 +249,8 @@ func run() error {
 			farmrpc.WithTaskClaimer(storage),
 			farmrpc.WithDailyLoginClaimer(storage),
 			farmrpc.WithMailClaimer(storage),
+			farmrpc.WithCodexRewardStore(storage),
+			farmrpc.WithMailNotifyPublisher(mailNotifyPublisher),
 		)
 		mux := http.NewServeMux()
 		mux.Handle("/internal/v1/cmd", rpcHandler)
@@ -338,6 +346,7 @@ func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime
 		gateway.WithFriendStore(storage),
 		gateway.WithStealHintStore(storage),
 		gateway.WithTaskMailStore(storage),
+		gateway.WithCodexRewardStore(storage),
 		gateway.WithInviteSecret([]byte(config.inviteSecret)),
 		gateway.WithConnectionRegistry(storage.ConnectionRegistry(), config.instanceID),
 		gateway.WithInternalPushToken(config.internalToken),

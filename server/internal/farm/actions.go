@@ -68,6 +68,7 @@ type ActionPatch struct {
 	Coin      int64
 	Exp       uint32
 	Items     map[ItemKey]uint32
+	Codex     *CodexProgress
 }
 
 // ActionResult 是 validate/commit 的统一返回。
@@ -413,6 +414,7 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 	}
 	a.Exp += crop.HarvestExp
 	a.RecalcLevel()
+	codex := a.RecordCodexHarvest(cropID)
 
 	if work.SeasonIndex+1 < work.SeasonTotal {
 		enterNextSeason(work, crop, now)
@@ -425,7 +427,9 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 		}
 	}
 	a.FarmSeq++
-	return a.okPatch(idx)
+	result := a.okPatch(idx)
+	result.Patch.Codex = &codex
+	return result
 }
 
 func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64) {

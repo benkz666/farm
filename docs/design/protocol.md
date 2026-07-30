@@ -444,8 +444,8 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 | 604 | `MailList` | 收件箱，个人邮件与全服公告归并 |
 | 606 | `MailRead` | 标记已读；`mail_id` 指定单封，`all=true` 批量标记当前收件箱 |
 | 608 | `MailClaim` | 领取附件（策划 15.2） |
-| 610 | `MailDelete` | 删除；`mail_id` 指定单封，`all=true` 清空当前收件箱 |
-| 612 | `CodexList` | 图鉴（策划 16 章） |
+| 610 | `MailDelete` | 删除；`mail_id` 指定单封，`all=true` 清理可删除邮件；未领取附件始终保留 |
+| 612 | `CodexList` | 每种已解锁作物的权威收获次数、牌子阶段和下一目标（策划 16 章） |
 | 614 | `ClaimDailyLogin` | 每日登录 task_id=4 的兼容领取入口；同一服务器本地自然日重复返回 `ERR_DUPLICATE_OK` |
 
 ### 5.8 服务端推送（9000—9099）
@@ -461,6 +461,8 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 `PlayerDelta` 的存在是必要的：访客在好友农场浇水获得的经验、被偷菜后的仓库变化、看家狗拦截获得的赔付，这些都不属于任何一个「房间」，无法通过 `FarmDelta` 送达。
 
 `TaskNotify` 的 `payload` 是单条 `Task`，字段为 `id`、`title`、`progress`、`target`、`reward_coin` 与 `claimed`。它独立于当前所在房间，按 uid 推送到该玩家当前有效连接；重复动作未改变已完成任务时不推送。每日登录（task_id=4）由初始 `TaskList` 呈现完成状态，不额外发送该推送。
+
+`CodexList` 的响应 `payload.entries` 按 `crop_id` 升序返回已解锁条目；每项包含 `crop_id`、`harvest_count`、`tier`（`wood` / `bronze` / `silver` / `gold`）和 `next_target`，并以 `payload.total` 返回配置中的作物总数。成功收获响应的 `patch.codex_progress` 携带本次作物的最新条目；若本次新生成奖励邮件，还会返回 `codex_rewards`，并通过 9004 通知客户端刷新邮箱。
 
 ---
 

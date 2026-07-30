@@ -116,6 +116,7 @@ type PatchJSON struct {
 	Bag       map[string]uint32 `json:"bag"`
 	Warehouse map[string]uint32 `json:"warehouse"`
 	FarmSeq   uint64            `json:"farm_seq"`
+	Codex     *CodexProgress    `json:"codex_progress,omitempty"`
 }
 
 // PatchFromAction 把 ActionPatch 转成可 JSON 序列化的补丁。
@@ -128,6 +129,7 @@ func (a *Aggregate) PatchFromAction(result ActionResult) PatchJSON {
 		Bag:       bag,
 		Warehouse: warehouse,
 		FarmSeq:   a.FarmSeq,
+		Codex:     result.Patch.Codex,
 	}
 	// 商店动作用 plot_index=0 且未改地块时仍带当前 0 号地快照，便于客户端统一 apply。
 	p := PlotSnapshotOf(result.Patch.PlotIndex, a.Plots[result.Patch.PlotIndex])

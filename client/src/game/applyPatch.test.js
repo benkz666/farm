@@ -60,3 +60,25 @@ test('SELF 农场快照仍权威覆盖金币', () => {
   })
   assert.equal(state.gold, 4242)
 })
+
+test('收获补丁写入单作物图鉴次数和牌子阶段', () => {
+  const state = defaultState()
+
+  applyPatch(state, {
+    patch: {
+      codex_progress: {
+        crop_id: 1,
+        harvest_count: 20,
+        tier: 'silver',
+        next_target: 50,
+      },
+    },
+  })
+
+  assert.deepEqual(state.codex, ['bailuobo'])
+  assert.deepEqual(state.codexProgress.bailuobo, {
+    harvestCount: 20,
+    tier: 'silver',
+    nextTarget: 50,
+  })
+})

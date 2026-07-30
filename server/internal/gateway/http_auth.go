@@ -65,6 +65,7 @@ type Gateway struct {
 	crossSubscribeErr         error
 	stealHints                store.StealHintStore
 	taskMail                  store.TaskMailStore
+	codexRewards              store.CodexRewardStore
 	taskNotifyFanout          farmrpc.TaskNotifyPublisher
 	sessionKickPusher         farmrpc.SessionKickPusher
 	taskNotifyDelivery        func(*wsConnection, store.Task) error
@@ -97,6 +98,13 @@ func WithStealHintStore(hints store.StealHintStore) Option {
 func WithTaskMailStore(taskMail store.TaskMailStore) Option {
 	return func(gateway *Gateway) {
 		gateway.taskMail = taskMail
+	}
+}
+
+// WithCodexRewardStore enables idempotent per-crop plaque reward mails.
+func WithCodexRewardStore(rewards store.CodexRewardStore) Option {
+	return func(gateway *Gateway) {
+		gateway.codexRewards = rewards
 	}
 }
 

@@ -436,20 +436,177 @@ export function createResidueModel() {
   return g;
 }
 
-// 看门狗模型
-export function createDogModel(color) {
+const DOG_MODEL_STYLE = Object.freeze({
+  tugou: {
+    scale: 1.45,
+    bodyScale: [1.52, 0.92, 0.82], bodyY: 0.45,
+    chestScale: [0.75, 1.05, 0.78], chestY: 0.43,
+    headRadius: 0.29, headScale: [1.02, 1.05, 0.92], headPivot: [0.32, 0.69],
+    snoutRadius: 0.15, snoutScale: [1.18, 0.72, 0.86], snoutX: 0.4,
+    earRadius: 0.115, earHeight: 0.27, earY: 0.31, earZ: 0.15,
+    legLength: 0.34, legRadius: 0.075, legPivotY: 0.31, frontX: 0.25, hindX: -0.28,
+    tailLength: 0.32, tailThickness: 0.1, collar: 0xc44434, lightBlend: 0.5,
+  },
+  muyang: {
+    scale: 1.52,
+    bodyScale: [1.72, 0.87, 0.74], bodyY: 0.51,
+    chestScale: [0.7, 1.18, 0.72], chestY: 0.49,
+    headRadius: 0.27, headScale: [1.08, 1.1, 0.82], headPivot: [0.38, 0.78],
+    snoutRadius: 0.145, snoutScale: [1.42, 0.64, 0.72], snoutX: 0.43,
+    earRadius: 0.105, earHeight: 0.34, earY: 0.35, earZ: 0.14,
+    legLength: 0.43, legRadius: 0.068, legPivotY: 0.39, frontX: 0.3, hindX: -0.34,
+    tailLength: 0.38, tailThickness: 0.085, collar: 0x315a7a, lightBlend: 0.82,
+  },
+  zangao: {
+    scale: 1.64,
+    bodyScale: [1.55, 1.12, 1.02], bodyY: 0.51,
+    chestScale: [0.92, 1.2, 0.96], chestY: 0.49,
+    headRadius: 0.33, headScale: [1.06, 1.06, 1.02], headPivot: [0.35, 0.76],
+    snoutRadius: 0.17, snoutScale: [1.22, 0.75, 0.92], snoutX: 0.45,
+    earRadius: 0.11, earHeight: 0.23, earY: 0.29, earZ: 0.18,
+    legLength: 0.4, legRadius: 0.1, legPivotY: 0.38, frontX: 0.28, hindX: -0.31,
+    tailLength: 0.4, tailThickness: 0.14, collar: 0x9d7627, lightBlend: 0.26,
+  },
+});
+
+// 看门狗模型；兼容旧的 color 数字参数，默认按土狗体型创建。
+export function createDogModel(dogDef) {
+  const definition = typeof dogDef === 'object' && dogDef !== null
+    ? dogDef
+    : { id: 'tugou', color: dogDef };
+  const breedId = DOG_MODEL_STYLE[definition.id] ? definition.id : 'tugou';
+  const style = DOG_MODEL_STYLE[breedId];
   const g = new THREE.Group();
-  const c = color;
-  const body = box(0.7, 0.4, 0.38, c); body.position.y = 0.42; g.add(body);
-  const head = box(0.36, 0.34, 0.34, c); head.position.set(0.48, 0.72, 0); g.add(head);
-  const snout = box(0.18, 0.14, 0.18, c); snout.position.set(0.72, 0.64, 0); g.add(snout);
-  const nose = sphere(0.05, 0x222222, 4, 3); nose.position.set(0.82, 0.66, 0); g.add(nose);
-  for (const s of [-1, 1]) {
-    const ear = cone(0.09, 0.22, c, 4); ear.position.set(0.42, 0.95, 0.12 * s); g.add(ear);
-    const legF = box(0.1, 0.3, 0.1, c); legF.position.set(0.26, 0.15, 0.13 * s); g.add(legF);
-    const legB = box(0.1, 0.3, 0.1, c); legB.position.set(-0.26, 0.15, 0.13 * s); g.add(legB);
+  // 田地和围栏比例较大，按场景尺度放大，保证俯视角也能读出表情与姿势。
+  g.scale.setScalar(style.scale);
+  const coat = new THREE.Color(definition.color ?? 0xb08968);
+  const c = coat.getHex();
+  const darkCoat = coat.clone().lerp(new THREE.Color(0x231c18), 0.35).getHex();
+  const lightCoat = coat.clone().lerp(new THREE.Color(0xf5eee3), style.lightBlend).getHex();
+  const markings = {};
+
+  const root = new THREE.Group();
+  g.add(root);
+  const body = sphere(0.34, c, 8, 6);
+  body.scale.set(...style.bodyScale);
+  body.position.set(-0.03, style.bodyY, 0);
+  root.add(body);
+  const chest = sphere(0.23, lightCoat, 7, 5);
+  chest.scale.set(...style.chestScale);
+  chest.position.set(0.28, style.chestY, 0);
+  root.add(chest);
+
+  if (breedId === 'muyang') {
+    const saddle = sphere(0.3, darkCoat, 7, 5);
+    saddle.scale.set(1.25, 0.36, 0.83);
+    saddle.position.set(-0.1, 0.69, 0);
+    root.add(saddle);
+    markings.saddle = saddle;
+  } else if (breedId === 'zangao') {
+    const maneColor = coat.clone().lerp(new THREE.Color(0x9a7658), 0.28).getHex();
+    const mane = sphere(0.32, maneColor, 8, 6);
+    mane.scale.set(0.9, 1.15, 1.18);
+    mane.position.set(0.27, 0.6, 0);
+    root.add(mane);
+    markings.mane = mane;
   }
-  const tail = box(0.26, 0.08, 0.08, c); tail.position.set(-0.46, 0.56, 0); tail.rotation.z = 0.6; g.add(tail);
-  g.userData.tail = tail;
+
+  // 头、腿与尾巴使用独立枢轴，行为控制器只改枢轴，不破坏模型局部坐标。
+  const headPivot = new THREE.Group();
+  headPivot.position.set(style.headPivot[0], style.headPivot[1], 0);
+  headPivot.userData.baseX = headPivot.position.x;
+  root.add(headPivot);
+  const head = sphere(style.headRadius, c, 8, 6); head.scale.set(...style.headScale); head.position.set(0.17, 0.04, 0); headPivot.add(head);
+  const snout = sphere(style.snoutRadius, lightCoat, 7, 5); snout.scale.set(...style.snoutScale); snout.position.set(style.snoutX, -0.07, 0); headPivot.add(snout);
+  const nose = sphere(0.06, 0x211b18, 5, 4); nose.position.set(style.snoutX + 0.14, -0.055, 0); headPivot.add(nose);
+  const mouth = box(0.1, 0.018, 0.025, 0x392820); mouth.position.set(style.snoutX + 0.06, -0.16, 0); headPivot.add(mouth);
+
+  if (breedId === 'muyang') {
+    const blaze = sphere(0.12, lightCoat, 6, 5);
+    blaze.scale.set(1.35, 0.35, 0.42);
+    blaze.position.set(0.2, 0.27, 0);
+    headPivot.add(blaze);
+    markings.blaze = blaze;
+  }
+
+  const eyes = [];
+  const eyeHighlights = [];
+  for (const s of [-1, 1]) {
+    const eyeX = 0.33;
+    const eyeZ = 0.175 * s;
+    const eye = sphere(0.062, 0xfaf6e9, 6, 5);
+    eye.scale.z = 0.72;
+    eye.position.set(eyeX, 0.115, eyeZ);
+    headPivot.add(eye);
+    const pupil = sphere(0.037, 0x201a16, 5, 4);
+    pupil.position.set(eyeX + 0.032, 0.108, eyeZ + 0.04 * s);
+    headPivot.add(pupil);
+    const highlight = sphere(0.014, 0xffffff, 4, 3);
+    highlight.position.set(eyeX + 0.052, 0.132, eyeZ + 0.052 * s);
+    headPivot.add(highlight);
+    const brow = box(0.12, 0.032, 0.045, darkCoat);
+    brow.position.set(0.27, 0.205, 0.175 * s);
+    brow.rotation.x = -0.16 * s;
+    headPivot.add(brow);
+    eyes.push(pupil);
+    eyeHighlights.push(highlight);
+  }
+  const ears = [];
+  for (const s of [-1, 1]) {
+    const ear = cone(style.earRadius, style.earHeight, darkCoat, 4);
+    ear.position.set(0.08, style.earY, style.earZ * s);
+    ear.rotation.x = breedId === 'zangao' ? 0.42 * s : 0;
+    ear.rotation.z = breedId === 'zangao' ? 0.3 : -0.12;
+    headPivot.add(ear);
+    ears.push(ear);
+  }
+  const collar = box(0.09, 0.2, breedId === 'zangao' ? 0.48 : 0.42, style.collar); collar.position.set(-0.025, -0.03, 0); headPivot.add(collar);
+
+  const frontLegs = [];
+  const hindLegs = [];
+  const addLeg = (x, z, collection) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, style.legPivotY, z);
+    const leg = cyl(style.legRadius, style.legRadius * 1.32, style.legLength, c, 5);
+    leg.position.y = -style.legLength / 2;
+    pivot.add(leg);
+    const paw = sphere(style.legRadius * 1.18, darkCoat, 5, 4);
+    paw.scale.set(1.08, 0.62, 0.9);
+    paw.position.set(0.04, -style.legLength - 0.01, 0);
+    pivot.add(paw);
+    root.add(pivot);
+    collection.push(pivot);
+  };
+  for (const s of [-1, 1]) {
+    addLeg(style.frontX, 0.17 * s, frontLegs);
+    addLeg(style.hindX, 0.17 * s, hindLegs);
+  }
+
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(-0.47, breedId === 'zangao' ? 0.62 : 0.56, 0);
+  const tail = box(style.tailLength, style.tailThickness, style.tailThickness, c);
+  tail.position.x = -style.tailLength / 2;
+  tail.rotation.z = 0.6;
+  tailPivot.add(tail);
+  root.add(tailPivot);
+
+  g.traverse((node) => {
+    if (node.isMesh) node.receiveShadow = true;
+  });
+
+  g.userData.tail = tailPivot;
+  g.userData.breedId = breedId;
+  g.userData.rig = {
+    root,
+    body,
+    head: headPivot,
+    tail: tailPivot,
+    frontLegs,
+    hindLegs,
+    ears,
+    eyes,
+    eyeHighlights,
+    markings,
+  };
   return g;
 }

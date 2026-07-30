@@ -203,15 +203,18 @@ test('地块使用半埋式低矮倒角菜畦，不回退为高方块或纯平�
     const rimSize = rim.geometry.boundingBox.getSize(new THREE.Vector3())
     assert.ok(Math.abs(rimSize.y - 0.22) < 1e-6)
     assert.equal(rim.position.y, 0.05)
-    assert.equal(base.position.y, 0.162)
-    assert.equal(content.position.y, 0.13)
-    assert.equal(ring.position.y, 0.24)
-    assert.equal(halo.position.y, 0.22)
+    const rimTop = rim.position.y + rimSize.y / 2
+    assert.ok(base.position.y - rimTop >= 0.019, '土层应与菜畦顶面保持足够深度间距')
+    assert.equal(base.position.y, 0.18)
+    assert.equal(content.position.y, 0.19)
+    assert.equal(ring.position.y, 0.29)
+    assert.equal(halo.position.y, 0.27)
     furrows.children.forEach((furrow) => {
       assert.equal(furrow.geometry.type, 'BoxGeometry')
       furrow.geometry.computeBoundingBox()
       const size = furrow.geometry.boundingBox.getSize(new THREE.Vector3())
-      assert.ok(Math.abs(size.y - 0.07) < 1e-6)
+      assert.ok(Math.abs(size.y - 0.05) < 1e-6)
+      assert.ok(furrow.position.y - size.y / 2 > base.position.y, '土垄不能与土层共面')
     })
   })
 
@@ -310,6 +313,10 @@ test('setDog 替换/移除时释放旧 dog 的独占 geometry，不 dispose 共�
 
   scene.setDog({ id: 'a', color: 0xffaa00 }, false)
   assert.ok(scene.dogGroup)
+  assert.ok(scene.dogBehavior)
+  assert.ok(scene.dogGroup.userData.rig)
+  assert.equal(scene.dogGroup.userData.rig.frontLegs.length, 2)
+  assert.equal(scene.dogGroup.userData.rig.hindLegs.length, 2)
   const first = scene.dogGroup
   const geos = []
   first.traverse((o) => {
@@ -327,7 +334,23 @@ test('setDog 替换/移除时释放旧 dog 的独占 geometry，不 dispose 共�
 
   scene.setDog(null, false)
   assert.equal(scene.dogGroup, null)
+  assert.equal(scene.dogBehavior, null)
   assert.equal(sharedDisposed, 0)
+})
+
+test('setDog 按宠物定义创建对应品种模型', () => {
+  const { container, env } = makeHarness()
+  const scene = new FarmScene(container, env)
+
+  scene.setDog({ id: 'muyang', color: 0x8d99ae }, false)
+  assert.equal(scene.dogGroup.userData.breedId, 'muyang')
+  assert.ok(scene.dogGroup.userData.rig.markings.saddle)
+
+  scene.setDog({ id: 'zangao', color: 0x4a3728 }, false)
+  assert.equal(scene.dogGroup.userData.breedId, 'zangao')
+  assert.ok(scene.dogGroup.userData.rig.markings.mane)
+
+  scene.dispose()
 })
 
 test('锁定牌材质/CanvasTexture 替换时释放旧独占资源', () => {

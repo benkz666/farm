@@ -62,6 +62,7 @@ test('Steal / Pet / Task / Mail / DailyLogin 使用约定命令和载荷', async
   assert.deepEqual(await client.mailReadAll(), { cmd: 606, payload: { all: true } })
   assert.deepEqual(await client.mailClaim(8), { cmd: 608, payload: { mail_id: 8 } })
   assert.deepEqual(await client.mailDeleteAll(), { cmd: 610, payload: { all: true } })
+  assert.deepEqual(await client.codexList(), { cmd: 612, payload: {} })
   assert.deepEqual(await client.claimDailyLogin(), { cmd: 614, payload: {} })
 })
 

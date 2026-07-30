@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { mat, isSharedMaterial, createCropModel, createWeedModel, createPestModel, createResidueModel, createDogModel } from './crops.js';
+import { DogBehaviorController } from './dogBehavior.js';
 import { clearAndDispose, disposeExclusiveMaterial, disposeObject3D } from './dispose3d.js';
 import { PLOT } from './state.js';
 
@@ -14,6 +15,12 @@ const COLS = 6, ROWS = 3, GAP = 5;
 const DAY_SHADOW_INTENSITY = 0.72;
 const CLOUD_SHADOW_MIN_OPACITY = 0.09;
 const CLOUD_SHADOW_OPACITY_RANGE = 0.05;
+const PLOT_RIM_HEIGHT = 0.22;
+const PLOT_RIM_CENTER_Y = 0.05;
+// 顶部土层必须和圆角底座拉开深度距离；过小会在俯视移动时发生 Z-fighting。
+const PLOT_SURFACE_Y = PLOT_RIM_CENTER_Y + PLOT_RIM_HEIGHT / 2 + 0.02;
+const PLOT_FURROW_HEIGHT = 0.05;
+const PLOT_FURROW_Y = PLOT_SURFACE_Y + PLOT_FURROW_HEIGHT / 2 + 0.002;
 export const plotPos = (id) => ({
   x: ((id % COLS) - (COLS - 1) / 2) * GAP,
   z: ((ROWS - 1) / 2 - Math.floor(id / COLS)) * GAP,   // 初始地块靠近相机，扩地向远处延伸
@@ -117,6 +124,7 @@ function defaultEnv() {
     addEventListener: (type, fn) => addEventListener(type, fn),
     removeEventListener: (type, fn) => removeEventListener(type, fn),
     createElement: (tag) => document.createElement(tag),
+    random: Math.random,
     getViewport: () => ({
       width: innerWidth,
       height: innerHeight,
@@ -177,6 +185,7 @@ export class FarmScene {
     this.particles = [];
     this.hoverRing = null;
     this.dogGroup = null;
+    this.dogBehavior = null;
     this.dayPhase = 0.35;
 
     this.buildEnvironment();
@@ -364,8 +373,8 @@ export class FarmScene {
       g.position.set(x, 0, z);
 
       // 半埋式低矮菜畦：恢复真实厚度与阴影，但用圆润斜边避免“积木台座”。
-      const rim = new THREE.Mesh(new RoundedBoxGeometry(4.3, 0.22, 4.3, 2, 0.08), mat(0x8b6e50));
-      rim.position.y = 0.05;
+      const rim = new THREE.Mesh(new RoundedBoxGeometry(4.3, PLOT_RIM_HEIGHT, 4.3, 2, 0.08), mat(0x8b6e50));
+      rim.position.y = PLOT_RIM_CENTER_Y;
       rim.receiveShadow = true;
       rim.castShadow = true;
       g.add(rim);
@@ -374,7 +383,7 @@ export class FarmScene {
       // 顶部土壤保持平整，覆盖在低矮土畦上并承担拾取。
       const base = new THREE.Mesh(new THREE.PlaneGeometry(4.08, 4.08), mat(0xb5977a));
       base.rotation.x = -Math.PI / 2;
-      base.position.y = 0.162;
+      base.position.y = PLOT_SURFACE_Y;
       base.receiveShadow = true; base.castShadow = false;
       base.userData.plotId = i;
       g.add(base);
@@ -383,8 +392,8 @@ export class FarmScene {
       // 翻耕后的圆角土垄：保留轻微起伏，厚度远低于旧版方块。
       const furrows = new THREE.Group();
       for (let r = -1; r <= 1; r++) {
-        const f = new THREE.Mesh(new RoundedBoxGeometry(3.78, 0.07, 0.68, 1, 0.03), mat(0x684936));
-        f.position.set(0, 0.155, r * 1.22);
+        const f = new THREE.Mesh(new RoundedBoxGeometry(3.78, PLOT_FURROW_HEIGHT, 0.68, 1, 0.025), mat(0x684936));
+        f.position.set(0, PLOT_FURROW_Y, r * 1.22);
         f.receiveShadow = true;
         f.castShadow = true;
         furrows.add(f);
@@ -400,7 +409,7 @@ export class FarmScene {
       );
       ring.rotation.x = -Math.PI / 2;
       ring.rotation.z = Math.PI / 4;
-      ring.position.y = 0.24;
+      ring.position.y = 0.29;
       ring.visible = false;
       g.add(ring);
       g.userData.ring = ring;
@@ -411,14 +420,14 @@ export class FarmScene {
         new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.85 })
       );
       halo.rotation.x = -Math.PI / 2;
-      halo.position.y = 0.22;
+      halo.position.y = 0.27;
       halo.visible = false;
       g.add(halo);
       g.userData.halo = halo;
 
       // 内容容器（作物/杂草/害虫等）
       const content = new THREE.Group();
-      content.position.y = 0.13;
+      content.position.y = PLOT_SURFACE_Y + 0.01;
       g.add(content);
       g.userData.content = content;
       g.userData.key = '';
@@ -533,9 +542,10 @@ export class FarmScene {
     }
     if (!this.dogGroup || this.dogGroup.userData.dogId !== dogDef.id) {
       this._disposeDog();
-      this.dogGroup = createDogModel(dogDef.color);
+      this.dogGroup = createDogModel(dogDef);
       this.dogGroup.userData.dogId = dogDef.id;
-      this.dogGroup.userData.angle = 0;
+      this.dogBehavior = new DogBehaviorController({ random: this.env.random });
+      this.dogBehavior.attach(this.dogGroup);
       this.scene.add(this.dogGroup);
     }
     this.dogGroup.userData.hungry = hungry;
@@ -546,6 +556,7 @@ export class FarmScene {
     this.scene.remove(this.dogGroup);
     disposeObject3D(this.dogGroup, disposeOpts);
     this.dogGroup = null;
+    this.dogBehavior = null;
   }
 
   // ---------------- 拾取 ----------------
@@ -665,20 +676,9 @@ export class FarmScene {
         const flap = Math.sin(t * 18 + b.userData.seed) * 0.9;
         b.userData.w1.rotation.y = flap; b.userData.w2.rotation.y = -flap;
       }
-      // 狗巡逻 / 趴下
-      if (this.dogGroup) {
-        const d = this.dogGroup;
-        if (d.userData.hungry) {
-          d.rotation.z = 0.35; d.position.set(12.5, 0.1, 8.5);
-          if (d.userData.tail) d.userData.tail.rotation.z = 0.2;
-        } else {
-          d.rotation.z = 0;
-          d.userData.angle += dt * 0.35;
-          const a = d.userData.angle;
-          d.position.set(Math.cos(a) * 15.5, 0, Math.sin(a) * 9);
-          d.rotation.y = -a + (Math.cos(a) > 0 ? Math.PI : 0) + Math.PI / 2;
-          if (d.userData.tail) d.userData.tail.rotation.y = Math.sin(t * 8) * 0.5;
-        }
+      // 狗使用本地行为状态机随机巡游、转向和休息。
+      if (this.dogGroup && this.dogBehavior) {
+        this.dogBehavior.update(this.dogGroup, dt, t, this.dogGroup.userData.hungry);
       }
       // 成熟光环呼吸 + 害虫环绕 + 作物摇摆
       for (const g of this.plotGroups) {

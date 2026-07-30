@@ -26,8 +26,9 @@ type shopRequest struct {
 }
 
 type actionResponse struct {
-	FarmSeq uint64         `json:"farm_seq"`
-	Patch   farm.PatchJSON `json:"patch"`
+	FarmSeq      uint64                   `json:"farm_seq"`
+	Patch        farm.PatchJSON           `json:"patch"`
+	CodexRewards []farm.CodexRewardNotice `json:"codex_rewards,omitempty"`
 }
 
 func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) Envelope {
@@ -104,6 +105,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 
 		var result farm.ActionResult
+		var actionPayload actionResponse
 		var farmSeq uint64
 		var delta *farm.FarmDelta
 		var stealable bool
@@ -120,10 +122,10 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			}, g.Now())
 			farmSeq = farmActor.Aggregate.FarmSeq
 			if result.Err == pkgerr.OK || (kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
-				response.Payload = marshalPayload(actionResponse{
+				actionPayload = actionResponse{
 					FarmSeq: farmSeq,
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
-				})
+				}
 			}
 			if farmSeq != beforeFarmSeq {
 				emitted := farm.FarmDelta{
@@ -147,6 +149,26 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		response.Err = result.Err
+		if result.Err == pkgerr.OK && actionPayload.Patch.Codex != nil && g.codexRewards != nil {
+			rewards, rewardErr := g.codexRewards.IssueCodexRewards(context.Background(), connection.uid, *actionPayload.Patch.Codex)
+			if rewardErr != nil {
+				obs.L().Error("gateway issue codex rewards failed",
+					"component", "gateway",
+					"op", "issue_codex_rewards",
+					"uid", connection.uid,
+					"crop_id", actionPayload.Patch.Codex.CropID,
+					"err", rewardErr.Error(),
+				)
+			} else {
+				actionPayload.CodexRewards = rewards
+				if len(rewards) > 0 {
+					g.pushMailNotify(connection.uid, "codex_reward")
+				}
+			}
+		}
+		if result.Err == pkgerr.OK || (kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
+			response.Payload = marshalPayload(actionPayload)
+		}
 		if delta != nil {
 			g.rooms.BroadcastExcept(*delta, connection.id)
 		}

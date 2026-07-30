@@ -98,6 +98,90 @@ func TestFarmSaveLoadAndRedisBackfill(t *testing.T) {
 	}
 }
 
+func TestCodexProgressRewardMailIsIdempotentAndProtectedFromClear(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	uid := testUID(t)
+	username := "it_codex_" + time.Now().Format("150405.000000")
+
+	if err := s.SaveAccount(ctx, uid, username, "bcrypt-hash-placeholder"); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	agg, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm: %v", err)
+	}
+	agg.CodexHarvests[1] = 20
+	if err := s.SaveFarm(ctx, agg); err != nil {
+		t.Fatalf("SaveFarm codex: %v", err)
+	}
+	if err := s.DeleteFarmCache(ctx, uid); err != nil {
+		t.Fatalf("DeleteFarmCache: %v", err)
+	}
+	reloaded, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm codex backfill: %v", err)
+	}
+	if got := reloaded.CodexHarvests[1]; got != 20 {
+		t.Fatalf("persisted harvest count = %d, want 20", got)
+	}
+
+	issued, err := s.IssueCodexRewards(ctx, uid, farm.CodexProgressOf(1, 10))
+	if err != nil {
+		t.Fatalf("IssueCodexRewards bronze: %v", err)
+	}
+	if len(issued) != 1 || issued[0].Tier != "bronze" || issued[0].RewardCoin != 500 {
+		t.Fatalf("bronze issued = %#v", issued)
+	}
+	issued, err = s.IssueCodexRewards(ctx, uid, farm.CodexProgressOf(1, 20))
+	if err != nil {
+		t.Fatalf("IssueCodexRewards silver: %v", err)
+	}
+	if len(issued) != 1 || issued[0].Tier != "silver" || issued[0].RewardCoin != 1000 {
+		t.Fatalf("silver issued = %#v", issued)
+	}
+	duplicate, err := s.IssueCodexRewards(ctx, uid, farm.CodexProgressOf(1, 20))
+	if err != nil {
+		t.Fatalf("IssueCodexRewards duplicate: %v", err)
+	}
+	if len(duplicate) != 0 {
+		t.Fatalf("duplicate rewards = %#v, want none", duplicate)
+	}
+
+	mails, err := s.ListMails(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListMails: %v", err)
+	}
+	if len(mails) != 2 || mails[0].Read || mails[1].Read {
+		t.Fatalf("milestone mails = %#v, want two unread mails", mails)
+	}
+	deleted, err := s.DeleteMails(ctx, uid, 0)
+	if err != nil {
+		t.Fatalf("DeleteMails with unclaimed rewards: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("deleted unclaimed reward mails = %d, want 0", deleted)
+	}
+
+	if _, err := s.ClaimMail(ctx, uid, mails[0].ID); err != nil {
+		t.Fatalf("ClaimMail: %v", err)
+	}
+	deleted, err = s.DeleteMails(ctx, uid, 0)
+	if err != nil {
+		t.Fatalf("DeleteMails after claim: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted claimed reward mails = %d, want 1", deleted)
+	}
+	remaining, err := s.ListMails(ctx, uid)
+	if err != nil {
+		t.Fatalf("ListMails remaining: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].Claimed {
+		t.Fatalf("remaining mails = %#v, want one unclaimed reward", remaining)
+	}
+}
+
 // TestSessionStorePutGetDelete 覆盖 SessionStore 的基本 round-trip 与删除后 miss。
 func TestSessionStorePutGetDelete(t *testing.T) {
 	s := newTestStore(t)

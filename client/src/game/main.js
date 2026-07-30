@@ -12,9 +12,9 @@ import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
 import { enterOnline, isOnline, leaveOnline, logout, session, setFarmView } from '../net/session.js';
-import { CMD_FERTILIZE, CMD_PLANT, CMD_STEAL } from '../net/client.js';
+import { CMD_FERTILIZE, CMD_HARVEST, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
-import { applyPatch, cropKeyToId } from './applyPatch.js';
+import { applyCodexProgress, applyPatch, cropIdToKey, cropKeyToId } from './applyPatch.js';
 import { createFarmMirror } from './farmMirror.js';
 import { plotCmdForTool, isVisitTool } from './onlineActions.js';
 import { shouldApplyPatchFromError } from './onlineResponse.js';
@@ -172,6 +172,29 @@ function applyResponsePatch(payload) {
   if (session.relation === 'SELF' && Number.isSafeInteger(farmSeq) && farmSeq >= session.lastFarmSeq) {
     session.lastFarmSeq = farmSeq;
   }
+}
+
+const CODEX_TIER_LABEL = Object.freeze({
+  bronze: '铜牌',
+  silver: '银牌',
+  gold: '金牌',
+});
+
+function harvestSuccessText(payload) {
+  const progress = payload?.patch?.codex_progress;
+  const cropKey = cropIdToKey(progress?.crop_id);
+  const cropName = CROP_MAP[cropKey]?.name || '作物';
+  const rewards = Array.isArray(payload?.codex_rewards) ? payload.codex_rewards : [];
+  if (rewards.length > 0) {
+    const latest = rewards[rewards.length - 1];
+    const tier = CODEX_TIER_LABEL[latest?.tier] || '新阶段';
+    const reward = Number(latest?.reward_coin) || 0;
+    return `${cropName}图鉴升级为${tier}，💰${reward} 奖励已发邮箱`;
+  }
+  if (Number(progress?.harvest_count) === 1) {
+    return `📖 图鉴解锁：${cropName}`;
+  }
+  return '收获成功';
 }
 
 function refreshFarmMirror() {
@@ -455,7 +478,7 @@ async function onPlotClickOnline(plotId) {
       if (coin) bits.push(`+${coin} 金币`);
       ok(bits.length ? `互助成功 ${bits.join(' · ')}` : '互助成功');
     } else {
-      ok(activeTool === 'harvest' ? '收获成功' : '操作成功');
+      ok(cmd === CMD_HARVEST ? harvestSuccessText(rsp.payload) : '操作成功');
     }
     ui.updateHUD(state);
     syncAllPlots();
@@ -783,6 +806,27 @@ async function refreshMails() {
   }
 }
 
+async function refreshCodex() {
+  if (!netClient) return false;
+  try {
+    const response = await netClient.codexList();
+    if (response.err !== 0) {
+      fail(errText(response.err));
+      return false;
+    }
+    state.codex = [];
+    state.codexProgress = {};
+    for (const entry of Array.isArray(response.payload?.entries) ? response.payload.entries : []) {
+      applyCodexProgress(state, entry);
+    }
+    if (ui.isPanelOpen('codex')) ui.renderCodex(state);
+    return true;
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+    return false;
+  }
+}
+
 async function markAllMailsRead() {
   if (!netClient || !state.mails.some((mail) => !mail.read)) return true;
   try {
@@ -814,9 +858,16 @@ async function clearAllMails() {
       fail(errText(response.err));
       return false;
     }
-    state.mails = [];
+    const affected = Math.max(0, Number(response.payload?.affected) || 0);
+    await refreshMails();
+    const protectedCount = state.mails.filter((mail) =>
+      !mail.claimed && Number(mail.gold || mail.attachmentCoin) > 0
+    ).length;
     ui.updateHUD(state);
-    ui.toast('邮件已全部清空', 'ok');
+    if (ui.isPanelOpen('mail')) ui.renderMail(state);
+    ui.toast(protectedCount > 0
+      ? `已清理 ${affected} 封邮件，${protectedCount} 封未领取奖励已保留`
+      : '邮件已全部清空', 'ok');
     return true;
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -1069,7 +1120,10 @@ const ui = new UI({
           isPanelOpen: (panel) => ui.isPanelOpen(panel),
         });
         break;
-      case 'codex': ui.renderCodex(state); break;
+      case 'codex':
+        ui.renderCodex(state);
+        void refreshCodex();
+        break;
       case 'mail':
         ui.renderMail(state);
         void openAndRefreshMails();

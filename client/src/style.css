@@ -90,7 +90,6 @@ body {
 }
 .gold-chip { color: #b8860b; }
 .dog-chip { color: var(--brown); }
-.dog-chip .pet-badge { margin: -6px 0 -6px -7px; }
 .clock-chip { font-size: 17px; padding: 8px 12px; }
 
 .icon-btn {
@@ -220,15 +219,15 @@ body {
 /* 看家狗徽章 */
 .pet-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 52px; height: 52px; border-radius: 18px; flex-shrink: 0;
+  width: 86px; height: 58px; border-radius: 18px; flex-shrink: 0;
   overflow: hidden; isolation: isolate;
   background: radial-gradient(circle at 32% 22%, #fffef8 0 20%, #f4ead7 72%, #e4d5bb 100%);
   border: 1px solid rgba(115, 88, 53, 0.16);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 3px 7px rgba(62, 50, 41, 0.16);
 }
-.pet-badge--chip { width: 28px; height: 28px; border-radius: 10px; box-shadow: none; border-color: rgba(115, 88, 53, 0.1); }
-.pet-art { width: 94%; height: 94%; display: block; filter: drop-shadow(0 1px 1px rgba(55, 38, 23, 0.16)); }
-.shop-card:hover .pet-art { transform: translateY(-1px) rotate(2deg); }
+.pet-badge--chip { width: 40px; height: 28px; border-radius: 10px; box-shadow: none; border-color: rgba(115, 88, 53, 0.1); }
+.pet-art { width: 96%; height: 96%; display: block; filter: drop-shadow(0 1px 1px rgba(55, 38, 23, 0.18)); }
+.shop-card:hover .pet-art { transform: translateX(1px) translateY(-1px); }
 @media (prefers-reduced-motion: reduce) { .shop-card:hover .pet-art { transform: none; } }
 
 /* ---------------- Toast ---------------- */
@@ -298,6 +297,12 @@ body {
 }
 #modal-title { font-size: 17px; font-weight: 800; color: var(--brown); }
 #modal.modal--neighbors #modal-title {
+  font-family: 'ZCOOL KuaiLe', cursive;
+  font-size: 20px;
+  font-weight: 400;
+}
+#modal.modal--codex { width: min(820px, 94vw); }
+#modal.modal--codex #modal-title {
   font-family: 'ZCOOL KuaiLe', cursive;
   font-size: 20px;
   font-weight: 400;
@@ -400,19 +405,129 @@ body {
 .task-card .ptext { font-size: 11.5px; color: var(--ink-soft); margin-top: 5px; }
 .task-card .done-tag { color: var(--green-dark); font-weight: 800; font-size: 12.5px; }
 
-/* 图鉴 */
-.codex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
-.codex-cell {
-  display: flex; flex-direction: column; align-items: center; gap: 6px;
-  background: rgba(255, 255, 255, 0.75); border: 1px solid rgba(62, 50, 41, 0.08);
-  border-radius: 14px; padding: 12px 6px 10px;
+/* 图鉴：农场收藏牌墙。材质变化是唯一的视觉主角。 */
+.codex-body {
+  --codex-bark: #69452f;
+  --codex-paper: #f6eed8;
+  --codex-moss: #3f7045;
+  --codex-bronze: #a86432;
+  --codex-silver: #aeb8c1;
+  --codex-gold: #d5a62e;
 }
-.codex-cell.locked { opacity: 0.5; }
-.codex-cell.locked .crop-badge { filter: grayscale(1) brightness(0.7); }
-.codex-cell .cname { font-size: 12.5px; font-weight: 800; }
-.codex-cell .clock { font-size: 10.5px; color: var(--ink-soft); }
-.milestone { margin-top: 14px; background: rgba(255, 248, 225, 0.9); border: 1px solid rgba(246, 196, 83, 0.4); border-radius: 14px; padding: 12px 16px; }
-.milestone .mrow { display: flex; justify-content: space-between; font-size: 12.5px; font-weight: 700; color: #8a6d1d; margin-bottom: 6px; }
+.codex-summary {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  min-height: 108px; padding: 18px 22px; margin-bottom: 12px;
+  border: 1px solid rgba(88, 63, 39, .15); border-radius: 18px;
+  background:
+    linear-gradient(100deg, rgba(255,255,255,.77), rgba(255,248,224,.5)),
+    repeating-linear-gradient(8deg, rgba(121,82,48,.045) 0 2px, transparent 2px 12px);
+  box-shadow: inset 0 1px rgba(255,255,255,.86);
+}
+.codex-summary::after {
+  content: ''; position: absolute; width: 210px; height: 210px; right: -92px; top: -118px;
+  border: 22px solid rgba(63,112,69,.07); border-radius: 50%; pointer-events: none;
+}
+.codex-summary__copy { position: relative; z-index: 1; }
+.codex-kicker {
+  display: block; margin-bottom: 5px; color: var(--codex-moss);
+  font-size: 11px; font-weight: 900; letter-spacing: .16em;
+}
+.codex-summary strong {
+  display: block; color: var(--codex-bark); font-family: 'ZCOOL KuaiLe', cursive;
+  font-size: 34px; font-weight: 400; line-height: 1;
+}
+.codex-summary strong small { font-family: 'Noto Sans SC', sans-serif; font-size: 13px; font-weight: 800; }
+.codex-summary p { margin: 8px 0 0; color: var(--ink-soft); font-size: 11.5px; }
+.codex-summary__seal {
+  position: relative; z-index: 1; flex: 0 0 72px; height: 72px;
+  display: grid; place-content: center; text-align: center;
+  border: 5px double #8e6a17; border-radius: 50%;
+  color: #76520c; background: radial-gradient(circle at 35% 28%, #fff1a8, #e4b841 58%, #aa7617);
+  box-shadow: inset 0 0 0 3px rgba(255,255,255,.38), 0 6px 14px rgba(95,62,14,.2);
+  transform: rotate(4deg);
+}
+.codex-summary__seal span { font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+.codex-summary__seal b { font-family: 'ZCOOL KuaiLe', cursive; font-size: 25px; line-height: 1; }
+.codex-legend {
+  display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 14px;
+}
+.codex-legend__item {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px;
+  border: 1px solid rgba(80,60,42,.09); border-radius: 999px;
+  background: rgba(255,255,255,.65); color: var(--ink-soft); font-size: 10.5px; font-weight: 800;
+}
+.codex-legend__item i { width: 9px; height: 9px; border-radius: 3px; background: currentColor; box-shadow: inset 0 1px rgba(255,255,255,.55); }
+.codex-legend__item.tier-bronze { color: #92522a; }
+.codex-legend__item.tier-silver { color: #667580; }
+.codex-legend__item.tier-gold { color: #9a7011; }
+.codex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(146px, 1fr)); gap: 13px; }
+.codex-cell {
+  min-width: 0; padding: 7px 7px 10px; border-radius: 16px;
+  background: rgba(255,255,255,.48); border: 1px solid rgba(77,55,38,.09);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.codex-cell:hover { transform: translateY(-2px); box-shadow: 0 9px 20px rgba(65,43,27,.12); }
+.codex-plaque {
+  position: relative; min-height: 132px; padding: 25px 10px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  border: 3px solid #6e4930; border-radius: 12px 12px 17px 17px;
+  color: #3f2d21;
+  background:
+    linear-gradient(100deg, transparent 0 42%, rgba(255,255,255,.17) 43% 47%, transparent 48%),
+    repeating-linear-gradient(6deg, #a97750 0 4px, #a4724b 4px 8px);
+  box-shadow: inset 0 0 0 2px rgba(255,231,190,.28), inset 0 -8px 12px rgba(72,38,18,.17), 0 4px 8px rgba(65,43,27,.17);
+}
+.codex-rivet { position: absolute; top: 8px; width: 7px; height: 7px; border-radius: 50%; background: #4e392b; box-shadow: inset 0 1px rgba(255,255,255,.45); }
+.codex-rivet.rivet-a { left: 10px; }
+.codex-rivet.rivet-b { right: 10px; }
+.codex-plaque__tier {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  padding: 1px 10px 2px; border-radius: 999px;
+  background: rgba(64,39,24,.77); color: #fff5db; font-size: 9px; font-weight: 900; white-space: nowrap;
+}
+.codex-plaque .crop-badge { width: 52px; height: 52px; border-radius: 50%; }
+.codex-cell .cname { font-size: 13px; font-weight: 900; }
+.codex-plaque__meta { color: rgba(53,37,27,.72); font-size: 9.5px; font-weight: 800; }
+.codex-cell.tier-bronze .codex-plaque {
+  border-color: #79401f; color: #402318;
+  background: radial-gradient(circle at 28% 18%, #da9b62, transparent 28%), linear-gradient(135deg, #b8733c, #8e4d29 58%, #c9854c);
+}
+.codex-cell.tier-silver .codex-plaque {
+  border-color: #6f7a82; color: #303a40;
+  background: repeating-linear-gradient(105deg, rgba(255,255,255,.2) 0 2px, transparent 2px 7px), linear-gradient(135deg, #d9dfe3, #9da9b2 55%, #c7d0d6);
+}
+.codex-cell.tier-gold .codex-plaque {
+  border-color: #916511; color: #513806;
+  background: radial-gradient(circle at 30% 18%, #fff1a0, transparent 26%), linear-gradient(135deg, #edc44c, #b98518 58%, #e2b834);
+  box-shadow: inset 0 0 0 2px rgba(255,248,191,.48), inset 0 -8px 12px rgba(108,69,5,.16), 0 5px 13px rgba(138,91,10,.24);
+}
+.codex-cell.tier-bronze .codex-plaque__tier { background: #673417; }
+.codex-cell.tier-silver .codex-plaque__tier { background: #59666f; }
+.codex-cell.tier-gold .codex-plaque__tier { background: #7b5610; }
+.codex-cell.locked .codex-plaque { filter: grayscale(.75); opacity: .64; }
+.codex-cell.locked .crop-badge { filter: grayscale(1) brightness(.72); }
+.codex-progress { padding: 9px 3px 0; }
+.codex-progress__line { display: flex; justify-content: space-between; gap: 5px; color: var(--ink); font-size: 9.5px; font-weight: 900; }
+.codex-progress__line b { color: #9b7014; white-space: nowrap; }
+.codex-progress__track { height: 6px; margin-top: 6px; overflow: hidden; border-radius: 99px; background: rgba(59,43,32,.1); }
+.codex-progress__track i {
+  display: block; width: var(--codex-progress); height: 100%; border-radius: inherit;
+  background: linear-gradient(90deg, #6f9e59, #3f7045); transition: width .35s ease;
+}
+.codex-cell.tier-bronze .codex-progress__track i { background: linear-gradient(90deg, #d0945c, #9d592e); }
+.codex-cell.tier-silver .codex-progress__track i { background: linear-gradient(90deg, #d5dce1, #7e8d98); }
+.codex-cell.tier-gold .codex-progress__track i { background: linear-gradient(90deg, #f3cf57, #b27b15); }
+.codex-progress__hint { margin-top: 4px; color: var(--ink-soft); font-size: 9px; }
+@media (max-width: 560px) {
+  .codex-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .codex-summary { padding: 15px; }
+  .codex-summary__seal { flex-basis: 62px; height: 62px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .codex-cell, .codex-progress__track i { transition: none; }
+  .codex-cell:hover { transform: none; }
+}
 
 /* 邮件 */
 .mail-row.unread { border-left: 4px solid var(--gold); }
