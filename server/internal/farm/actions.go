@@ -3,6 +3,7 @@ package farm
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"math/big"
 	"time"
 
 	"farm/server/internal/gameconf"
@@ -11,10 +12,6 @@ import (
 
 // 默认时间档：期 2 单测与 demo 一致；Gateway 后续可按配置覆盖。
 const defaultTimeProfile = gameconf.TimeProfileDemo
-
-// 清理失败（误铲生长中作物）扣减的健康度百分点。
-// AccruedWeighted 单位为「百分点·毫秒」，故惩罚 = 点数 × SeasonDuration。
-const clearFailPenaltyPoints int64 = 10
 
 // PlotActionKind 是地块动作种类。
 type PlotActionKind uint8
@@ -28,6 +25,7 @@ const (
 	Pest
 	Fertilize
 	Harvest
+	Steal
 )
 
 func (k PlotActionKind) String() string {
@@ -48,6 +46,8 @@ func (k PlotActionKind) String() string {
 		return "Fertilize"
 	case Harvest:
 		return "Harvest"
+	case Steal:
+		return "Steal"
 	default:
 		return "PlotActionKind(?)"
 	}
@@ -60,7 +60,7 @@ type PlotAction struct {
 	Arg       uint16
 }
 
-// ActionPatch 描述一次成功（或带副作用失败）动作后，客户端可应用的变更摘要。
+// ActionPatch 描述一次成功动作后，客户端可应用的变更摘要。
 // 期 2 Gateway 再决定序列化字段；领域层先填齐内存可见变更。
 type ActionPatch struct {
 	PlotIndex uint8
@@ -77,7 +77,7 @@ type ActionResult struct {
 	Patch ActionPatch
 }
 
-// ApplyPlotAction 在副本上 advance 后 validate；仅成功（或清理误铲扣血）写回聚合。
+// ApplyPlotAction 在副本上 advance 后校验；只有成功动作才会写回聚合。
 func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	if a == nil {
 		return ActionResult{Err: pkgerr.Internal}
@@ -91,6 +91,9 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 
 	work := a.Plots[act.PlotIndex]
 	a.advancePlot(&work, now, act.PlotIndex)
+	if !AllowsPlotAction(work.State, act.Kind) {
+		return ActionResult{Err: plotActionStateError(work.State, act.Kind)}
+	}
 
 	switch act.Kind {
 	case Till:
@@ -186,46 +189,24 @@ func PlotChangeOf(index uint8, p Plot) PlotChange {
 }
 
 func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {
-	if work.State != StateWasteland {
-		return ActionResult{Err: pkgerr.PlotNotWasteland}
-	}
 	a.Plots[idx] = Plot{State: StateTilled}
 	a.Exp += 3
 	a.RecalcLevel()
+	a.grantHiddenSeed()
 	a.FarmSeq++
 	return a.okPatch(idx)
 }
 
 func (a *Aggregate) commitClear(idx uint8, work *Plot) ActionResult {
-	switch work.State {
-	case StateResidue, StateWithered:
-		a.Plots[idx] = Plot{State: StateTilled}
-		a.Exp += 3
-		a.RecalcLevel()
-		a.FarmSeq++
-		return a.okPatch(idx)
-
-	case StateGrowing:
-		// 误铲：写回已 advance 的地块并扣健康度，返回不可清理。
-		if work.SeasonDuration > 0 {
-			work.AccruedWeighted += clearFailPenaltyPoints * work.SeasonDuration
-		}
-		a.Plots[idx] = *work
-		a.FarmSeq++
-		return ActionResult{
-			Err:   pkgerr.PlotNotCleanable,
-			Patch: a.patchOf(idx),
-		}
-
-	default:
-		return ActionResult{Err: pkgerr.PlotNotCleanable}
-	}
+	a.Plots[idx] = Plot{State: StateTilled}
+	a.Exp += 3
+	a.RecalcLevel()
+	a.grantHiddenSeed()
+	a.FarmSeq++
+	return a.okPatch(idx)
 }
 
 func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64) ActionResult {
-	if work.State != StateTilled {
-		return ActionResult{Err: pkgerr.PlotNotTilled}
-	}
 	crop, ok := gameconf.CropByID(cropID)
 	if !ok {
 		return ActionResult{Err: pkgerr.BadRequest}
@@ -264,85 +245,60 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64)
 }
 
 func (a *Aggregate) commitWater(idx uint8, work *Plot, now int64) ActionResult {
-	switch work.State {
-	case StateMature:
-		// 成熟照料空操作：不写回，避免无意义 FarmSeq 抖动。
-		return ActionResult{Err: pkgerr.OK}
-	case StateGrowing:
-		if work.CropID == 0 {
-			return ActionResult{Err: pkgerr.PlotEmpty}
-		}
-		cfg := a.plotAdvanceConfig(work.CropID)
-		cfg.PlotIndex = idx
-		if waterFull(work, now, cfg) {
-			return ActionResult{Err: pkgerr.AlreadyWatered}
-		}
-		settleTo(work, now, cfg)
-		work.LastWaterAt = now
-		a.Plots[idx] = *work
-		a.Exp += 2
-		a.RecalcLevel()
-		a.FarmSeq++
-		return a.okPatch(idx)
-	default:
-		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	if work.CropID == 0 {
+		return ActionResult{Err: pkgerr.PlotEmpty}
 	}
+	cfg := a.plotAdvanceConfig(work.CropID)
+	cfg.PlotIndex = idx
+	if waterFull(work, now, cfg) {
+		return ActionResult{Err: pkgerr.AlreadyWatered}
+	}
+	settleTo(work, now, cfg)
+	work.LastWaterAt = now
+	a.Plots[idx] = *work
+	a.Exp += 2
+	a.RecalcLevel()
+	a.FarmSeq++
+	return a.okPatch(idx)
 }
 
 func (a *Aggregate) commitWeed(idx uint8, work *Plot, now int64) ActionResult {
-	switch work.State {
-	case StateMature:
-		return ActionResult{Err: pkgerr.OK}
-	case StateGrowing:
-		if work.CropID == 0 {
-			return ActionResult{Err: pkgerr.PlotEmpty}
-		}
-		if work.WeedSince == 0 {
-			return ActionResult{Err: pkgerr.NoWeed}
-		}
-		cfg := a.plotAdvanceConfig(work.CropID)
-		cfg.PlotIndex = idx
-		settleTo(work, now, cfg)
-		clearHazard(work, &work.WeedSince, &work.WeedNextWin, now, cfg)
-		a.Plots[idx] = *work
-		a.Exp += 2
-		a.RecalcLevel()
-		a.FarmSeq++
-		return a.okPatch(idx)
-	default:
-		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	if work.CropID == 0 {
+		return ActionResult{Err: pkgerr.PlotEmpty}
 	}
+	if work.WeedSince == 0 {
+		return ActionResult{Err: pkgerr.NoWeed}
+	}
+	cfg := a.plotAdvanceConfig(work.CropID)
+	cfg.PlotIndex = idx
+	settleTo(work, now, cfg)
+	clearHazard(work, &work.WeedSince, &work.WeedNextWin, now, cfg)
+	a.Plots[idx] = *work
+	a.Exp += 2
+	a.RecalcLevel()
+	a.FarmSeq++
+	return a.okPatch(idx)
 }
 
 func (a *Aggregate) commitPest(idx uint8, work *Plot, now int64) ActionResult {
-	switch work.State {
-	case StateMature:
-		return ActionResult{Err: pkgerr.OK}
-	case StateGrowing:
-		if work.CropID == 0 {
-			return ActionResult{Err: pkgerr.PlotEmpty}
-		}
-		if work.PestSince == 0 {
-			return ActionResult{Err: pkgerr.NoPest}
-		}
-		cfg := a.plotAdvanceConfig(work.CropID)
-		cfg.PlotIndex = idx
-		settleTo(work, now, cfg)
-		clearHazard(work, &work.PestSince, &work.PestNextWin, now, cfg)
-		a.Plots[idx] = *work
-		a.Exp += 2
-		a.RecalcLevel()
-		a.FarmSeq++
-		return a.okPatch(idx)
-	default:
-		return ActionResult{Err: pkgerr.PlotNotGrowing}
+	if work.CropID == 0 {
+		return ActionResult{Err: pkgerr.PlotEmpty}
 	}
+	if work.PestSince == 0 {
+		return ActionResult{Err: pkgerr.NoPest}
+	}
+	cfg := a.plotAdvanceConfig(work.CropID)
+	cfg.PlotIndex = idx
+	settleTo(work, now, cfg)
+	clearHazard(work, &work.PestSince, &work.PestNextWin, now, cfg)
+	a.Plots[idx] = *work
+	a.Exp += 2
+	a.RecalcLevel()
+	a.FarmSeq++
+	return a.okPatch(idx)
 }
 
 func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, now int64) ActionResult {
-	if work.State != StateGrowing {
-		return ActionResult{Err: pkgerr.PlotNotGrowing}
-	}
 	if work.CropID == 0 {
 		return ActionResult{Err: pkgerr.PlotEmpty}
 	}
@@ -391,12 +347,6 @@ func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, 
 }
 
 func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult {
-	if work.State == StateWithered {
-		return ActionResult{Err: pkgerr.PlotWithered}
-	}
-	if work.State != StateMature {
-		return ActionResult{Err: pkgerr.PlotNotMature}
-	}
 	cropID := work.CropID
 	crop, ok := gameconf.CropByID(cropID)
 	if !ok {
@@ -478,6 +428,48 @@ func mustCrop(id uint16) gameconf.CropConf {
 
 func (a *Aggregate) okPatch(idx uint8) ActionResult {
 	return ActionResult{Err: pkgerr.OK, Patch: a.patchOf(idx)}
+}
+
+const hiddenSeedDropChanceDenominator uint32 = 100
+const hiddenSeedDropThreshold uint32 = 3
+
+// hiddenSeedRandom is replaceable only by same-package tests. Production uses
+// crypto/rand so a client cannot predict or reroll a hidden-seed drop.
+var hiddenSeedRandom = secureRandomBelow
+
+func secureRandomBelow(limit uint32) (uint32, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(limit)))
+	if err != nil {
+		return 0, err
+	}
+	return uint32(n.Int64()), nil
+}
+
+// grantHiddenSeed performs the documented 3% roll after a successful till or
+// clear. Failure to obtain entropy degrades to no drop; the completed farm
+// action remains valid and, importantly, never awards an unverified item.
+func (a *Aggregate) grantHiddenSeed() {
+	roll, err := hiddenSeedRandom(hiddenSeedDropChanceDenominator)
+	if err != nil || roll >= hiddenSeedDropThreshold {
+		return
+	}
+
+	eligible := make([]uint16, 0, 3)
+	for id := uint16(1); id <= gameconf.CropCount; id++ {
+		crop, ok := gameconf.CropByID(id)
+		if ok && crop.Hidden && a.Level >= uint16(crop.DropLevel) {
+			eligible = append(eligible, id)
+		}
+	}
+	if len(eligible) == 0 {
+		return
+	}
+
+	choice, err := hiddenSeedRandom(uint32(len(eligible)))
+	if err != nil {
+		return
+	}
+	a.AddItem(SeedItem(eligible[choice]), 1)
 }
 
 func (a *Aggregate) patchOf(idx uint8) ActionPatch {

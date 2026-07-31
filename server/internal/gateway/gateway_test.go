@@ -614,7 +614,6 @@ func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
 		t.Fatalf("owner EnterFarm = %#v", got)
 	}
-
 	writeEnvelope(t, friend, Envelope{
 		Cmd:       CommandTill,
 		ClientSeq: 3,
@@ -812,7 +811,7 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 	}
 }
 
-func TestClearOnGrowingPlotBroadcastsFarmDeltaDespitePlotNotCleanable(t *testing.T) {
+func TestClearOnGrowingPlotFailsWithoutPatchOrFarmDelta(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -871,6 +870,8 @@ func TestClearOnGrowingPlotBroadcastsFarmDeltaDespitePlotNotCleanable(t *testing
 	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
 		t.Fatalf("owner EnterFarm = %#v", got)
 	}
+	plotBeforeClear := ownerAggregate.Plots[0]
+	seqBeforeClear := ownerAggregate.FarmSeq
 
 	writeEnvelope(t, owner, Envelope{
 		Cmd:       CommandClear,
@@ -881,33 +882,17 @@ func TestClearOnGrowingPlotBroadcastsFarmDeltaDespitePlotNotCleanable(t *testing
 	if clear.Err != pkgerr.PlotNotCleanable {
 		t.Fatalf("Clear err = %d, want %d", clear.Err, pkgerr.PlotNotCleanable)
 	}
-	var clearPayload actionResponse
-	if err := json.Unmarshal(clear.Payload, &clearPayload); err != nil {
-		t.Fatalf("decode Clear payload: %v", err)
+	if string(clear.Payload) != "{}" {
+		t.Fatalf("Clear response unexpectedly includes patch: %s", clear.Payload)
 	}
-	if clearPayload.FarmSeq != 1 {
-		t.Fatalf("Clear FarmSeq = %d, want 1", clearPayload.FarmSeq)
+	if ownerAggregate.FarmSeq != seqBeforeClear {
+		t.Fatalf("aggregate FarmSeq = %d, want %d", ownerAggregate.FarmSeq, seqBeforeClear)
 	}
-	if ownerAggregate.FarmSeq != 1 {
-		t.Fatalf("aggregate FarmSeq = %d, want 1", ownerAggregate.FarmSeq)
+	if !reflect.DeepEqual(ownerAggregate.Plots[0], plotBeforeClear) {
+		t.Fatalf("failed clear mutated plot:\n got %#v\nwant %#v", ownerAggregate.Plots[0], plotBeforeClear)
 	}
-
-	delta := readEnvelope(t, friend)
-	var deltaPayload farm.FarmDelta
-	if err := json.Unmarshal(delta.Payload, &deltaPayload); err != nil {
-		t.Fatalf("decode FarmDelta: %v", err)
-	}
-	if delta.Cmd != CommandFarmDelta || delta.ClientSeq != 0 || delta.Err != pkgerr.OK {
-		t.Fatalf("FarmDelta envelope = %#v", delta)
-	}
-	if deltaPayload.OwnerUID != ownerUID || deltaPayload.FarmSeq != 1 || deltaPayload.ActorUID != ownerUID {
-		t.Fatalf("FarmDelta payload = %#v", deltaPayload)
-	}
-	if deltaPayload.Action != CommandClear {
-		t.Fatalf("FarmDelta action = %d, want %d", deltaPayload.Action, CommandClear)
-	}
-	if len(deltaPayload.Plots) != 1 || deltaPayload.Plots[0].Index != 0 {
-		t.Fatalf("FarmDelta plots = %#v", deltaPayload.Plots)
+	if deltas, ok := runtime.actors[ownerUID].Deltas.Since(0); !ok || len(deltas) != 0 {
+		t.Fatalf("failed clear appended farm delta: %#v", deltas)
 	}
 }
 
@@ -1355,9 +1340,13 @@ func TestWebSocketTillSuccessAndFailure(t *testing.T) {
 
 func TestPetCommandsActivateFeedAndReportStatus(t *testing.T) {
 	aggregate := farm.NewAggregate(42, "owner")
-	aggregate.Coin = 3_000
+	aggregate.Coin = 10_000
+	aggregate.Level = 10
 	if result := aggregate.Buy(farm.BuyReq{ItemID: farm.DogMuttShopItemID, Quantity: 1}); result.Err != pkgerr.OK {
 		t.Fatalf("Buy dog = %d", result.Err)
+	}
+	if result := aggregate.Buy(farm.BuyReq{ItemID: farm.DogShepherdShopItemID, Quantity: 1}); result.Err != pkgerr.OK {
+		t.Fatalf("Buy shepherd = %d", result.Err)
 	}
 	aggregate.Items[farm.DogFoodItem()] = 4
 	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
@@ -1366,7 +1355,7 @@ func TestPetCommandsActivateFeedAndReportStatus(t *testing.T) {
 
 	activate := gateway.handleWSRequest(connection, Envelope{
 		Cmd:     CommandPetActivate,
-		Payload: json.RawMessage(`{"dog_type":1}`),
+		Payload: json.RawMessage(`{"dog_type":2}`),
 	})
 	if activate.Err != pkgerr.OK {
 		t.Fatalf("PetActivate = %#v", activate)
@@ -1386,7 +1375,8 @@ func TestPetCommandsActivateFeedAndReportStatus(t *testing.T) {
 	if err := json.Unmarshal(status.Payload, &got); err != nil {
 		t.Fatalf("decode PetStatus: %v", err)
 	}
-	if status.Err != pkgerr.OK || got.ActiveDog != farm.DogMutt || got.BowlGrams != 4 {
+	if status.Err != pkgerr.OK || got.ActiveDog != farm.DogShepherd || got.BowlGrams != 4 ||
+		len(got.Dogs) != 2 || got.Dogs[1].DogType != farm.DogShepherd {
 		t.Fatalf("PetStatus = %#v, payload=%#v", status, got)
 	}
 }

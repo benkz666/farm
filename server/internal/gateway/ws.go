@@ -63,7 +63,7 @@ type wsConnection struct {
 	taskNotifyReady   bool
 	taskNotifyClosed  bool
 	taskNotifyStarted bool
-	taskNotifyMailbox map[uint32]store.Task
+	taskNotifyMailbox map[taskNotifyMailboxKey]store.Task
 	taskNotifyWake    chan struct{}
 	taskNotifyStop    chan struct{}
 	taskNotifyDone    chan struct{}
@@ -80,6 +80,11 @@ type wsConnection struct {
 	heartbeatStarted  bool
 	heartbeatStop     chan struct{}
 	heartbeatDone     chan struct{}
+}
+
+type taskNotifyMailboxKey struct {
+	dayKey int64
+	taskID uint32
 }
 
 type handshakeRequest struct {
@@ -581,8 +586,8 @@ func (connection *wsConnection) pushTaskNotify(task store.Task) error {
 	})
 }
 
-// enqueueTaskNotify merges the newest state for one of the four fixed daily
-// task IDs. A mailbox is intentionally retained before ready so a push racing
+// enqueueTaskNotify merges the newest state for one server-defined daily task
+// ID. A mailbox is intentionally retained before ready so a push racing
 // a successful Handshake is emitted only after its response reaches the wire.
 func (connection *wsConnection) enqueueTaskNotify(task store.Task) bool {
 	if connection == nil || !isTaskNotifyID(task.ID) {
@@ -594,9 +599,9 @@ func (connection *wsConnection) enqueueTaskNotify(task store.Task) bool {
 		return false
 	}
 	if connection.taskNotifyMailbox == nil {
-		connection.taskNotifyMailbox = make(map[uint32]store.Task, store.TaskDailyLoginID)
+		connection.taskNotifyMailbox = make(map[taskNotifyMailboxKey]store.Task, store.RandomDailyTaskCount+1)
 	}
-	connection.taskNotifyMailbox[task.ID] = task
+	connection.taskNotifyMailbox[taskNotifyMailboxKey{dayKey: task.DayKey, taskID: task.ID}] = task
 	if connection.taskNotifyReady {
 		connection.signalTaskNotifyLocked()
 	}
@@ -683,19 +688,22 @@ func (connection *wsConnection) runTaskNotifyMailbox(gateway *Gateway) {
 
 func (connection *wsConnection) takeTaskNotifyLocked() (store.Task, bool) {
 	var (
-		selectedID uint32
-		task       store.Task
+		selectedKey taskNotifyMailboxKey
+		selected    bool
+		task        store.Task
 	)
-	for taskID, candidate := range connection.taskNotifyMailbox {
-		if selectedID == 0 || taskID < selectedID {
-			selectedID = taskID
+	for key, candidate := range connection.taskNotifyMailbox {
+		if !selected || key.dayKey < selectedKey.dayKey ||
+			(key.dayKey == selectedKey.dayKey && key.taskID < selectedKey.taskID) {
+			selectedKey = key
+			selected = true
 			task = candidate
 		}
 	}
-	if selectedID == 0 {
+	if !selected {
 		return store.Task{}, false
 	}
-	delete(connection.taskNotifyMailbox, selectedID)
+	delete(connection.taskNotifyMailbox, selectedKey)
 	return task, true
 }
 
@@ -707,12 +715,7 @@ func (connection *wsConnection) signalTaskNotifyLocked() {
 }
 
 func isTaskNotifyID(taskID uint32) bool {
-	switch taskID {
-	case store.TaskPlantID, store.TaskHarvestID, store.TaskVisitID, store.TaskDailyLoginID:
-		return true
-	default:
-		return false
-	}
+	return store.IsDailyTaskID(taskID)
 }
 
 func (connection *wsConnection) subscribedTo(ownerUID uint64) bool {

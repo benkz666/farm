@@ -46,6 +46,23 @@ func TestTaskNotifyMailboxDefersUntilConnectionReady(t *testing.T) {
 	}
 }
 
+func TestTaskNotifyMailboxRetainsSameTaskAcrossLocalDays(t *testing.T) {
+	connection := &wsConnection{}
+	oldDay := store.Task{ID: store.TaskWaterID, DayKey: 20260731, Progress: 9, Target: 10}
+	newDay := store.Task{ID: store.TaskWaterID, DayKey: 20260801, Progress: 1, Target: 10}
+	if !connection.enqueueTaskNotify(oldDay) || !connection.enqueueTaskNotify(newDay) {
+		t.Fatal("enqueueTaskNotify rejected a valid cross-day task")
+	}
+
+	connection.taskNotifyMu.Lock()
+	first, firstOK := connection.takeTaskNotifyLocked()
+	second, secondOK := connection.takeTaskNotifyLocked()
+	connection.taskNotifyMu.Unlock()
+	if !firstOK || !secondOK || first != oldDay || second != newDay {
+		t.Fatalf("cross-day mailbox = (%#v,%v), (%#v,%v)", first, firstOK, second, secondOK)
+	}
+}
+
 func TestTaskNotifyMailboxIsolatesSlowConnectionAndCoalescesLatestTask(t *testing.T) {
 	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: farm.NewAggregate(42, "alice")})
 	slowStarted := make(chan struct{})

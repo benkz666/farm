@@ -459,7 +459,7 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			PlotIndex: uint8(request.PlotIndex),
 			Arg:       uint16(request.Arg),
 		}, h.now())
-		if result.Err == pkgerr.OK || (request.Kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
+		if result.Err == pkgerr.OK {
 			response = ActionResponse{
 				FarmSeq: farmActor.Aggregate.FarmSeq,
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -485,7 +485,7 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
 	}
-	if result.Err != pkgerr.OK && !(request.Kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
+	if result.Err != pkgerr.OK {
 		return CommandResponse{Err: result.Err}
 	}
 	h.publishDelta(delta, command.Originator)
@@ -597,6 +597,15 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: result.Err}
 	}
 	h.publishDelta(delta, command.Originator)
+	if !request.Buy {
+		if err := h.advanceSellTask(command.FarmUID); err != nil {
+			obs.L().Error("farmrpc advance sell task failed",
+				"component", "farmrpc",
+				"op", "advance_task",
+				"err", err.Error(),
+			)
+		}
+	}
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
 
@@ -648,7 +657,7 @@ func (h *Handler) pet(command CommandRequest) CommandResponse {
 		case PetStatus:
 			result.Err = pkgerr.OK
 		case PetActivate:
-			result = farmActor.Aggregate.PetActivate(request.DogType)
+			result = farmActor.Aggregate.PetActivate(request.DogType, h.now())
 		case PetFeed:
 			result = farmActor.Aggregate.PetFeed(farm.PetFeedReq{Grams: request.Grams}, h.now())
 		default:
@@ -661,6 +670,15 @@ func (h *Handler) pet(command CommandRequest) CommandResponse {
 	}
 	if result.Err != pkgerr.OK {
 		return CommandResponse{Err: result.Err}
+	}
+	if request.Kind == PetFeed {
+		if err := h.advancePetFeedTask(command.FarmUID); err != nil {
+			obs.L().Error("farmrpc advance pet feed task failed",
+				"component", "farmrpc",
+				"op", "advance_task",
+				"err", err.Error(),
+			)
+		}
 	}
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(status)}
 }
@@ -857,11 +875,45 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 		taskID = store.TaskPlantID
 	case farm.Harvest:
 		taskID = store.TaskHarvestID
+	case farm.Water:
+		taskID = store.TaskWaterID
+	case farm.Fertilize:
+		taskID = store.TaskFertilizeID
+	case farm.Till:
+		taskID = store.TaskTillID
+	case farm.Weed:
+		taskID = store.TaskWeedID
+	case farm.Pest:
+		taskID = store.TaskPestID
 	default:
 		return nil
 	}
 	dayKey := gameconf.LocalDayKey(h.now())
 	result, err := h.taskProgress.AdvanceTask(context.Background(), uid, dayKey, taskID, 1)
+	if err != nil {
+		return err
+	}
+	if result.Changed {
+		h.publishTaskNotify(uid, result.Task)
+	}
+	return nil
+}
+
+func (h *Handler) advanceSellTask(uid uint64) error {
+	return h.advanceTask(uid, store.TaskSellID)
+}
+
+func (h *Handler) advancePetFeedTask(uid uint64) error {
+	return h.advanceTask(uid, store.TaskFeedDogID)
+}
+
+func (h *Handler) advanceTask(uid uint64, taskID uint32) error {
+	if h.taskProgress == nil {
+		return nil
+	}
+	result, err := h.taskProgress.AdvanceTask(
+		context.Background(), uid, gameconf.LocalDayKey(h.now()), taskID, 1,
+	)
 	if err != nil {
 		return err
 	}
@@ -885,18 +937,15 @@ func (h *Handler) publishTaskNotify(uid uint64, task store.Task) {
 	if h.taskNotifyPublisher == nil || uid == 0 {
 		return
 	}
-	publisher := h.taskNotifyPublisher
-	go func() {
-		if err := publisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
-			obs.L().Error("farmrpc TaskNotify publish failed",
-				"component", "farmrpc",
-				"op", "publish_task_notify",
-				"uid", uid,
-				"task_id", task.ID,
-				"err", err.Error(),
-			)
-		}
-	}()
+	if err := h.taskNotifyPublisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
+		obs.L().Error("farmrpc TaskNotify publish failed",
+			"component", "farmrpc",
+			"op", "publish_task_notify",
+			"uid", uid,
+			"task_id", task.ID,
+			"err", err.Error(),
+		)
+	}
 }
 
 func (h *Handler) publishMailNotify(uid uint64, kind string) {

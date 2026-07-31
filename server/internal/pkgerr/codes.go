@@ -71,19 +71,19 @@ const (
 
 // 4.5 社交与偷菜（1400—1499）。
 const (
-	NotFriend           Code = 1401 // ERR_NOT_FRIEND 你们还不是好友
-	AlreadyFriend       Code = 1402 // ERR_ALREADY_FRIEND 你们已经是好友了
-	CannotFriendSelf    Code = 1403 // ERR_CANNOT_FRIEND_SELF 不能添加自己为好友
-	FriendLimitSelf     Code = 1404 // ERR_FRIEND_LIMIT_SELF 你的好友数已达 200 上限
-	FriendLimitPeer     Code = 1405 // ERR_FRIEND_LIMIT_PEER 对方好友数已达上限
-	InviteInvalid       Code = 1406 // ERR_INVITE_INVALID 邀请链接无效
-	InviteExpired       Code = 1407 // ERR_INVITE_EXPIRED 邀请链接已过期
-	StealSelf           Code = 1408 // ERR_STEAL_SELF 不能偷自己的菜
-	StealAlreadyDone    Code = 1409 // ERR_STEAL_ALREADY_DONE 这块地你本轮已经偷过了
-	StealQuotaExhausted Code = 1410 // ERR_STEAL_QUOTA_EXHAUSTED 这块地能偷的已经被偷光了
-	StealIntercepted    Code = 1411 // ERR_STEAL_INTERCEPTED 被看家狗抓住了
-	StealNoAfford       Code = 1412 // ERR_STEAL_NO_AFFORD 金币不足以承担被抓的赔付风险
-	UserNotFound        Code = 1413 // ERR_USER_NOT_FOUND 用户不存在
+	NotFriend             Code = 1401 // ERR_NOT_FRIEND 你们还不是好友
+	AlreadyFriend         Code = 1402 // ERR_ALREADY_FRIEND 你们已经是好友了
+	CannotFriendSelf      Code = 1403 // ERR_CANNOT_FRIEND_SELF 不能添加自己为好友
+	FriendLimitSelf       Code = 1404 // ERR_FRIEND_LIMIT_SELF 你的好友数已达 200 上限
+	FriendLimitPeer       Code = 1405 // ERR_FRIEND_LIMIT_PEER 对方好友数已达上限
+	InviteInvalid         Code = 1406 // ERR_INVITE_INVALID 邀请链接无效
+	InviteExpired         Code = 1407 // ERR_INVITE_EXPIRED 邀请链接已过期
+	StealSelf             Code = 1408 // ERR_STEAL_SELF 不能偷自己的菜
+	StealAlreadyDone      Code = 1409 // ERR_STEAL_ALREADY_DONE 这块地你本轮已经偷过了
+	StealQuotaExhausted   Code = 1410 // ERR_STEAL_QUOTA_EXHAUSTED 这块地能偷的已经被偷光了
+	StealIntercepted      Code = 1411 // ERR_STEAL_INTERCEPTED 被看家狗抓住了
+	StealNoAfford         Code = 1412 // ERR_STEAL_NO_AFFORD 金币不足以承担被抓的赔付风险
+	UserNotFound          Code = 1413 // ERR_USER_NOT_FOUND 用户不存在
 	FriendRequestPending  Code = 1414 // ERR_FRIEND_REQUEST_PENDING 已发送过好友申请
 	FriendRequestNotFound Code = 1415 // ERR_FRIEND_REQUEST_NOT_FOUND 申请不存在或已处理
 )
@@ -94,6 +94,7 @@ const (
 	DogNotOwned     Code = 1502 // ERR_DOG_NOT_OWNED 还没有这种狗
 	BowlFull        Code = 1503 // ERR_BOWL_FULL 狗盆已经满了
 	NoDogFood       Code = 1504 // ERR_NO_DOG_FOOD 狗粮不足
+	DogLocked       Code = 1505 // ERR_DOG_LOCKED 等级不足，尚未解锁这种狗
 )
 
 // 4.7 任务、邮件与图鉴（1600—1699）。

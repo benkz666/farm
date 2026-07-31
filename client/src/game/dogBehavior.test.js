@@ -18,12 +18,16 @@ test('看家狗模型放大且具有可见的双眼骨架节点', () => {
   const dog = createDogModel(0xb08968)
   const { rig } = dog.userData
 
-  assert.equal(dog.scale.x, 1.45)
-  assert.equal(dog.scale.y, 1.45)
+  assert.equal(dog.scale.x, 1.52)
+  assert.equal(dog.scale.y, 1.52)
   assert.equal(rig.eyes.length, 2)
+  assert.equal(rig.eyeWhites.length, 2)
   assert.equal(rig.eyeHighlights.length, 2)
   assert.ok(rig.eyes.every((eye) => eye.isMesh && eye.castShadow))
-  assert.ok(rig.eyes.every((eye) => eye.position.x > 0.3 && Math.abs(eye.position.z) > 0.2))
+  assert.ok(rig.eyes.every((eye) => eye.position.x > 0.3 && Math.abs(eye.position.z) < 0.25))
+  assert.ok(rig.tag?.isGroup)
+  assert.equal(rig.tail.userData.segments.length, 4)
+  assert.ok(rig.frontLegs.every((leg) => leg.userData.parts?.lower?.isMesh))
 })
 
 test('牧羊犬与藏獒具有独立体型和品种标志', () => {
@@ -33,10 +37,15 @@ test('牧羊犬与藏獒具有独立体型和品种标志', () => {
   assert.equal(shepherd.userData.breedId, 'muyang')
   assert.ok(shepherd.userData.rig.markings.saddle?.isMesh)
   assert.ok(shepherd.userData.rig.markings.blaze?.isMesh)
+  assert.ok(shepherd.userData.rig.markings.mask?.isMesh)
+  assert.ok(shepherd.userData.rig.markings.shoulderCape?.isMesh)
   assert.ok(shepherd.userData.rig.body.scale.x > 1.6, '牧羊犬躯干应更修长')
 
   assert.equal(mastiff.userData.breedId, 'zangao')
   assert.ok(mastiff.userData.rig.markings.mane?.isMesh)
+  assert.ok(mastiff.userData.rig.markings.maneCrown?.isMesh)
+  assert.equal(mastiff.userData.rig.markings.browPatches?.length, 2)
+  assert.ok(mastiff.userData.rig.eyes.every((eye) => Math.abs(eye.position.z) > 0.3), '藏獒眼睛应贴在宽头部表面')
   assert.ok(mastiff.scale.x > shepherd.scale.x, '藏獒整体应比牧羊犬更高大')
   assert.ok(mastiff.userData.rig.body.scale.z > shepherd.userData.rig.body.scale.z, '藏獒躯干应更宽厚')
   assert.ok(mastiff.userData.rig.ears[0].rotation.x < 0)
@@ -176,27 +185,47 @@ test('行走驱动对角腿步态，休息姿势平滑折叠骨架', () => {
   assert.ok(rig.hindLegs.every((leg) => leg.rotation.z < -0.45))
 })
 
-test('饥饿时沿外围通道返回休息点，补粮后恢复行为循环', () => {
-  const behavior = new DogBehaviorController({
-    random: sequenceRandom([0.05, 0.2, 0.5, 0.7, 0.4]),
-  })
-  const dog = createDogModel(0x4a3728)
-  behavior.attach(dog)
+test('狗粮耗尽时无论当前行为都原地停下休息，补粮后恢复循环', () => {
+  const cases = [DOG_STATES.WALK, DOG_STATES.TURN, DOG_STATES.SNIFF]
 
-  for (let frame = 0; frame < 1600 && behavior.state !== DOG_STATES.HUNGRY_REST; frame++) {
-    behavior.update(dog, 0.05, frame * 0.05, true)
-    assert.equal(isDogWalkablePoint(dog.position), true)
+  for (const initialState of cases) {
+    const behavior = new DogBehaviorController({
+      random: sequenceRandom([0.05, 0.2, 0.5, 0.7, 0.4]),
+    })
+    behavior.pathDistance = 11
+    behavior.position = dogPathPoint(11, 0.2)
+    behavior.state = initialState
+    behavior.speed = 1.4
+    behavior.route = [{ ...dogPathPoint(16, 0.2), pathDistance: 16 }]
+    const dog = createDogModel(0x4a3728)
+    behavior.attach(dog)
+    const stoppedAt = dog.position.clone()
+
+    const hungryResult = behavior.update(dog, 0.05, 1, true)
+    assert.equal(hungryResult.state, DOG_STATES.HUNGRY_REST)
+    assert.equal(hungryResult.speed, 0)
+    assert.equal(behavior.route.length, 0)
+    assert.deepEqual(dog.position.toArray(), stoppedAt.toArray())
+
+    for (let frame = 0; frame < 20; frame++) {
+      behavior.update(dog, 0.05, 1.05 + frame * 0.05, true)
+      assert.deepEqual(dog.position.toArray(), stoppedAt.toArray())
+    }
+
+    behavior.update(dog, 0.05, 3, false)
+    assert.equal(behavior.state, DOG_STATES.IDLE)
+    for (let frame = 0; frame < 200; frame++) {
+      behavior.update(dog, 0.05, 3.05 + frame * 0.05, false)
+    }
+    assert.ok([
+      DOG_STATES.TURN,
+      DOG_STATES.WALK,
+      DOG_STATES.IDLE,
+      DOG_STATES.SNIFF,
+      DOG_STATES.SIT,
+      DOG_STATES.LIE,
+    ].includes(behavior.state))
   }
-  assert.equal(behavior.state, DOG_STATES.HUNGRY_REST)
-  assert.deepEqual(
-    { x: Number(dog.position.x.toFixed(3)), z: Number(dog.position.z.toFixed(3)) },
-    { x: 12.5, z: 8.5 },
-  )
-
-  behavior.update(dog, 0.05, 90, false)
-  assert.equal(behavior.state, DOG_STATES.IDLE)
-  for (let frame = 0; frame < 200; frame++) behavior.update(dog, 0.05, 91 + frame * 0.05, false)
-  assert.ok([DOG_STATES.TURN, DOG_STATES.WALK, DOG_STATES.IDLE, DOG_STATES.SNIFF, DOG_STATES.SIT, DOG_STATES.LIE].includes(behavior.state))
 })
 
 test('异常大帧间隔会被限制，不会越界或产生非法坐标', () => {

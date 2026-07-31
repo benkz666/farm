@@ -127,10 +127,11 @@ func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
 		MatureAt:       40_000,
 	}
 	ownerAggregate.Pet = farm.PetState{
-		ActiveDog:   farm.DogMutt,
-		Owned:       1,
+		ActiveDog:   farm.DogShepherd,
+		Owned:       0b010,
+		Intercepts:  [3]uint16{0, 19, 0},
 		BowlEmptyAt: 100_000,
-		MsPerGram:   farm.MuttMsPerGram,
+		MsPerGram:   farm.ShepherdMsPerGram,
 	}
 	runtime := ownerRuntime{actors: map[uint64]*actor.FarmActor{
 		9: {Aggregate: ownerAggregate},
@@ -157,11 +158,17 @@ func TestOwnerInterceptedStealCreditsFrozenCompensation(t *testing.T) {
 	}
 	result := outcome.result
 
-	if result.Code != pkgerr.StealIntercepted || result.Compensation != 170 || result.DogType != farm.DogMutt {
+	if result.Code != pkgerr.StealIntercepted || result.Compensation != 170 || result.DogType != farm.DogShepherd {
 		t.Fatalf("result = %#v", result)
 	}
 	if ownerAggregate.Coin != 1_170 || ownerAggregate.Plots[0].StolenCount != 0 || len(ownerAggregate.Plots[0].Stealers) != 1 {
 		t.Fatalf("owner aggregate after interception = %#v", ownerAggregate)
+	}
+	if outcome.playerDelta == nil || outcome.playerDelta.Pet == nil ||
+		outcome.playerDelta.Pet.ActiveDog != farm.DogShepherd ||
+		outcome.playerDelta.Pet.DogLevel != 1 ||
+		outcome.playerDelta.Pet.InterceptionPct != 36 {
+		t.Fatalf("pet growth player delta = %#v", outcome.playerDelta)
 	}
 }
 

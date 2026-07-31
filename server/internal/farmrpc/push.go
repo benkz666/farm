@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"farm/server/internal/connreg"
@@ -28,6 +29,9 @@ const (
 	// Bound concurrent Gateway callbacks so one Publish cannot spawn unbounded
 	// goroutines when a room spans many Gateways.
 	maxParallelGatewayPush = 16
+
+	taskNotifyCoalesceWindow = 75 * time.Millisecond
+	maxPendingTaskNotifies   = 4096
 )
 
 // DeltaPushRequest is the legacy single-connection Farm→Gateway callback.
@@ -296,6 +300,24 @@ func (p *PlayerFanoutPublisher) PublishPlayerDelta(ctx context.Context, uid uint
 type TaskFanoutPublisher struct {
 	registry *connreg.Registry
 	pusher   TaskNotifyPusher
+
+	mu      sync.Mutex
+	flushMu sync.Mutex
+	pending map[taskNotifyKey]pendingTaskNotify
+	timer   *time.Timer
+	window  time.Duration
+	dropped atomic.Uint64
+}
+
+type taskNotifyKey struct {
+	uid    uint64
+	dayKey int64
+	taskID uint32
+}
+
+type pendingTaskNotify struct {
+	uid  uint64
+	task store.Task
 }
 
 // MailFanoutPublisher resolves every active connection of a player and forwards
@@ -330,14 +352,109 @@ func (p *MailFanoutPublisher) PublishMailNotify(ctx context.Context, uid uint64,
 
 // NewTaskFanoutPublisher constructs the Farm-side TaskNotify broadcaster.
 func NewTaskFanoutPublisher(registry *connreg.Registry, pusher TaskNotifyPusher) *TaskFanoutPublisher {
-	return &TaskFanoutPublisher{registry: registry, pusher: pusher}
+	return newTaskFanoutPublisher(registry, pusher, taskNotifyCoalesceWindow)
 }
 
-// PublishTaskNotify attempts all active player connections.
+func newTaskFanoutPublisher(registry *connreg.Registry, pusher TaskNotifyPusher, window time.Duration) *TaskFanoutPublisher {
+	if window <= 0 {
+		window = taskNotifyCoalesceWindow
+	}
+	return &TaskFanoutPublisher{
+		registry: registry,
+		pusher:   pusher,
+		pending:  make(map[taskNotifyKey]pendingTaskNotify),
+		window:   window,
+	}
+}
+
+// PublishTaskNotify keeps only the newest state for one uid/task within a short
+// window. This absorbs bursts before connection-registry lookups and internal
+// HTTP callbacks. When the bounded pending map is full, the new distinct key is
+// dropped as an advisory hint instead of blocking gameplay on synchronous HTTP;
+// TaskList remains the authoritative recovery path.
 func (p *TaskFanoutPublisher) PublishTaskNotify(ctx context.Context, uid uint64, task store.Task) error {
 	if p == nil || p.registry == nil || p.pusher == nil || uid == 0 {
 		return fmt.Errorf("farmrpc: TaskNotify publisher is not configured")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key := taskNotifyKey{uid: uid, dayKey: task.DayKey, taskID: task.ID}
+	p.mu.Lock()
+	if _, exists := p.pending[key]; !exists && len(p.pending) >= maxPendingTaskNotifies {
+		p.mu.Unlock()
+		dropped := p.dropped.Add(1)
+		if dropped == 1 || dropped%256 == 0 {
+			obs.L().Warn("farmrpc TaskNotify queue full; advisory hint dropped",
+				"component", "farmrpc",
+				"op", "queue_task_notify",
+				"dropped", dropped,
+			)
+		}
+		return nil
+	}
+	p.pending[key] = pendingTaskNotify{uid: uid, task: task}
+	if p.timer == nil {
+		p.timer = time.AfterFunc(p.window, p.flushTaskNotifies)
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *TaskFanoutPublisher) takePendingTaskNotifies() []pendingTaskNotify {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	items := make([]pendingTaskNotify, 0, len(p.pending))
+	for _, item := range p.pending {
+		items = append(items, item)
+	}
+	p.pending = make(map[taskNotifyKey]pendingTaskNotify)
+	p.timer = nil
+	return items
+}
+
+func (p *TaskFanoutPublisher) flushTaskNotifies() {
+	p.flushMu.Lock()
+	defer p.flushMu.Unlock()
+
+	items := p.takePendingTaskNotifies()
+	if len(items) == 0 {
+		return
+	}
+	workers := len(items)
+	if workers > maxParallelGatewayPush {
+		workers = maxParallelGatewayPush
+	}
+	jobs := make(chan pendingTaskNotify)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				err := p.deliverTaskNotify(ctx, item.uid, item.task)
+				cancel()
+				if err != nil {
+					obs.L().Error("farmrpc coalesced TaskNotify delivery failed",
+						"component", "farmrpc",
+						"op", "flush_task_notify",
+						"uid", item.uid,
+						"task_id", item.task.ID,
+						"err", err.Error(),
+					)
+				}
+			}
+		}()
+	}
+	for _, item := range items {
+		jobs <- item
+	}
+	close(jobs)
+	wg.Wait()
+}
+
+func (p *TaskFanoutPublisher) deliverTaskNotify(ctx context.Context, uid uint64, task store.Task) error {
 	refs, err := p.registry.Lookup(ctx, uid)
 	if err != nil {
 		return err

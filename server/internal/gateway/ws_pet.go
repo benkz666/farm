@@ -7,7 +7,9 @@ import (
 	"farm/server/internal/actor"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/store"
 )
 
 type petActivateRequest struct {
@@ -90,7 +92,7 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 			if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.DogType > 0xFF {
 				return errors.New("gateway: invalid pet activate payload")
 			}
-			result = farmActor.Aggregate.PetActivate(farm.DogType(payload.DogType))
+			result = farmActor.Aggregate.PetActivate(farm.DogType(payload.DogType), g.Now())
 		case CommandPetFeed:
 			var payload petFeedRequest
 			if err := unmarshalPayload(request.Payload, &payload); err != nil {
@@ -109,6 +111,15 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 	response.Err = result.Err
 	if result.Err == pkgerr.OK {
 		response.Payload = marshalPayload(status)
+		if request.Cmd == CommandPetFeed {
+			if err := g.advanceTask(connection.uid, store.TaskFeedDogID); err != nil {
+				obs.L().Error("gateway advance pet feed task failed",
+					"component", "gateway",
+					"op", "advance_task",
+					"err", err.Error(),
+				)
+			}
+		}
 	}
 	return response
 }

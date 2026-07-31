@@ -81,7 +81,11 @@ type TaskMailStore interface {
 
 // Task is the client-safe view of one calendar-day task.
 type Task struct {
-	ID         uint32 `json:"id"`
+	ID uint32 `json:"id"`
+	// DayKey identifies the server-local calendar day this task belongs to.
+	// It lets clients discard a delayed TaskNotify after the daily reset.
+	DayKey     int64  `json:"day_key"`
+	Kind       string `json:"kind"`
 	Title      string `json:"title"`
 	Progress   uint32 `json:"progress"`
 	Target     uint32 `json:"target"`
@@ -149,9 +153,10 @@ const (
 
 // Store 是 SessionStore 与 FarmStore 的唯一实现，组合 MySQL 与 Redis。
 type Store struct {
-	db      *sql.DB
-	rdb     *redis.Client
-	farmTTL time.Duration
+	db       *sql.DB
+	rdb      *redis.Client
+	farmTTL  time.Duration
+	taskInit dailyTaskInitCache
 }
 
 // New 用已建立的 *sql.DB / *redis.Client 组装 Store，farmTTL<=0 时用 DefaultFarmCacheTTL。

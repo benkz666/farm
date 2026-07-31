@@ -63,7 +63,7 @@ test('旧登录响应不污染新登录会话', async () => {
     getCurrentClient: () => current,
     fetch: async () => ({
       ok: true,
-      tasks: [{ id: 4, title: '每日登录', progress: 1, target: 1, reward_coin: 100, claimed: false }],
+      tasks: [{ id: 4, day_key: 20260731, title: '每日登录', progress: 1, target: 1, reward_coin: 100, claimed: false }],
       resetAt: 2000,
     }),
     getTasks: sink.getTasks,
@@ -79,7 +79,7 @@ test('旧登录响应不污染新登录会话', async () => {
 
   d.resolve({
     ok: true,
-    tasks: [{ id: 1, title: '旧播种', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    tasks: [{ id: 1, day_key: 20260730, title: '旧播种', progress: 0, target: 1, reward_coin: 20, claimed: false }],
     resetAt: 999,
   })
   const r1 = await p1
@@ -114,7 +114,7 @@ test('重连前响应不污染重连后（即使复用同一 client）', async (
     getCurrentClient: () => client,
     fetch: async () => ({
       ok: true,
-      tasks: [{ id: 2, title: '完成一次收获', progress: 1, target: 1, reward_coin: 30, claimed: false }],
+      tasks: [{ id: 2, day_key: 20260731, title: '完成一次收获', progress: 1, target: 1, reward_coin: 30, claimed: false }],
       resetAt: 5000,
     }),
     getTasks: sink.getTasks,
@@ -126,7 +126,7 @@ test('重连前响应不污染重连后（即使复用同一 client）', async (
 
   d.resolve({
     ok: true,
-    tasks: [{ id: 1, title: '重连前旧列表', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    tasks: [{ id: 1, day_key: 20260730, title: '重连前旧列表', progress: 0, target: 1, reward_coin: 20, claimed: false }],
     resetAt: 1,
   })
   const stale = await before
@@ -143,9 +143,19 @@ test('晚到旧 TaskList 不覆盖已到的 TaskNotify', async () => {
   const d = deferred()
 
   session.invalidate()
-  sink.setTasks([{
-    id: 1, taskId: '1', title: '完成一次播种', progress: 0, target: 1, rewardCoin: 20, done: false, claimed: false, rev: 0,
-  }])
+  await session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => ({
+      ok: true,
+      tasks: [{ id: 1, day_key: 20260731, title: '完成一次播种', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+      resetAt: 8000,
+    }),
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
   sink.writes.length = 0
 
   const listP = session.refreshTaskList({
@@ -159,7 +169,7 @@ test('晚到旧 TaskList 不覆盖已到的 TaskNotify', async () => {
   })
 
   const notified = session.applyTaskNotify(
-    { id: 1, title: '完成一次播种', progress: 1, target: 1, reward_coin: 20, claimed: false },
+    { id: 1, day_key: 20260731, title: '完成一次播种', progress: 1, target: 1, reward_coin: 20, claimed: false },
     { getTasks: sink.getTasks, setTasks: sink.setTasks, afterApply: sink.afterApply },
   )
   assert.equal(notified, true)
@@ -169,8 +179,8 @@ test('晚到旧 TaskList 不覆盖已到的 TaskNotify', async () => {
   d.resolve({
     ok: true,
     tasks: [
-      { id: 1, title: '完成一次播种', progress: 0, target: 1, reward_coin: 20, claimed: false },
-      { id: 2, title: '完成一次收获', progress: 0, target: 1, reward_coin: 30, claimed: false },
+      { id: 1, day_key: 20260731, title: '完成一次播种', progress: 0, target: 1, reward_coin: 20, claimed: false },
+      { id: 2, day_key: 20260731, title: '完成一次收获', progress: 0, target: 1, reward_coin: 30, claimed: false },
     ],
     resetAt: 8000,
   })
@@ -180,6 +190,36 @@ test('晚到旧 TaskList 不覆盖已到的 TaskNotify', async () => {
   assert.equal(sink.getTasks().find((t) => t.id === 1).progress, 1, 'notify 进度应保留')
   assert.equal(sink.getTasks().find((t) => t.id === 2).progress, 0, '列表其它任务仍应用')
   assert.equal(sink.getResetAt(), 8000)
+})
+
+test('跨日延迟 TaskNotify 不进入新一天任务板', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+
+  session.invalidate()
+  const result = await session.refreshTaskList({
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => ({
+      ok: true,
+      tasks: [{ id: 5, day_key: 20260801, title: '浇水 10 次', progress: 0, target: 10, reward_coin: 200, claimed: false }],
+      resetAt: 9000,
+    }),
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  })
+  assert.equal(result.applied, true)
+  assert.equal(session.currentDayKey, 20260801)
+
+  const applied = session.applyTaskNotify(
+    { id: 1, day_key: 20260731, title: '播种 6 次', progress: 5, target: 6, reward_coin: 200, claimed: false },
+    { getTasks: sink.getTasks, setTasks: sink.setTasks, afterApply: sink.afterApply },
+  )
+  assert.equal(applied, false)
+  assert.deepEqual(sink.getTasks().map((task) => task.id), [5])
 })
 
 test('dispose 后无 state/HUD 写入', async () => {
@@ -202,14 +242,14 @@ test('dispose 后无 state/HUD 写入', async () => {
   session.dispose()
   d.resolve({
     ok: true,
-    tasks: [{ id: 1, title: 'x', progress: 1, target: 1, reward_coin: 20, claimed: false }],
+    tasks: [{ id: 1, day_key: 20260731, title: 'x', progress: 1, target: 1, reward_coin: 20, claimed: false }],
     resetAt: 9,
   })
   const r = await p
   assert.equal(r.applied, false)
   assert.equal(r.reason, 'disposed')
   assert.equal(sink.writes.length, 0)
-  assert.equal(session.applyTaskNotify({ id: 1, progress: 1, target: 1 }, {
+  assert.equal(session.applyTaskNotify({ id: 1, day_key: 20260731, progress: 1, target: 1 }, {
     getTasks: sink.getTasks,
     setTasks: sink.setTasks,
     afterApply: sink.afterApply,
@@ -235,6 +275,7 @@ test('同会话乱序 latest-wins：旧响应不覆盖新请求', async () => {
   })
   const p2 = session.refreshTaskList({
     client,
+    force: true,
     getCurrentClient: () => client,
     fetch: async () => d2.promise,
     getTasks: sink.getTasks,
@@ -245,14 +286,14 @@ test('同会话乱序 latest-wins：旧响应不覆盖新请求', async () => {
 
   d2.resolve({
     ok: true,
-    tasks: [{ id: 3, title: '拜访', progress: 1, target: 1, reward_coin: 40, claimed: false }],
+    tasks: [{ id: 3, day_key: 20260731, title: '拜访', progress: 1, target: 1, reward_coin: 40, claimed: false }],
     resetAt: 300,
   })
   assert.equal((await p2).applied, true)
 
   d1.resolve({
     ok: true,
-    tasks: [{ id: 1, title: '旧请求', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    tasks: [{ id: 1, day_key: 20260731, title: '旧请求', progress: 0, target: 1, reward_coin: 20, claimed: false }],
     resetAt: 100,
   })
   const r1 = await p1
@@ -260,6 +301,43 @@ test('同会话乱序 latest-wins：旧响应不覆盖新请求', async () => {
   assert.equal(r1.reason, 'stale_request')
   assert.equal(sink.getTasks()[0].id, 3)
   assert.equal(sink.getResetAt(), 300)
+})
+
+test('同会话同时刷新复用一条在途 TaskList 请求', async () => {
+  const session = createTaskSession()
+  const sink = makeSink()
+  const client = { id: 'c' }
+  const d = deferred()
+  let fetchCalls = 0
+  const options = {
+    client,
+    getCurrentClient: () => client,
+    fetch: async () => {
+      fetchCalls += 1
+      return d.promise
+    },
+    getTasks: sink.getTasks,
+    setTasks: sink.setTasks,
+    setResetAt: sink.setResetAt,
+    afterApply: sink.afterApply,
+  }
+
+  session.invalidate()
+  const loginRefresh = session.refreshTaskList(options)
+  const panelRefresh = session.refreshTaskList(options)
+  assert.equal(fetchCalls, 1)
+
+  d.resolve({
+    ok: true,
+    tasks: [{ id: 4, day_key: 20260731, title: '每日登录', progress: 1, target: 1, reward_coin: 100, claimed: false }],
+    resetAt: 9000,
+  })
+  const [loginResult, panelResult] = await Promise.all([loginRefresh, panelRefresh])
+  assert.equal(loginResult.applied, true)
+  assert.equal(panelResult.applied, true)
+  assert.equal(fetchCalls, 1)
+  assert.equal(sink.getResetAt(), 9000)
+  assert.equal(sink.writes.filter((item) => item.type === 'tasks').length, 1)
 })
 
 test('client 已切换时旧响应不应用', async () => {
@@ -283,7 +361,7 @@ test('client 已切换时旧响应不应用', async () => {
   current = clientB
   d.resolve({
     ok: true,
-    tasks: [{ id: 1, title: 'x', progress: 0, target: 1, reward_coin: 20, claimed: false }],
+    tasks: [{ id: 1, day_key: 20260731, title: 'x', progress: 0, target: 1, reward_coin: 20, claimed: false }],
     resetAt: 1,
   })
   const r = await p
@@ -295,19 +373,29 @@ test('client 已切换时旧响应不应用', async () => {
 test('mergeListRespectingPush：仅保留请求开始后被 push 更新的任务', () => {
   const merged = mergeListRespectingPush(
     [
-      { id: 1, progress: 1, rev: 3 },
-      { id: 2, progress: 0, rev: 0 },
+      { id: 1, dayKey: 20260731, progress: 1, rev: 3 },
+      { id: 2, dayKey: 20260731, progress: 0, rev: 0 },
     ],
     [
-      { id: 1, progress: 0, rev: 0 },
-      { id: 2, progress: 1, rev: 0 },
-      { id: 3, progress: 0, rev: 0 },
+      { id: 1, dayKey: 20260731, progress: 0, rev: 0 },
+      { id: 2, dayKey: 20260731, progress: 1, rev: 0 },
+      { id: 3, dayKey: 20260731, progress: 0, rev: 0 },
     ],
     2,
   )
   assert.equal(merged.find((t) => t.id === 1).progress, 1)
   assert.equal(merged.find((t) => t.id === 2).progress, 1)
   assert.equal(merged.find((t) => t.id === 3).progress, 0)
+})
+
+test('mergeListRespectingPush：跨日旧 push 不覆盖新列表', () => {
+  const merged = mergeListRespectingPush(
+    [{ id: 1, dayKey: 20260731, progress: 6, rev: 3 }],
+    [{ id: 1, dayKey: 20260801, progress: 0, rev: 0 }],
+    2,
+  )
+  assert.equal(merged[0].dayKey, 20260801)
+  assert.equal(merged[0].progress, 0)
 })
 
 test('contextValid 失败时可供上层安排重试，但不写 tasks', async () => {

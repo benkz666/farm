@@ -1,16 +1,25 @@
 package farm
 
 import (
+	"math"
+
 	"farm/server/internal/pkgerr"
 )
 
 const (
 	// DogFoodShopItemID is sold by the gram; its item count is the gram count.
-	DogFoodShopItemID uint16 = 2_000
-	DogMuttShopItemID uint16 = 2_001
+	DogFoodShopItemID     uint16 = 2_000
+	DogMuttShopItemID     uint16 = 2_001
+	DogShepherdShopItemID uint16 = 2_002
+	DogMastiffShopItemID  uint16 = 2_003
 
 	DogBowlCapacityGrams uint32 = 120
 	MuttMsPerGram        int64  = 1_500 // demo 档：土狗每缩放小时消耗 4g。
+	ShepherdMsPerGram    int64  = 1_200 // demo 档：牧羊犬每缩放小时消耗 5g。
+	MastiffMsPerGram     int64  = 857   // demo 档：藏獒每缩放小时消耗 7g。
+
+	DogMaxLevel           uint8  = 5
+	DogInterceptsPerLevel uint16 = 20
 )
 
 // DogType is stable in storage and protocol responses. Zero means no active dog.
@@ -19,6 +28,9 @@ type DogType uint8
 const (
 	DogNone DogType = iota
 	DogMutt
+	DogShepherd
+	DogMastiff
+	DogTypeCount
 )
 
 // PetState persists dog ownership and the bowl's self-describing expiration.
@@ -26,21 +38,31 @@ const (
 type PetState struct {
 	ActiveDog   DogType   `json:"active_dog"`
 	Owned       uint8     `json:"owned"`
-	DogLevel    [1]uint8  `json:"dog_level"`
-	Intercepts  [1]uint16 `json:"intercepts"`
+	DogLevel    [3]uint8  `json:"dog_level"`
+	Intercepts  [3]uint16 `json:"intercepts"`
 	BowlEmptyAt int64     `json:"bowl_empty_at"`
 	MsPerGram   int64     `json:"ms_per_gram"`
 }
 
-// PetStatus is the client-facing projection of PetState.
-type PetStatus struct {
-	ActiveDog       DogType `json:"active_dog"`
-	Owned           uint8   `json:"owned"`
-	BowlGrams       uint32  `json:"bowl_grams"`
-	BowlEmptyAt     int64   `json:"bowl_empty_at"`
-	DogLevel        uint8   `json:"dog_level"`
+// PetDogStatus exposes one owned dog's independent growth state.
+type PetDogStatus struct {
+	DogType         DogType `json:"dog_type"`
+	Level           uint8   `json:"level"`
 	Intercepts      uint16  `json:"intercepts"`
 	InterceptionPct uint8   `json:"interception_pct"`
+}
+
+// PetStatus is the client-facing projection of PetState.
+type PetStatus struct {
+	ActiveDog       DogType        `json:"active_dog"`
+	Owned           uint8          `json:"owned"`
+	BowlGrams       uint32         `json:"bowl_grams"`
+	BowlEmptyAt     int64          `json:"bowl_empty_at"`
+	MsPerGram       int64          `json:"ms_per_gram"`
+	DogLevel        uint8          `json:"dog_level"`
+	Intercepts      uint16         `json:"intercepts"`
+	InterceptionPct uint8          `json:"interception_pct"`
+	Dogs            []PetDogStatus `json:"dogs"`
 }
 
 // PetFeedReq feeds a positive number of dog-food grams.
@@ -50,15 +72,16 @@ type PetFeedReq struct {
 
 // HasDog reports whether this farm owns a dog type.
 func (p PetState) HasDog(dog DogType) bool {
-	if dog == DogNone || dog > DogMutt {
+	index, ok := dogIndex(dog)
+	if !ok {
 		return false
 	}
-	return p.Owned&(1<<uint(dog-1)) != 0
+	return p.Owned&(1<<uint(index)) != 0
 }
 
 // IsGuarding reports whether an active dog still has food.
 func (p PetState) IsGuarding(now int64) bool {
-	return p.ActiveDog != DogNone && p.BowlEmptyAt > now && p.MsPerGram > 0
+	return p.HasDog(p.ActiveDog) && p.BowlEmptyAt > now && p.MsPerGram > 0
 }
 
 // ShouldIntercept applies the configured percentage to a uniformly distributed
@@ -68,19 +91,34 @@ func (p PetState) ShouldIntercept(now int64, roll uint8) bool {
 }
 
 func (p PetState) interceptionPct() uint8 {
-	if p.ActiveDog != DogMutt {
+	return p.interceptionPctFor(p.ActiveDog)
+}
+
+func (p PetState) interceptionPctFor(dog DogType) uint8 {
+	index, ok := dogIndex(dog)
+	if !ok {
 		return 0
 	}
-	return 25 + p.DogLevel[0]
+	return dogBaseInterception(dog) + min(p.DogLevel[index], DogMaxLevel)
 }
 
 func (p *PetState) recordIntercept() {
-	if p == nil || p.ActiveDog != DogMutt {
+	if p == nil {
 		return
 	}
-	p.Intercepts[0]++
-	if p.DogLevel[0] < 5 && p.Intercepts[0]/20 > uint16(p.DogLevel[0]) {
-		p.DogLevel[0]++
+	index, ok := dogIndex(p.ActiveDog)
+	if !ok || !p.HasDog(p.ActiveDog) {
+		return
+	}
+	if p.Intercepts[index] < math.MaxUint16 {
+		p.Intercepts[index]++
+	}
+	level := uint8(p.Intercepts[index] / DogInterceptsPerLevel)
+	if level > DogMaxLevel {
+		level = DogMaxLevel
+	}
+	if level > p.DogLevel[index] {
+		p.DogLevel[index] = level
 	}
 }
 
@@ -93,15 +131,39 @@ func (p PetState) remainingGrams(now int64) uint32 {
 
 // Status returns a derived view rather than persisting a mutable food counter.
 func (p PetState) Status(now int64) PetStatus {
-	return PetStatus{
-		ActiveDog:       p.ActiveDog,
-		Owned:           p.Owned,
-		BowlGrams:       p.remainingGrams(now),
-		BowlEmptyAt:     p.BowlEmptyAt,
-		DogLevel:        p.DogLevel[0],
-		Intercepts:      p.Intercepts[0],
-		InterceptionPct: p.interceptionPct(),
+	status := PetStatus{
+		ActiveDog:   p.ActiveDog,
+		Owned:       p.Owned,
+		BowlGrams:   p.remainingGrams(now),
+		BowlEmptyAt: p.BowlEmptyAt,
+		MsPerGram:   p.MsPerGram,
+		Dogs:        make([]PetDogStatus, 0, int(DogTypeCount-1)),
 	}
+	for dog := DogMutt; dog < DogTypeCount; dog++ {
+		if !p.HasDog(dog) {
+			continue
+		}
+		index, _ := dogIndex(dog)
+		entry := PetDogStatus{
+			DogType:         dog,
+			Level:           min(p.DogLevel[index], DogMaxLevel),
+			Intercepts:      p.Intercepts[index],
+			InterceptionPct: p.interceptionPctFor(dog),
+		}
+		status.Dogs = append(status.Dogs, entry)
+		if dog == p.ActiveDog {
+			status.DogLevel = entry.Level
+			status.Intercepts = entry.Intercepts
+			status.InterceptionPct = entry.InterceptionPct
+		}
+	}
+	if !p.HasDog(status.ActiveDog) {
+		status.ActiveDog = DogNone
+		status.BowlGrams = 0
+		status.BowlEmptyAt = 0
+		status.MsPerGram = 0
+	}
+	return status
 }
 
 // PetStatus returns the current pet view at now.
@@ -112,15 +174,26 @@ func (a *Aggregate) PetStatus(now int64) PetStatus {
 	return a.Pet.Status(now)
 }
 
-// PetActivate changes the only active guard dog.
-func (a *Aggregate) PetActivate(dog DogType) ActionResult {
+// PetActivate changes the only active guard dog and preserves the remaining
+// whole grams while applying the newly active breed's consumption rate.
+func (a *Aggregate) PetActivate(dog DogType, now int64) ActionResult {
 	if a == nil {
 		return ActionResult{Err: pkgerr.Internal}
 	}
 	if !a.Pet.HasDog(dog) {
 		return ActionResult{Err: pkgerr.DogNotOwned}
 	}
+	if a.Pet.ActiveDog == dog {
+		return a.okPatch(0)
+	}
+	remaining := a.Pet.remainingGrams(now)
 	a.Pet.ActiveDog = dog
+	a.Pet.MsPerGram = dogMsPerGram(dog)
+	if remaining > 0 {
+		a.Pet.BowlEmptyAt = now + int64(remaining)*a.Pet.MsPerGram
+	} else {
+		a.Pet.BowlEmptyAt = 0
+	}
 	a.FarmSeq++
 	return a.okPatch(0)
 }
@@ -133,6 +206,10 @@ func (a *Aggregate) PetFeed(req PetFeedReq, now int64) ActionResult {
 	}
 	if req.Grams == 0 {
 		return ActionResult{Err: pkgerr.BadQuantity}
+	}
+	rate := dogMsPerGram(a.Pet.ActiveDog)
+	if rate <= 0 || !a.Pet.HasDog(a.Pet.ActiveDog) {
+		return ActionResult{Err: pkgerr.DogNotOwned}
 	}
 	remaining := a.Pet.remainingGrams(now)
 	if remaining >= DogBowlCapacityGrams {
@@ -150,7 +227,7 @@ func (a *Aggregate) PetFeed(req PetFeedReq, now int64) ActionResult {
 	if a.Items[key] == 0 {
 		delete(a.Items, key)
 	}
-	a.Pet.MsPerGram = MuttMsPerGram
+	a.Pet.MsPerGram = rate
 	a.Pet.BowlEmptyAt = now + int64(remaining+add)*a.Pet.MsPerGram
 	a.FarmSeq++
 	return a.okPatch(0)
@@ -195,4 +272,37 @@ func (a *Aggregate) RecordPetIntercept() {
 		return
 	}
 	a.Pet.recordIntercept()
+}
+
+func dogIndex(dog DogType) (int, bool) {
+	if dog < DogMutt || dog >= DogTypeCount {
+		return 0, false
+	}
+	return int(dog - DogMutt), true
+}
+
+func dogBaseInterception(dog DogType) uint8 {
+	switch dog {
+	case DogMutt:
+		return 25
+	case DogShepherd:
+		return 35
+	case DogMastiff:
+		return 45
+	default:
+		return 0
+	}
+}
+
+func dogMsPerGram(dog DogType) int64 {
+	switch dog {
+	case DogMutt:
+		return MuttMsPerGram
+	case DogShepherd:
+		return ShepherdMsPerGram
+	case DogMastiff:
+		return MastiffMsPerGram
+	default:
+		return 0
+	}
 }

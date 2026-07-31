@@ -6,6 +6,8 @@
  * @param {object} t
  * @returns {{
  *   id: number,
+ *   dayKey: number,
+ *   kind: 'fixed'|'random',
  *   taskId: string,
  *   title: string,
  *   progress: number,
@@ -13,19 +15,38 @@
  *   rewardCoin: number,
  *   done: boolean,
  *   claimed: boolean,
- * }}
+ * }|null}
  */
 export function mapServerTask(t) {
   const id = Number(t?.id)
-  const progress = Number(t?.progress) || 0
-  const target = Number(t?.target) || 1
+  const dayKey = Number(t?.day_key)
+  const progress = Number(t?.progress)
+  const target = Number(t?.target)
+  const rewardCoin = Number(t?.reward_coin)
+  const title = typeof t?.title === 'string' ? t.title.trim() : ''
+
+  // 标题、目标和奖励均是服务端任务定义的一部分。客户端不为缺失字段
+  // 自行推导默认值，以免旧包或异常推送被误展示为一条“本地任务”。
+  if (
+    !Number.isSafeInteger(id) || id <= 0 ||
+    !Number.isSafeInteger(dayKey) || dayKey <= 0 ||
+    !Number.isSafeInteger(progress) || progress < 0 ||
+    !Number.isSafeInteger(target) || target <= 0 ||
+    !Number.isSafeInteger(rewardCoin) || rewardCoin < 0 ||
+    !title || typeof t?.claimed !== 'boolean'
+  ) {
+    return null
+  }
+
   return {
     id,
+    dayKey,
+    kind: t?.kind === 'fixed' ? 'fixed' : 'random',
     taskId: String(id),
-    title: t?.title || `任务 ${id}`,
+    title,
     progress,
     target,
-    rewardCoin: Number(t?.reward_coin) || 0,
+    rewardCoin,
     done: progress >= target,
     claimed: !!t?.claimed,
   }
@@ -35,7 +56,12 @@ export function mapServerTask(t) {
  * @param {unknown} tasks
  */
 export function mapServerTasks(tasks) {
-  return (Array.isArray(tasks) ? tasks : []).map(mapServerTask)
+  const mapped = []
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    const next = mapServerTask(task)
+    if (next) mapped.push(next)
+  }
+  return mapped
 }
 
 /**
@@ -45,9 +71,7 @@ export function mapServerTasks(tasks) {
  */
 export function applyTaskNotify(tasks, payload) {
   const next = mapServerTask(payload || {})
-  if (!Number.isFinite(next.id) || next.id <= 0) {
-    return Array.isArray(tasks) ? [...tasks] : []
-  }
+  if (!next) return null
   const list = Array.isArray(tasks) ? [...tasks] : []
   const idx = list.findIndex((t) => Number(t.id) === next.id)
   if (idx >= 0) list[idx] = next

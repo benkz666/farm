@@ -328,6 +328,7 @@ message StealRsp {
 | 1502 | `ERR_DOG_NOT_OWNED` | 还没有这种狗 | 12.1 |
 | 1503 | `ERR_BOWL_FULL` | 狗盆已经满了 | 12.2 |
 | 1504 | `ERR_NO_DOG_FOOD` | 狗粮不足 | 12.2 |
+| 1505 | `ERR_DOG_LOCKED` | 等级不足，尚未解锁这种狗 | 12.1 |
 
 ### 4.7 任务、邮件与图鉴（1600—1699）
 
@@ -431,15 +432,17 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 
 | cmd | 名称 | 说明 |
 | ---: | --- | --- |
-| 500 | `PetStatus` | 狗状态、盆内余量、等级、拦截次数 |
+| 500 | `PetStatus` | 当前启用狗、拥有位图、盆内余量，以及各狗独立等级/拦截次数 |
 | 502 | `PetActivate` | 切换启用的狗（策划 12.1：同一时刻只启用一条） |
 | 504 | `PetFeed` | 喂狗粮（策划 12.2） |
+
+`PetStatus` 保留当前启用狗的兼容字段：`active_dog`、`owned`、`bowl_grams`、`bowl_empty_at`、`dog_level`、`intercepts`、`interception_pct`，并返回 `ms_per_gram` 供客户端按权威到期时间插值显示余粮。新增 `dogs[]` 返回所有已拥有狗，单项包含 `dog_type`、`level`、`intercepts` 与 `interception_pct`。狗类型稳定为 `1=土狗`、`2=牧羊犬`、`3=藏獒`；商店商品分别为 `2001`、`2002`、`2003`。
 
 ### 5.7 任务、邮件、图鉴（600—699）
 
 | cmd | 名称 | 说明 |
 | ---: | --- | --- |
-| 600 | `TaskList` | 当前服务器本地自然日的 4 条任务与进度，含下次 00:00 的 `reset_at` |
+| 600 | `TaskList` | 当前服务器本地自然日的固定任务与随机任务（当前共 6 条）及进度，含下次 00:00 的 `reset_at` |
 | 602 | `TaskClaim` | 领取任务奖励，奖励直接入账并返回奖励回执；每日登录为 task_id=4 |
 | 604 | `MailList` | 收件箱，个人邮件与全服公告归并 |
 | 606 | `MailRead` | 标记已读；`mail_id` 指定单封，`all=true` 批量标记当前收件箱 |
@@ -460,7 +463,7 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 
 `PlayerDelta` 的存在是必要的：访客在好友农场浇水获得的经验、被偷菜后的仓库变化、看家狗拦截获得的赔付，这些都不属于任何一个「房间」，无法通过 `FarmDelta` 送达。
 
-`TaskNotify` 的 `payload` 是单条 `Task`，字段为 `id`、`title`、`progress`、`target`、`reward_coin` 与 `claimed`。它独立于当前所在房间，按 uid 推送到该玩家当前有效连接；重复动作未改变已完成任务时不推送。每日登录（task_id=4）由初始 `TaskList` 呈现完成状态，不额外发送该推送。
+`TaskNotify` 的 `payload` 是单条 `Task`，字段为 `id`、`day_key`（服务端本地自然日）、`kind`（`fixed` / `random`）、`title`、`progress`、`target`、`reward_coin` 与 `claimed`。它独立于当前所在房间，按 uid 推送到该玩家当前有效连接；客户端仅合并与当前任务板 `day_key` 一致的通知，避免跨午夜延迟包污染新一天的随机任务。重复动作未改变已完成任务时不推送。服务端允许在短窗口内合并同一自然日同一任务的连续进度，只保证投递最新权威状态，不保证客户端观察到每一个中间数值。每日登录（task_id=4）由初始 `TaskList` 呈现完成状态，不额外发送该推送。
 
 `CodexList` 的响应 `payload.entries` 按 `crop_id` 升序返回已解锁条目；每项包含 `crop_id`、`harvest_count`、`tier`（`wood` / `bronze` / `silver` / `gold`）和 `next_target`，并以 `payload.total` 返回配置中的作物总数。成功收获响应的 `patch.codex_progress` 携带本次作物的最新条目；若本次新生成奖励邮件，还会返回 `codex_rewards`，并通过 9004 通知客户端刷新邮箱。
 

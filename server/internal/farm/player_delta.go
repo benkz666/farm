@@ -8,6 +8,7 @@ type PlayerDelta struct {
 	Level     uint16            `json:"level"`
 	Bag       map[string]uint32 `json:"bag"`
 	Warehouse map[string]uint32 `json:"warehouse"`
+	Pet       *PetStatus        `json:"pet,omitempty"`
 }
 
 // PlayerDelta snapshots personal resources after an authoritative mutation.

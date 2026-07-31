@@ -211,7 +211,7 @@ func TestApplyPlotActionWeedAndPestClearHazards(t *testing.T) {
 	})
 }
 
-func TestApplyPlotActionMatureCareIsNoOp(t *testing.T) {
+func TestApplyPlotActionMatureCareIsRejectedWithoutMutation(t *testing.T) {
 	for _, kind := range []PlotActionKind{Water, Weed, Pest} {
 		t.Run(kind.String(), func(t *testing.T) {
 			agg := NewAggregate(1, "alice")
@@ -226,8 +226,8 @@ func TestApplyPlotActionMatureCareIsNoOp(t *testing.T) {
 
 			result := agg.ApplyPlotAction(PlotAction{Kind: kind, PlotIndex: 0}, actionNow)
 
-			if result.Err != pkgerr.OK {
-				t.Fatalf("Err = %d, want OK", result.Err)
+			if result.Err != pkgerr.PlotNotGrowing {
+				t.Fatalf("Err = %d, want PlotNotGrowing", result.Err)
 			}
 			if !reflect.DeepEqual(*agg, before) {
 				t.Fatalf("mature care action mutated aggregate:\n got %#v\nwant %#v", *agg, &before)
@@ -245,7 +245,7 @@ func cloneAggregate(a *Aggregate) Aggregate {
 	return cp
 }
 
-func TestApplyPlotActionClearFailureDeductsGrowingHealth(t *testing.T) {
+func TestApplyPlotActionClearGrowingFailsWithoutMutation(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Plots[0] = Plot{
 		State:          StateGrowing,
@@ -255,15 +255,107 @@ func TestApplyPlotActionClearFailureDeductsGrowingHealth(t *testing.T) {
 		LastSettleAt:   actionNow,
 		LastWaterAt:    actionNow,
 	}
+	before := cloneAggregate(agg)
 
 	result := agg.ApplyPlotAction(PlotAction{Kind: Clear, PlotIndex: 0}, actionNow)
 
 	if result.Err != pkgerr.PlotNotCleanable {
 		t.Fatalf("Err = %d, want %d", result.Err, pkgerr.PlotNotCleanable)
 	}
-	if got, want := agg.Plots[0].AccruedWeighted, int64(10_000); got != want {
-		t.Fatalf("AccruedWeighted = %d, want %d", got, want)
+	if !reflect.DeepEqual(*agg, before) {
+		t.Fatalf("failed clear mutated aggregate:\n got %#v\nwant %#v", *agg, &before)
 	}
+}
+
+func TestPlotActionPermissionMatrixMatchesDesign(t *testing.T) {
+	want := map[uint8]map[PlotActionKind]bool{
+		StateWasteland: {Till: true},
+		StateTilled:    {Plant: true},
+		StateGrowing:   {Water: true, Weed: true, Pest: true, Fertilize: true},
+		StateMature:    {Harvest: true, Steal: true},
+		StateResidue:   {Clear: true},
+		StateWithered:  {Clear: true},
+	}
+	for state := uint8(0); state < StateCount; state++ {
+		for action := Till; action <= Steal; action++ {
+			if got, expected := AllowsPlotAction(state, action), want[state][action]; got != expected {
+				t.Fatalf("state=%d action=%s allowed=%t, want %t", state, action, got, expected)
+			}
+		}
+	}
+}
+
+func TestSuccessfulTillAndClearAwardEligibleHiddenSeeds(t *testing.T) {
+	originalRandom := hiddenSeedRandom
+	t.Cleanup(func() { hiddenSeedRandom = originalRandom })
+
+	rolls := []uint32{0, 0, 0, 1}
+	hiddenSeedRandom = func(limit uint32) (uint32, error) {
+		if len(rolls) == 0 {
+			t.Fatalf("unexpected random roll with limit %d", limit)
+		}
+		got := rolls[0]
+		rolls = rolls[1:]
+		if got >= limit {
+			t.Fatalf("roll %d outside limit %d", got, limit)
+		}
+		return got, nil
+	}
+
+	agg := NewAggregate(1, "alice")
+	agg.Exp = 4_000 // Lv.20；成功动作会重新按经验计算等级。
+	agg.RecalcLevel()
+	if result := agg.ApplyPlotAction(PlotAction{Kind: Till, PlotIndex: 0}, actionNow); result.Err != pkgerr.OK {
+		t.Fatalf("Till Err = %d, want OK", result.Err)
+	}
+	if got := agg.Items[SeedItem(27)]; got != 1 {
+		t.Fatalf("ginseng seeds = %d, want 1", got)
+	}
+
+	agg.Plots[0] = Plot{State: StateResidue, CropID: 1}
+	if result := agg.ApplyPlotAction(PlotAction{Kind: Clear, PlotIndex: 0}, actionNow); result.Err != pkgerr.OK {
+		t.Fatalf("Clear Err = %d, want OK", result.Err)
+	}
+	if got := agg.Items[SeedItem(28)]; got != 1 {
+		t.Fatalf("lingzhi seeds = %d, want 1", got)
+	}
+}
+
+func TestHiddenSeedDropRespectsChanceAndLevel(t *testing.T) {
+	originalRandom := hiddenSeedRandom
+	t.Cleanup(func() { hiddenSeedRandom = originalRandom })
+
+	t.Run("miss", func(t *testing.T) {
+		hiddenSeedRandom = func(limit uint32) (uint32, error) {
+			if limit != hiddenSeedDropChanceDenominator {
+				t.Fatalf("limit = %d, want chance denominator", limit)
+			}
+			return hiddenSeedDropThreshold, nil
+		}
+		agg := NewAggregate(1, "alice")
+		agg.grantHiddenSeed()
+		if len(agg.Items) != 0 {
+			t.Fatalf("items = %#v, want no drop", agg.Items)
+		}
+	})
+
+	t.Run("only eligible hidden crop", func(t *testing.T) {
+		rolls := []uint32{0, 0}
+		hiddenSeedRandom = func(limit uint32) (uint32, error) {
+			got := rolls[0]
+			rolls = rolls[1:]
+			if got >= limit {
+				t.Fatalf("roll %d outside limit %d", got, limit)
+			}
+			return got, nil
+		}
+		agg := NewAggregate(1, "alice")
+		agg.Level = 9
+		agg.grantHiddenSeed()
+		if got := agg.Items[SeedItem(27)]; got != 1 || len(agg.Items) != 1 {
+			t.Fatalf("items = %#v, want only ginseng", agg.Items)
+		}
+	})
 }
 
 func TestApplyPlotActionFertilizeMovesMatureAtWithoutChangingSeasonDuration(t *testing.T) {

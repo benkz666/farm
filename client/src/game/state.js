@@ -1,7 +1,7 @@
 // ============================================================
 // 游戏状态：创建、派生计算（期 3：不再以 localStorage 为权威）
 // ============================================================
-import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, TASK_POOL, DAILY_TASK_COUNT, logicDayStart } from './config.js';
+import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, logicDayStart } from './config.js';
 
 // 地块状态机（5.1 节）
 export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered' };
@@ -43,8 +43,11 @@ export function defaultState() {
     unlockedPlots: INITIAL_PLOTS,
     inventory: { seeds: {}, fertilizers: { normal: 0, fast: 0, super: 0 }, dogFood: 0 },
     warehouse: {},        // cropId -> 果实数
-    dog: null,            // { id, level, catches }
+    dog: null,            // 当前启用：{ id, level, intercepts, interceptionPct }
+    petDogs: {},          // 已拥有：dog id -> 独立成长状态
     dogBowl: 0,
+    dogBowlEmptyAt: 0,
+    dogMsPerGram: 0,
     codex: [],            // 已解锁作物 id
     codexProgress: {},    // crop id -> { harvestCount, tier, nextTarget }
     mails: [],
@@ -75,15 +78,4 @@ export function applyMailClaimReceipt(state, mailId, payload = {}) {
     mail.attachmentCoin = 0;
   }
   return reward;
-}
-
-export function drawDailyTasks(state) {
-  const pool = [...TASK_POOL];
-  const tasks = [];
-  for (let i = 0; i < DAILY_TASK_COUNT; i++) {
-    const idx = Math.floor(Math.random() * pool.length);
-    const def = pool.splice(idx, 1)[0];
-    tasks.push({ taskId: def.id, progress: 0, done: false });
-  }
-  state.tasks = tasks;
 }

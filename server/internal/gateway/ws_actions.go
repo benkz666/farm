@@ -94,7 +94,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				return response
 			}
 			response.Err = remote.Err
-			if remote.Err == pkgerr.OK || (kind == farm.Clear && remote.Err == pkgerr.PlotNotCleanable) {
+			if remote.Err == pkgerr.OK {
 				response.Payload = remote.Payload
 			}
 			return response
@@ -121,7 +121,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				Arg:       uint16(payload.Arg),
 			}, g.Now())
 			farmSeq = farmActor.Aggregate.FarmSeq
-			if result.Err == pkgerr.OK || (kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
+			if result.Err == pkgerr.OK {
 				actionPayload = actionResponse{
 					FarmSeq: farmSeq,
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -166,7 +166,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				}
 			}
 		}
-		if result.Err == pkgerr.OK || (kind == farm.Clear && result.Err == pkgerr.PlotNotCleanable) {
+		if result.Err == pkgerr.OK {
 			response.Payload = marshalPayload(actionPayload)
 		}
 		if delta != nil {
@@ -270,6 +270,15 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		if delta != nil {
 			g.rooms.BroadcastExcept(*delta, connection.id)
 		}
+		if result.Err == pkgerr.OK && request.Cmd == CommandSell {
+			if err := g.advanceTask(connection.uid, store.TaskSellID); err != nil {
+				obs.L().Error("gateway advance sell task failed",
+					"component", "gateway",
+					"op", "advance_task",
+					"err", err.Error(),
+				)
+			}
+		}
 		return response
 
 	default:
@@ -285,6 +294,16 @@ func (g *Gateway) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 		taskID = store.TaskPlantID
 	case farm.Harvest:
 		taskID = store.TaskHarvestID
+	case farm.Water:
+		taskID = store.TaskWaterID
+	case farm.Fertilize:
+		taskID = store.TaskFertilizeID
+	case farm.Till:
+		taskID = store.TaskTillID
+	case farm.Weed:
+		taskID = store.TaskWeedID
+	case farm.Pest:
+		taskID = store.TaskPestID
 	default:
 		return nil
 	}
@@ -325,18 +344,15 @@ func (g *Gateway) publishTaskNotify(uid uint64, task store.Task) {
 		}
 		return
 	}
-	publisher := g.taskNotifyFanout
-	go func() {
-		if err := publisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
-			obs.L().Error("gateway TaskNotify fan-out failed",
-				"component", "gateway",
-				"op", "fanout_task_notify",
-				"uid", uid,
-				"task_id", task.ID,
-				"err", err.Error(),
-			)
-		}
-	}()
+	if err := g.taskNotifyFanout.PublishTaskNotify(context.Background(), uid, task); err != nil {
+		obs.L().Error("gateway TaskNotify fan-out failed",
+			"component", "gateway",
+			"op", "fanout_task_notify",
+			"uid", uid,
+			"task_id", task.ID,
+			"err", err.Error(),
+		)
+	}
 }
 
 func plotChange(index uint8, plot farm.Plot) farm.PlotChange {

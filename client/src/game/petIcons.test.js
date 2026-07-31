@@ -5,8 +5,12 @@ import { DOGS } from './config.js'
 import { PET_ICON_IDS, petBadgeHTML, petIconHTML } from './petIcons.js'
 
 test('每一种看家狗都有独立的 SVG 插画', () => {
+  assert.equal(new Set(DOGS.map((dog) => dog.shopItemId)).size, DOGS.length)
+  assert.equal(new Set(DOGS.map((dog) => dog.dogType)).size, DOGS.length)
   assert.deepEqual(new Set(PET_ICON_IDS), new Set(DOGS.map((dog) => dog.id)))
   for (const dog of DOGS) {
+    assert.ok(dog.shopItemId > 0)
+    assert.ok(dog.dogType > 0)
     const icon = petIconHTML(dog)
     assert.match(icon, /<svg class="pet-art"/)
     assert.match(icon, new RegExp(`data-pet="${dog.id}"`))

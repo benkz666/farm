@@ -4,6 +4,8 @@
 // 避免期 2 引入 advance() 时推翻编解码格式。
 package farm
 
+import "farm/server/internal/pkgerr"
+
 // 六态状态机（策划 game-design-full.md 5.1 节），数值即协议/存储中的枚举值。
 const (
 	StateWasteland uint8 = iota // 荒地：未开垦，不能播种
@@ -12,7 +14,51 @@ const (
 	StateMature                 // 成熟：可收获，也可被访客偷取
 	StateResidue                // 待清理：末季收获完成，残留植株待清理
 	StateWithered               // 枯萎：成熟后超时未收获，本次产量全部作废
+	stateCount
 )
+
+// StateCount 是状态机中有效状态的数量，用于状态—动作许可表和其穷举测试。
+const StateCount = stateCount
+
+// allowedPlotActions 是策划 5.2 节的状态—动作矩阵。偷菜虽不经过
+// ApplyPlotAction（它需要访客身份等额外上下文），仍在这里登记，保证农场内
+// 所有地块动作共用同一份状态许可来源。
+var allowedPlotActions = [StateCount][Steal + 1]bool{
+	StateWasteland: {Till: true},
+	StateTilled:    {Plant: true},
+	StateGrowing:   {Water: true, Weed: true, Pest: true, Fertilize: true},
+	StateMature:    {Harvest: true, Steal: true},
+	StateResidue:   {Clear: true},
+	StateWithered:  {Clear: true},
+}
+
+// AllowsPlotAction reports whether the state machine permits action in state.
+// Invalid enum values are rejected rather than indexing outside the matrix.
+func AllowsPlotAction(state uint8, action PlotActionKind) bool {
+	return state < StateCount && action > 0 && action <= Steal && allowedPlotActions[state][action]
+}
+
+// plotActionStateError keeps the protocol's action-specific error vocabulary
+// while the permission decision itself remains centralized in the table above.
+func plotActionStateError(state uint8, action PlotActionKind) pkgerr.Code {
+	switch action {
+	case Till:
+		return pkgerr.PlotNotWasteland
+	case Clear:
+		return pkgerr.PlotNotCleanable
+	case Plant:
+		return pkgerr.PlotNotTilled
+	case Water, Weed, Pest, Fertilize:
+		return pkgerr.PlotNotGrowing
+	case Harvest, Steal:
+		if state == StateWithered {
+			return pkgerr.PlotWithered
+		}
+		return pkgerr.PlotNotMature
+	default:
+		return pkgerr.BadRequest
+	}
+}
 
 // Plot 对应架构 5.2 节的地块结构体。期 1 只写入/读出 State、CropID，
 // 其余字段按零值预留，保证期 2 接入 advance() 时字段序不变。

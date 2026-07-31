@@ -17,11 +17,13 @@ const HALF_Z = 8.5;
 const EDGE_X = HALF_X * 2;
 const EDGE_Z = HALF_Z * 2;
 const PATH_LENGTH = EDGE_X * 2 + EDGE_Z * 2;
-const HUNGRY_PATH_DISTANCE = EDGE_X + EDGE_Z + 3;
 const MAX_DT = 0.1;
 const ROUTE_STEP = 2;
 const LANE_VARIANCE = 0.38;
 const TURN_SPEED = 2.8;
+// 姿势切换约在 1 秒内收敛；只在状态刚变化时使用，避免压低行走步态的跟随速度。
+const POSE_TRANSITION_DURATION = 1;
+const POSE_TRANSITION_LAMBDA = 3;
 const PATH_CORNERS = [0, EDGE_X, EDGE_X + EDGE_Z, EDGE_X * 2 + EDGE_Z, PATH_LENGTH];
 
 const wrapPathDistance = (distance) => (
@@ -67,17 +69,6 @@ export function isDogWalkablePoint(point) {
   return insideFence && outsidePlots;
 }
 
-function nearestPathDistance(point) {
-  const candidates = [
-    { distance: Math.abs(point.z + HALF_Z), value: Math.min(EDGE_X, Math.max(0, point.x + HALF_X)) },
-    { distance: Math.abs(point.x - HALF_X), value: EDGE_X + Math.min(EDGE_Z, Math.max(0, point.z + HALF_Z)) },
-    { distance: Math.abs(point.z - HALF_Z), value: EDGE_X + EDGE_Z + Math.min(EDGE_X, Math.max(0, HALF_X - point.x)) },
-    { distance: Math.abs(point.x + HALF_X), value: EDGE_X * 2 + EDGE_Z + Math.min(EDGE_Z, Math.max(0, HALF_Z - point.z)) },
-  ];
-  candidates.sort((a, b) => a.distance - b.distance);
-  return wrapPathDistance(candidates[0].value);
-}
-
 function buildRoute(startDistance, direction, travelDistance, laneOffset = 0) {
   const route = [];
   let cursor = wrapPathDistance(startDistance);
@@ -102,6 +93,15 @@ function buildRoute(startDistance, direction, travelDistance, laneOffset = 0) {
 
 function applyDogPose(rig, state, time, dt, speed) {
   if (!rig) return null;
+  const animationState = rig.animationState ??= {};
+  if (animationState.poseState !== state) {
+    animationState.poseState = state;
+    animationState.poseTransitionUntil = time + POSE_TRANSITION_DURATION;
+  }
+  const isPoseTransitioning = time < (animationState.poseTransitionUntil ?? 0);
+  const poseLambda = (normalLambda) => (
+    isPoseTransitioning ? POSE_TRANSITION_LAMBDA : normalLambda
+  );
   const walking = state === DOG_STATES.WALK;
   const trotting = walking && speed > 1.7;
   const strideRate = trotting ? 12 : 8;
@@ -117,10 +117,12 @@ function applyDogPose(rig, state, time, dt, speed) {
   let hindTargets = [0, 0];
   let tailWag = Math.sin(time * 3.2) * 0.18;
   let tailDrop = 0;
+  let earAttention = 0;
 
   if (state === DOG_STATES.IDLE) {
     headLook = Math.sin(time * 1.15) * 0.24;
     rootTilt = Math.sin(time * 1.15) * 0.025;
+    earAttention = Math.sin(time * 1.7) * 0.055;
   } else if (state === DOG_STATES.SNIFF) {
     const sniffPulse = Math.sin(time * 5.2) * 0.022;
     rootY = -0.012 + sniffPulse;
@@ -131,6 +133,7 @@ function applyDogPose(rig, state, time, dt, speed) {
     frontTargets = [-0.13, -0.13];
     hindTargets = [0.08, 0.08];
     tailWag = Math.sin(time * 2.4) * 0.12;
+    earAttention = -0.1;
   } else if (state === DOG_STATES.SIT) {
     rootY = -0.12;
     rootTilt = -0.09;
@@ -149,6 +152,7 @@ function applyDogPose(rig, state, time, dt, speed) {
     tailDrop = -0.5;
   } else if (state === DOG_STATES.TURN) {
     tailWag = Math.sin(time * 3) * 0.15;
+    earAttention = 0.08;
   }
 
   if (walking) {
@@ -156,20 +160,41 @@ function applyDogPose(rig, state, time, dt, speed) {
     hindTargets = [-stride, stride];
   }
 
-  rig.root.position.y = damp(rig.root.position.y, rootY, 14, dt);
-  rig.root.rotation.z = damp(rig.root.rotation.z, rootTilt, 14, dt);
-  rig.root.scale.y = damp(rig.root.scale.y, 1 + (walking ? 0 : breathing), 12, dt);
-  rig.head.position.x = damp(rig.head.position.x, (rig.head.userData.baseX ?? rig.head.position.x) + headForward, 14, dt);
-  rig.head.rotation.z = damp(rig.head.rotation.z, headDown, 14, dt);
-  rig.head.rotation.y = damp(rig.head.rotation.y, headLook, 12, dt);
-  rig.tail.rotation.y = damp(rig.tail.rotation.y, tailWag, 14, dt);
-  rig.tail.rotation.z = damp(rig.tail.rotation.z, tailDrop, 12, dt);
+  rig.root.position.y = damp(rig.root.position.y, rootY, poseLambda(14), dt);
+  rig.root.rotation.z = damp(rig.root.rotation.z, rootTilt, poseLambda(14), dt);
+  rig.root.scale.y = damp(rig.root.scale.y, 1 + (walking ? 0 : breathing), poseLambda(12), dt);
+  rig.head.position.x = damp(rig.head.position.x, (rig.head.userData.baseX ?? rig.head.position.x) + headForward, poseLambda(14), dt);
+  rig.head.rotation.z = damp(rig.head.rotation.z, headDown, poseLambda(14), dt);
+  rig.head.rotation.y = damp(rig.head.rotation.y, headLook, poseLambda(12), dt);
+  rig.tail.rotation.y = damp(rig.tail.rotation.y, tailWag, poseLambda(14), dt);
+  rig.tail.rotation.z = damp(rig.tail.rotation.z, tailDrop, poseLambda(12), dt);
+  const blinkPhase = time % 4.6;
+  const blinkAmount = blinkPhase > 4.42
+    ? Math.sin(((blinkPhase - 4.42) / 0.18) * Math.PI)
+    : 0;
+  for (const eye of [...(rig.eyeWhites || []), ...(rig.eyes || [])]) {
+    const baseScaleY = eye.userData.baseScaleY ?? 1;
+    eye.scale.y = damp(eye.scale.y, baseScaleY * (1 - blinkAmount * 0.86), 28, dt);
+  }
+  rig.ears?.forEach((ear, index) => {
+    const baseX = ear.userData.baseRotationX ?? 0;
+    const baseZ = ear.userData.baseRotationZ ?? 0;
+    const asymmetricTwitch = state === DOG_STATES.IDLE
+      ? Math.sin(time * 2.1 + index * 1.7) * 0.025
+      : 0;
+    ear.rotation.x = damp(ear.rotation.x, baseX + asymmetricTwitch, 10, dt);
+    ear.rotation.z = damp(ear.rotation.z, baseZ + earAttention, 10, dt);
+  });
+  if (rig.tag) {
+    const tagSway = walking ? -stride * 0.22 : Math.sin(time * 1.7) * 0.025;
+    rig.tag.rotation.z = damp(rig.tag.rotation.z, tagSway, 12, dt);
+  }
 
   rig.frontLegs.forEach((leg, index) => {
-    leg.rotation.z = damp(leg.rotation.z, frontTargets[index], 16, dt);
+    leg.rotation.z = damp(leg.rotation.z, frontTargets[index], poseLambda(16), dt);
   });
   rig.hindLegs.forEach((leg, index) => {
-    leg.rotation.z = damp(leg.rotation.z, hindTargets[index], 16, dt);
+    leg.rotation.z = damp(leg.rotation.z, hindTargets[index], poseLambda(16), dt);
   });
 
   return {
@@ -233,27 +258,12 @@ export class DogBehaviorController {
     this._beginTurn();
   }
 
-  _beginHungryReturn() {
-    this.pathDistance = nearestPathDistance(this.position);
-    const clockwise = wrapPathDistance(HUNGRY_PATH_DISTANCE - this.pathDistance);
-    const counterClockwise = PATH_LENGTH - clockwise;
-    const direction = clockwise <= counterClockwise ? 1 : -1;
-    const distance = Math.min(clockwise, counterClockwise);
-    this.speed = 1.45;
-    this.laneOffset = 0;
-    this.route = buildRoute(this.pathDistance, direction, distance);
-    if (this.route.length) this._beginTurn();
-    else this._setHungryRest();
-  }
-
   _setHungryRest() {
     this.state = DOG_STATES.HUNGRY_REST;
     this.stateTime = 0;
     this.stateDuration = Number.POSITIVE_INFINITY;
     this.route = [];
-    this.pathDistance = HUNGRY_PATH_DISTANCE;
-    this.laneOffset = 0;
-    this.position = dogPathPoint(HUNGRY_PATH_DISTANCE);
+    this.speed = 0;
   }
 
   _chooseRest() {
@@ -309,7 +319,7 @@ export class DogBehaviorController {
     if (hungry !== this.hungry) {
       this.hungry = hungry;
       if (hungry) {
-        this._beginHungryReturn();
+        this._setHungryRest();
       } else {
         this.state = DOG_STATES.IDLE;
         this.stateTime = 0;

@@ -96,20 +96,120 @@ func TestTaskFanoutPublisherPushesActivePlayerConnection(t *testing.T) {
 	if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
 		t.Fatalf("Register %#v: %v", ref, err)
 	}
-	pusher := &recordingTaskNotifyPusher{}
-	publisher := NewTaskFanoutPublisher(registry, pusher)
+	pusher := &recordingTaskNotifyPusher{published: make(chan struct{}, 1)}
+	publisher := newTaskFanoutPublisher(registry, pusher, 5*time.Millisecond)
 	task := store.Task{
-		ID: 1, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
+		ID: 1, DayKey: 20260731, Title: "完成一次播种", Progress: 1, Target: 1, RewardCoin: 20,
 	}
 
 	if err := publisher.PublishTaskNotify(t.Context(), 42, task); err != nil {
 		t.Fatalf("PublishTaskNotify: %v", err)
+	}
+	select {
+	case <-pusher.published:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for coalesced TaskNotify")
 	}
 
 	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedTaskNotify{
 		{ref: connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}, uid: 42, task: task},
 	}) {
 		t.Fatalf("task notifications = %#v", got)
+	}
+}
+
+func TestTaskFanoutPublisherCoalescesLatestStateForSameTask(t *testing.T) {
+	backend := newRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	ref := connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}
+	if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+		t.Fatalf("Register %#v: %v", ref, err)
+	}
+	pusher := &recordingTaskNotifyPusher{published: make(chan struct{}, 2)}
+	publisher := newTaskFanoutPublisher(registry, pusher, 10*time.Millisecond)
+	first := store.Task{ID: 5, DayKey: 20260731, Progress: 1, Target: 10}
+	latest := store.Task{ID: 5, DayKey: 20260731, Progress: 3, Target: 10}
+
+	if err := publisher.PublishTaskNotify(t.Context(), 42, first); err != nil {
+		t.Fatalf("first PublishTaskNotify: %v", err)
+	}
+	if err := publisher.PublishTaskNotify(t.Context(), 42, latest); err != nil {
+		t.Fatalf("latest PublishTaskNotify: %v", err)
+	}
+	select {
+	case <-pusher.published:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for coalesced TaskNotify")
+	}
+	if got := pusher.notifications(); !reflect.DeepEqual(got, []pushedTaskNotify{
+		{ref: ref, uid: 42, task: latest},
+	}) {
+		t.Fatalf("task notifications = %#v, want latest only", got)
+	}
+	select {
+	case <-pusher.published:
+		t.Fatal("received duplicate TaskNotify after coalescing")
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestTaskFanoutPublisherDoesNotCoalesceAcrossLocalDays(t *testing.T) {
+	backend := newRegistryBackend()
+	registry := connreg.NewWithBackend(backend)
+	ref := connreg.ConnRef{ConnID: 8, GatewayID: "gateway-1"}
+	if err := registry.Register(t.Context(), 42, ref.ConnID, ref.GatewayID); err != nil {
+		t.Fatalf("Register %#v: %v", ref, err)
+	}
+	pusher := &recordingTaskNotifyPusher{published: make(chan struct{}, 2)}
+	publisher := newTaskFanoutPublisher(registry, pusher, 5*time.Millisecond)
+	oldDay := store.Task{ID: 5, DayKey: 20260731, Progress: 9, Target: 10}
+	newDay := store.Task{ID: 5, DayKey: 20260801, Progress: 1, Target: 10}
+
+	if err := publisher.PublishTaskNotify(t.Context(), 42, oldDay); err != nil {
+		t.Fatalf("old-day PublishTaskNotify: %v", err)
+	}
+	if err := publisher.PublishTaskNotify(t.Context(), 42, newDay); err != nil {
+		t.Fatalf("new-day PublishTaskNotify: %v", err)
+	}
+	for range 2 {
+		select {
+		case <-pusher.published:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for cross-day TaskNotify")
+		}
+	}
+	got := pusher.notifications()
+	sort.Slice(got, func(i, j int) bool { return got[i].task.DayKey < got[j].task.DayKey })
+	if !reflect.DeepEqual(got, []pushedTaskNotify{
+		{ref: ref, uid: 42, task: oldDay},
+		{ref: ref, uid: 42, task: newDay},
+	}) {
+		t.Fatalf("cross-day notifications = %#v", got)
+	}
+}
+
+func TestTaskFanoutPublisherDropsOverflowWithoutDirectDelivery(t *testing.T) {
+	registry := connreg.NewWithBackend(newRegistryBackend())
+	pusher := &recordingTaskNotifyPusher{}
+	publisher := newTaskFanoutPublisher(registry, pusher, time.Hour)
+	for index := 0; index < maxPendingTaskNotifies; index++ {
+		key := taskNotifyKey{uid: uint64(index + 1), dayKey: 20260731, taskID: store.TaskWaterID}
+		publisher.pending[key] = pendingTaskNotify{
+			uid:  key.uid,
+			task: store.Task{ID: key.taskID, DayKey: key.dayKey},
+		}
+	}
+
+	if err := publisher.PublishTaskNotify(t.Context(), 999999, store.Task{
+		ID: store.TaskPlantID, DayKey: 20260731,
+	}); err != nil {
+		t.Fatalf("overflow PublishTaskNotify: %v", err)
+	}
+	if got := publisher.dropped.Load(); got != 1 {
+		t.Fatalf("dropped = %d, want 1", got)
+	}
+	if got := pusher.notifications(); len(got) != 0 {
+		t.Fatalf("overflow performed direct delivery: %#v", got)
 	}
 }
 
@@ -170,7 +270,7 @@ func TestHTTPTaskNotifyPusherSendsAuthenticatedPushRequest(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
-	task := store.Task{ID: 3, Title: "拜访一次好友农场", Progress: 1, Target: 1, RewardCoin: 40}
+	task := store.Task{ID: 3, DayKey: 20260731, Title: "拜访一次好友农场", Progress: 1, Target: 1, RewardCoin: 40}
 	pusher := NewHTTPTaskNotifyPusher(map[string]string{"gateway-0": server.URL}, "internal-token")
 
 	if err := pusher.PushTaskNotify(t.Context(), connreg.ConnRef{ConnID: 7, GatewayID: "gateway-0"}, 42, task); err != nil {
@@ -204,14 +304,21 @@ type pushedMailNotify struct {
 }
 
 type recordingTaskNotifyPusher struct {
-	mu    sync.Mutex
-	items []pushedTaskNotify
+	mu        sync.Mutex
+	items     []pushedTaskNotify
+	published chan struct{}
 }
 
 func (p *recordingTaskNotifyPusher) PushTaskNotify(_ context.Context, ref connreg.ConnRef, uid uint64, task store.Task) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.items = append(p.items, pushedTaskNotify{ref: ref, uid: uid, task: task})
+	p.mu.Unlock()
+	if p.published != nil {
+		select {
+		case p.published <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 

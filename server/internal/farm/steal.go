@@ -44,7 +44,7 @@ func (a *Aggregate) ApplySteal(action StealAction, now int64) StealResult {
 
 	work := a.Plots[action.PlotIndex]
 	a.advancePlot(&work, now, action.PlotIndex)
-	if work.State != StateMature {
+	if !AllowsPlotAction(work.State, Steal) {
 		if work.State == StateResidue && work.HarvestRound > 0 {
 			return StealResult{Err: pkgerr.HarvestedByOwner}
 		}

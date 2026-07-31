@@ -35,19 +35,22 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 		a.FarmSeq++
 		return a.okPatch(0)
 	}
-	if req.ItemID == DogMuttShopItemID {
+	if dog, price, unlockLevel, ok := dogPurchaseByItem(req.ItemID); ok {
 		if req.Quantity != 1 {
 			return ActionResult{Err: pkgerr.BadQuantity}
 		}
-		if a.Pet.HasDog(DogMutt) {
+		if a.Pet.HasDog(dog) {
 			return ActionResult{Err: pkgerr.DogAlreadyOwned}
 		}
-		const muttPrice int64 = 2_000
-		if a.Coin < muttPrice {
+		if a.Level < unlockLevel {
+			return ActionResult{Err: pkgerr.DogLocked}
+		}
+		if a.Coin < price {
 			return ActionResult{Err: pkgerr.NotEnoughCoin}
 		}
-		a.Coin -= muttPrice
-		a.Pet.Owned |= 1 << uint(DogMutt-1)
+		index, _ := dogIndex(dog)
+		a.Coin -= price
+		a.Pet.Owned |= 1 << uint(index)
 		a.FarmSeq++
 		return a.okPatch(0)
 	}
@@ -84,6 +87,19 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 	a.Items[FertilizerItem(fertilizer.ID)] += req.Quantity
 	a.FarmSeq++
 	return a.okPatch(0)
+}
+
+func dogPurchaseByItem(itemID uint16) (dog DogType, price int64, unlockLevel uint16, ok bool) {
+	switch itemID {
+	case DogMuttShopItemID:
+		return DogMutt, 2_000, 0, true
+	case DogShepherdShopItemID:
+		return DogShepherd, 4_500, 10, true
+	case DogMastiffShopItemID:
+		return DogMastiff, 8_000, 20, true
+	default:
+		return DogNone, 0, 0, false
+	}
 }
 
 // Sell 出售仓库果实换金币。不可卖种子/其他道具。

@@ -69,8 +69,8 @@ export const DOG_CATCHES_PER_LEVEL = 20;
 
 export const DOGS = [
   { id: 'tugou',   name: '土狗',   unlock: 0,  intercept: 0.25, consumption: 4, price: 2000, color: 0xb08968, shopItemId: 2001, dogType: 1 },
-  { id: 'muyang',  name: '牧羊犬', unlock: 10, intercept: 0.35, consumption: 5, price: 4500, color: 0x8d99ae, shopItemId: 0, dogType: 0 },
-  { id: 'zangao',  name: '藏獒',   unlock: 20, intercept: 0.45, consumption: 7, price: 8000, color: 0x4a3728, shopItemId: 0, dogType: 0 },
+  { id: 'muyang',  name: '牧羊犬', unlock: 10, intercept: 0.35, consumption: 5, price: 4500, color: 0x8d99ae, shopItemId: 2002, dogType: 2 },
+  { id: 'zangao',  name: '藏獒',   unlock: 20, intercept: 0.45, consumption: 7, price: 8000, color: 0x4a3728, shopItemId: 2003, dogType: 3 },
 ];
 
 /** 狗粮商店 item_id（按克购买）。 */
@@ -92,18 +92,6 @@ export const CODEX_PLAQUE_STAGES = Object.freeze([
   { tier: 'silver', name: '银牌', target: 20, reward: 1000 },
   { tier: 'gold', name: '金牌', target: 50, reward: 2000 },
 ]);
-
-// ---- 日常任务池（14.1 节）----
-export const TASK_POOL = [
-  { id: 'water',    name: '浇水 10 次',     type: 'water',      target: 10, gold: 200, exp: 20 },
-  { id: 'harvest',  name: '收获 5 次',      type: 'harvest',    target: 5,  gold: 300, exp: 30 },
-  { id: 'help',     name: '帮好友照料 5 次', type: 'help',       target: 5,  gold: 250, exp: 25 },
-  { id: 'steal',    name: '偷菜成功 3 次',   type: 'steal',      target: 3,  gold: 200, exp: 15 },
-  { id: 'plant',    name: '播种 6 次',      type: 'plant',      target: 6,  gold: 200, exp: 20 },
-  { id: 'sell',     name: '出售果实 1 次',   type: 'sell',       target: 1,  gold: 150, exp: 10 },
-  { id: 'fertilize',name: '施肥 1 次',      type: 'fertilize',  target: 1,  gold: 100, exp: 10 },
-];
-export const DAILY_TASK_COUNT = 3;
 
 // ============================================================
 // 作物表 —— 由 config/crops.csv 经 make gen 生成，此处仅重导出以保持 import 兼容

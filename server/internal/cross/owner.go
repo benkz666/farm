@@ -307,6 +307,8 @@ func (o *Owner) applySteal(owner *actor.FarmActor, action CrossAction, outcome *
 		owner.Aggregate.ReceiveStealCompensation(action.Compensation)
 		owner.Aggregate.RecordPetIntercept()
 		emitted := owner.Aggregate.PlayerDelta()
+		petStatus := owner.Aggregate.PetStatus(o.now())
+		emitted.Pet = &petStatus
 		outcome.playerDelta = &emitted
 	}
 	if owner.Aggregate.FarmSeq != beforeSeq {

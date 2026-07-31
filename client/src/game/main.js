@@ -31,6 +31,7 @@ import {
 } from './taskResetTimer.js';
 import { createTaskSession } from './taskSession.js';
 import { openTasksPanel } from './taskPanel.js';
+import { applyPetStatus } from './petStatus.js';
 
 // Vite 热更新会重新执行本模块，但不一定触发 pagehide。保留状态和连接，
 // 由新模块接管；否则旧实例与新实例会同时更新同一组 HUD。
@@ -153,7 +154,6 @@ const TOOLS_VISIT = [
   { id: 'pest', name: '除虫', icon: '🐛' },
   { id: 'steal', name: '偷菜', icon: '🥷' },
 ];
-const DOG_TYPE_TO_ID = Object.freeze({ 1: 'tugou' });
 // ---------------- 通用辅助 ----------------
 function currentFarm() {
   return {
@@ -299,6 +299,7 @@ function bindOnlineClient(client) {
   stopPlayerDeltaSubscription?.();
   stopPlayerDeltaSubscription = client.onPlayerDelta((deltaEnv) => {
     applyPatch(state, deltaEnv.payload);
+    if (deltaEnv.payload?.pet) applyAuthoritativePetStatus(deltaEnv.payload.pet);
     ui.updateHUD(state);
     refreshSubBar();
   });
@@ -689,23 +690,8 @@ function refreshToolbar() {
   ui.renderToolbar(tools, activeTool);
 }
 
-function applyPetStatus(status) {
-  if (!status || typeof status !== 'object') return;
-  const dogId = DOG_TYPE_TO_ID[status.active_dog];
-  if (dogId) {
-    state.dog = {
-      id: dogId,
-      level: Number(status.dog_level) || 0,
-      intercepts: Number(status.intercepts) || 0,
-      interceptionPct: Number(status.interception_pct) || 0,
-    };
-  } else if (!status.owned) {
-    state.dog = null;
-  } else if (status.owned & 1) {
-    // 拥有土狗但未启用：仍展示为已拥有，便于商店/面板
-    state.dog = state.dog || { id: 'tugou', level: 0, intercepts: 0, interceptionPct: 25 };
-  }
-  if (typeof status.bowl_grams === 'number') state.dogBowl = status.bowl_grams;
+function applyAuthoritativePetStatus(status) {
+  if (!applyPetStatus(state, status)) return;
   ui.updateHUD(state);
 }
 
@@ -714,7 +700,7 @@ async function refreshPetStatus() {
   try {
     const response = await netClient.petStatus();
     if (response.err !== 0) return false;
-    applyPetStatus(response.payload);
+    applyAuthoritativePetStatus(response.payload);
     return true;
   } catch {
     return false;
@@ -743,7 +729,7 @@ function mapServerMails(mails) {
  * 仅拉取并在上下文有效时应用；不排程、不 toast。
  * @returns {Promise<import('./taskSession.js').TaskListApplyOutcome>}
  */
-async function pullAndApplyTasks({ renderOpenTasks = true } = {}) {
+async function pullAndApplyTasks({ renderOpenTasks = true, force = false } = {}) {
   const client = netClient;
   if (!client) {
     return { applied: false, ok: false, resetAt: 0, contextValid: false, reason: 'no_client' };
@@ -752,6 +738,7 @@ async function pullAndApplyTasks({ renderOpenTasks = true } = {}) {
   const sinks = taskUiSinks({ renderOpenTasks });
   return session.refreshTaskList({
     client,
+    force,
     getCurrentClient: () => netClient,
     fetch: async (c) => {
       const response = await c.taskList();
@@ -773,9 +760,9 @@ async function pullAndApplyTasks({ renderOpenTasks = true } = {}) {
  * 拉取 TaskList：网络结果先不落地；仅 success/failure 改 timer，stale 不动。
  * @returns {Promise<boolean>}
  */
-async function refreshTasks({ renderOpenTasks = true } = {}) {
+async function refreshTasks({ renderOpenTasks = true, force = false } = {}) {
   const scheduler = ensureTaskResetScheduler();
-  const outcome = await pullAndApplyTasks({ renderOpenTasks });
+  const outcome = await pullAndApplyTasks({ renderOpenTasks, force });
   const result = taskRefreshResultFromOutcome(outcome);
 
   if (result.status === 'failure') {
@@ -1193,7 +1180,7 @@ const ui = new UI({
         await refreshPetStatus();
         return;
       }
-      applyPetStatus(act.payload);
+      applyAuthoritativePetStatus(act.payload);
       sfx.dog();
       ui.toast(`已购买并启用 ${dog.name}`, 'ok');
       ui.updateHUD(state);
@@ -1255,7 +1242,7 @@ const ui = new UI({
       if (rsp.err !== 0) return fail(errText(rsp.err));
       const rewardCoin = Number(rsp.payload?.coin) || 0;
       ui.toast(rewardCoin > 0 ? `任务奖励已到账 💰${rewardCoin}` : '任务奖励已到账', 'gold');
-      await refreshTasks();
+      await refreshTasks({ force: true });
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1272,7 +1259,7 @@ const ui = new UI({
       const beforeBowl = Number(state.dogBowl) || 0;
       const rsp = await netClient.petFeed(grams);
       if (rsp.err !== 0) return fail(errText(rsp.err));
-      applyPetStatus(rsp.payload);
+      applyAuthoritativePetStatus(rsp.payload);
       const afterBowl = Number(rsp.payload?.bowl_grams) || 0;
       const fed = Math.max(0, afterBowl - beforeBowl);
       // PetFeed Rsp 不含背包；按盆增量本地扣减狗粮展示
@@ -1297,7 +1284,7 @@ const ui = new UI({
     try {
       const rsp = await netClient.petActivate(dog.dogType);
       if (rsp.err !== 0) return fail(errText(rsp.err));
-      applyPetStatus(rsp.payload);
+      applyAuthoritativePetStatus(rsp.payload);
       sfx.dog();
       ui.toast(`已启用 ${dog.name}`, 'ok');
     } catch (e) {
@@ -1389,8 +1376,13 @@ function tick() {
 
   // 期 3：不做本地权威地块推进 / NPC 假好友写；镜像仅由 snapshot/Rsp/Delta 更新
 
-  // 玩家狗粮：online 以 PetStatus 为准，不做本地权威扣减
-  if (!isOnline() && state.dog && state.dogBowl > 0) {
+  // 在线仅根据权威到期时间插值显示，不产生库存或服务端状态写入。
+  if (isOnline() && state.dog && state.dogBowlEmptyAt > 0 && state.dogMsPerGram > 0) {
+    const previous = state.dogBowl;
+    state.dogBowl = Math.max(0, Math.floor((state.dogBowlEmptyAt - now) / state.dogMsPerGram));
+    if (state.dogBowl !== previous) ui.updateHUD(state);
+    if (previous > 0 && state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
+  } else if (!isOnline() && state.dog && state.dogBowl > 0) {
     const dogDef = DOGS.find(d => d.id === state.dog.id);
     state.dogBowl = Math.max(0, state.dogBowl - (dogDef.consumption / hourMs()) * dt);
     if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');

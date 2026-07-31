@@ -35,39 +35,41 @@ func TestTaskStoreCreditsRewardsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	if len(tasks) != 4 {
-		t.Fatalf("ListTasks returned %d tasks, want 4", len(tasks))
+	if len(tasks) != 1+store.RandomDailyTaskCount {
+		t.Fatalf("ListTasks returned %d tasks, want %d", len(tasks), 1+store.RandomDailyTaskCount)
 	}
-	if tasks[store.TaskDailyLoginID-1].Progress != 1 || tasks[store.TaskDailyLoginID-1].Target != 1 {
-		t.Fatalf("daily login task = %#v, want progress=target=1", tasks[store.TaskDailyLoginID-1])
+	daily := requireTask(t, tasks, store.TaskDailyLoginID)
+	if daily.Progress != 1 || daily.Target != 1 {
+		t.Fatalf("daily login task = %#v, want progress=target=1", daily)
 	}
-	if _, err := s.ClaimTask(ctx, uid, dayKey, store.TaskPlantID); !errors.Is(err, store.ErrTaskNotComplete) {
+	gameplay := requireRandomTask(t, tasks)
+	if _, err := s.ClaimTask(ctx, uid, dayKey, gameplay.ID); !errors.Is(err, store.ErrTaskNotComplete) {
 		t.Fatalf("ClaimTask before gameplay error = %v, want ErrTaskNotComplete", err)
 	}
-	advanced, err := s.AdvanceTask(ctx, uid, dayKey, store.TaskPlantID, 1)
+	advanced, err := s.AdvanceTask(ctx, uid, dayKey, gameplay.ID, gameplay.Target)
 	if err != nil {
 		t.Fatalf("AdvanceTask: %v", err)
 	}
-	if !advanced.Changed || !advanced.JustCompleted || advanced.Task.ID != store.TaskPlantID ||
+	if !advanced.Changed || !advanced.JustCompleted || advanced.Task.ID != gameplay.ID ||
 		advanced.Task.Progress != advanced.Task.Target || advanced.Task.Claimed {
 		t.Fatalf("first task advancement = %#v", advanced)
 	}
-	repeated, err := s.AdvanceTask(ctx, uid, dayKey, store.TaskPlantID, 1)
+	repeated, err := s.AdvanceTask(ctx, uid, dayKey, gameplay.ID, 1)
 	if err != nil {
 		t.Fatalf("repeat AdvanceTask: %v", err)
 	}
-	if repeated.Changed || repeated.JustCompleted || repeated.Task != advanced.Task {
-		t.Fatalf("repeated task advancement = %#v, want unchanged %#v", repeated, advanced.Task)
+	if repeated.Changed || repeated.JustCompleted || repeated.Task.ID != 0 {
+		t.Fatalf("repeated task advancement = %#v, want no changed task payload", repeated)
 	}
 
-	taskReward, err := s.ClaimTask(ctx, uid, dayKey, store.TaskPlantID)
+	taskReward, err := s.ClaimTask(ctx, uid, dayKey, gameplay.ID)
 	if err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 	if taskReward.Coin == 0 {
 		t.Fatalf("task reward = %#v", taskReward)
 	}
-	if _, err := s.ClaimTask(ctx, uid, dayKey, store.TaskPlantID); !errors.Is(err, store.ErrTaskAlreadyClaimed) {
+	if _, err := s.ClaimTask(ctx, uid, dayKey, gameplay.ID); !errors.Is(err, store.ErrTaskAlreadyClaimed) {
 		t.Fatalf("second ClaimTask error = %v, want ErrTaskAlreadyClaimed", err)
 	}
 
@@ -135,7 +137,7 @@ func TestLegacyDailyLoginBlocksTaskAndLegacyClaims(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
-	daily := tasks[store.TaskDailyLoginID-1]
+	daily := requireTask(t, tasks, store.TaskDailyLoginID)
 	if !daily.Claimed || daily.Progress != daily.Target {
 		t.Fatalf("legacy daily task = %#v, want completed and claimed", daily)
 	}
@@ -184,7 +186,7 @@ func TestTask4ResetsOnNextLocalDayAndSharesClaimState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second-day ListTasks: %v", err)
 	}
-	secondDaily := secondTasks[store.TaskDailyLoginID-1]
+	secondDaily := requireTask(t, secondTasks, store.TaskDailyLoginID)
 	if secondDaily.Progress != secondDaily.Target || secondDaily.Claimed {
 		t.Fatalf("second-day daily task = %#v, want completed but unclaimed", secondDaily)
 	}
@@ -209,7 +211,12 @@ func TestTaskClaimConcurrentCreditsOnlyOnce(t *testing.T) {
 	}
 
 	dayKey := gameconf.LocalDayKey(time.Now().UnixMilli())
-	if _, err := s.AdvanceTask(ctx, uid, dayKey, store.TaskPlantID, 1); err != nil {
+	tasks, err := s.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	gameplay := requireRandomTask(t, tasks)
+	if _, err := s.AdvanceTask(ctx, uid, dayKey, gameplay.ID, gameplay.Target); err != nil {
 		t.Fatalf("AdvanceTask: %v", err)
 	}
 
@@ -222,7 +229,7 @@ func TestTaskClaimConcurrentCreditsOnlyOnce(t *testing.T) {
 		go func() {
 			defer group.Done()
 			<-start
-			_, err := s.ClaimTask(context.Background(), uid, dayKey, store.TaskPlantID)
+			_, err := s.ClaimTask(context.Background(), uid, dayKey, gameplay.ID)
 			results <- err
 		}()
 	}
@@ -250,8 +257,8 @@ func TestTaskClaimConcurrentCreditsOnlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFarm after concurrent claims: %v", err)
 	}
-	if after.Coin != before.Coin+20 {
-		t.Fatalf("coin after concurrent claims = %d, want %d", after.Coin, before.Coin+20)
+	if after.Coin != before.Coin+gameplay.RewardCoin {
+		t.Fatalf("coin after concurrent claims = %d, want %d", after.Coin, before.Coin+gameplay.RewardCoin)
 	}
 }
 
@@ -310,7 +317,7 @@ func TestDailyLoginClaimConcurrentFirstInitializationCreditsOnlyOnce(t *testing.
 	if err != nil {
 		t.Fatalf("ListTasks after concurrent daily claim: %v", err)
 	}
-	daily := tasks[store.TaskDailyLoginID-1]
+	daily := requireTask(t, tasks, store.TaskDailyLoginID)
 	if !daily.Claimed || daily.Progress != daily.Target {
 		t.Fatalf("daily task after concurrent first claim = %#v, want completed and claimed", daily)
 	}
@@ -320,6 +327,67 @@ func TestDailyLoginClaimConcurrentFirstInitializationCreditsOnlyOnce(t *testing.
 	}
 	if after.Coin != before.Coin+100 {
 		t.Fatalf("coin after concurrent first daily claims = %d, want %d", after.Coin, before.Coin+100)
+	}
+}
+
+func TestLegacyFourTaskBoardIsReconciledToLatestDefinition(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	uid := testUID(t)
+	if err := s.SaveAccount(ctx, uid, "legacy_tasks_"+strconv.FormatUint(uid, 10), "hash"); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+
+	now := time.Now()
+	dayKey := gameconf.LocalDayKey(now.UnixMilli())
+	db := openIntegrationMySQL(t)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO player_task (uid, logic_day, task_id, progress, target, reward_coin)
+		VALUES
+			(?, ?, 1, 1, 1, 20),
+			(?, ?, 2, 0, 1, 30),
+			(?, ?, 3, 0, 1, 40),
+			(?, ?, 4, 1, 1, 100)`,
+		uid, dayKey, uid, dayKey, uid, dayKey, uid, dayKey,
+	); err != nil {
+		t.Fatalf("insert legacy task board: %v", err)
+	}
+
+	tasks, err := s.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		t.Fatalf("ListTasks reconciled day: %v", err)
+	}
+	if len(tasks) != 1+store.RandomDailyTaskCount {
+		t.Fatalf("reconciled task count = %d, want %d", len(tasks), 1+store.RandomDailyTaskCount)
+	}
+	for _, task := range tasks {
+		if task.DayKey != dayKey {
+			t.Fatalf("reconciled task has wrong day key: %#v", task)
+		}
+		switch task.ID {
+		case store.TaskPlantID:
+			if task.Title != "播种 6 次" || task.Target != 6 || task.RewardCoin != 200 {
+				t.Fatalf("plant task kept legacy definition: %#v", task)
+			}
+		case store.TaskHarvestID:
+			if task.Title != "收获 5 次" || task.Target != 5 || task.RewardCoin != 300 {
+				t.Fatalf("harvest task kept legacy definition: %#v", task)
+			}
+		case store.TaskVisitID:
+			if task.Title != "拜访好友农场 1 次" || task.Target != 1 || task.RewardCoin != 250 {
+				t.Fatalf("visit task kept legacy definition: %#v", task)
+			}
+		}
+	}
+	var persistedCount int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM player_task WHERE uid = ? AND logic_day = ?`,
+		uid, dayKey,
+	).Scan(&persistedCount); err != nil {
+		t.Fatalf("count reconciled task rows: %v", err)
+	}
+	if persistedCount != 1+store.RandomDailyTaskCount {
+		t.Fatalf("persisted reconciled task count = %d, want %d", persistedCount, 1+store.RandomDailyTaskCount)
 	}
 }
 
@@ -396,6 +464,28 @@ func TestMailReadAndDeleteAllPersistAndStayWithinUID(t *testing.T) {
 	if len(secondMails) != 1 {
 		t.Fatalf("second mailbox after first user delete = %#v, want preserved", secondMails)
 	}
+}
+
+func requireTask(t *testing.T, tasks []store.Task, taskID uint32) store.Task {
+	t.Helper()
+	for _, task := range tasks {
+		if task.ID == taskID {
+			return task
+		}
+	}
+	t.Fatalf("task %d not found in %#v", taskID, tasks)
+	return store.Task{}
+}
+
+func requireRandomTask(t *testing.T, tasks []store.Task) store.Task {
+	t.Helper()
+	for _, task := range tasks {
+		if task.Kind == "random" {
+			return task
+		}
+	}
+	t.Fatalf("random task not found in %#v", tasks)
+	return store.Task{}
 }
 
 func openIntegrationMySQL(t *testing.T) *sql.DB {
