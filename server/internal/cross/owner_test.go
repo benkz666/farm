@@ -86,6 +86,35 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 	}
 }
 
+func TestOwnerReplaysPersistedReceiptAfterActorReplacement(t *testing.T) {
+	agg := growingAggregate(9)
+	runtime := ownerRuntime{actors: map[uint64]*actor.FarmActor{
+		9: {Aggregate: agg},
+	}}
+	owner := NewOwner(runtime, ownerFriends{allowed: true}, nil, func() int64 { return 40_000 }, nil, nil)
+	action := CrossAction{ReqID: 77, Kind: Water, VisitorUID: 7, OwnerUID: 9, PlotIndex: 0}
+
+	first, err := owner.commit(action)
+	if err != nil || first.result.Code != pkgerr.OK {
+		t.Fatalf("first commit = %#v, err=%v", first, err)
+	}
+	if len(agg.CrossReceipts) != 1 {
+		t.Fatalf("persisted receipts = %#v, want one", agg.CrossReceipts)
+	}
+	// 模拟 Actor 被闲置卸载后重新加载：内存 LRU 消失，但聚合中的回执仍在。
+	runtime.actors[9] = &actor.FarmActor{Aggregate: agg}
+	second, err := owner.commit(action)
+	if err != nil {
+		t.Fatalf("replay commit: %v", err)
+	}
+	if !second.replayed || second.result != first.result {
+		t.Fatalf("replayed result = %#v, want %#v", second.result, first.result)
+	}
+	if second.delta != nil || agg.FarmSeq != 1 {
+		t.Fatalf("replay changed owner state: delta=%#v farm_seq=%d", second.delta, agg.FarmSeq)
+	}
+}
+
 func TestOwnerReturnsAlreadyWateredWithoutCommitting(t *testing.T) {
 	eventBus := bus.NewMemoryBus()
 	t.Cleanup(func() { _ = eventBus.Close() })

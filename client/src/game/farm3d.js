@@ -487,8 +487,11 @@ export class FarmScene {
       u.halo.visible = false;
       return;
     }
-    // 土壤颜色：荒地浅 / 已翻深 / 缺水更浅
-    if (info.state === PLOT.WASTELAND) {
+    // 土壤颜色：荒地浅 / 已翻深 / 缺水更浅；未知状态不伪装成可操作土地。
+    if (info.state === PLOT.UNKNOWN) {
+      u.base.material = mat(0x6c6470);
+      u.rim.material = mat(0x443f49);
+    } else if (info.state === PLOT.WASTELAND) {
       u.base.material = mat(0xb99a7d);
       u.rim.material = mat(0x8b6e50);
     } else if (info.dry) {
@@ -498,7 +501,7 @@ export class FarmScene {
       u.base.material = mat(0x79543e);
       u.rim.material = mat(0x513727);
     }
-    u.furrows.visible = info.state !== PLOT.WASTELAND;
+    u.furrows.visible = info.state !== PLOT.WASTELAND && info.state !== PLOT.UNKNOWN;
 
     // 内容重建
     clearAndDispose(u.content, disposeOpts);

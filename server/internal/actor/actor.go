@@ -10,8 +10,8 @@ type FarmActor struct {
 	Aggregate *farm.Aggregate
 	Deltas    farm.DeltaRing
 
-	// results 缓存跨农场动作的幂等结果。它挂在 Actor 上而不是某个全局表里，
-	// 这样内存随 Actor 卸载一起回收，不会随在线过的玩家数无限增长。
+	// results 是跨农场回执的进程内热缓存；跨 Actor 卸载的幂等性由 Aggregate
+	// 持久化的 CrossReceipts 保证，这里仅避免短时间重投反复查聚合。
 	results resultCache
 	// syncFlush 由 RequireFlush 置位，Runtime 在回调返回后据此同步落盘。
 	syncFlush bool
@@ -29,7 +29,7 @@ func (a *FarmActor) RequireFlush() {
 	a.syncFlush = true
 }
 
-// CachedResult 读取先前缓存的跨农场结果，用于识别重复投递的同一请求。
+// CachedResult 读取先前缓存的跨农场结果，用于快速识别重复投递的同一请求。
 func (a *FarmActor) CachedResult(reqID uint64) (any, bool) {
 	if a == nil {
 		return nil, false
@@ -37,7 +37,7 @@ func (a *FarmActor) CachedResult(reqID uint64) (any, bool) {
 	return a.results.get(reqID)
 }
 
-// CacheResult 记录一次跨农场请求的处理结果，供重复投递时直接复用。
+// CacheResult 记录一次跨农场请求的处理结果，供热路径上的重复投递直接复用。
 func (a *FarmActor) CacheResult(reqID uint64, result any) {
 	if a == nil {
 		return

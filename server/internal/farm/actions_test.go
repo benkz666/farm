@@ -139,6 +139,24 @@ func TestApplyPlotActionIllegalStateDoesNotMutateAggregate(t *testing.T) {
 	}
 }
 
+func TestApplyPlotActionFailureDoesNotExpireCrossReservation(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Coin = 830
+	agg.CrossPending = map[uint64]CrossReservation{
+		7: {ReqID: 7, OwnerUID: 2, Steal: true, FrozenCoin: 170, ReservedAt: actionNow - CrossPendingTimeout},
+	}
+	before := cloneAggregate(agg)
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Plant, PlotIndex: 0, Arg: 1}, actionNow)
+
+	if result.Err != pkgerr.PlotNotTilled {
+		t.Fatalf("Err = %d, want PlotNotTilled", result.Err)
+	}
+	if agg.Coin != before.Coin || len(agg.CrossPending) != 1 {
+		t.Fatalf("failed action changed cross state: coin=%d pending=%#v", agg.Coin, agg.CrossPending)
+	}
+}
+
 func TestApplyPlotActionPlantOnWastelandRejected(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Items[SeedItem(1)] = 1

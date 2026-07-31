@@ -696,6 +696,9 @@ func (h *Handler) crossReserve(command CommandRequest) CommandResponse {
 		}
 		now := h.now()
 		code = cross.ReserveVisitor(farmActor.Aggregate, reservation, now)
+		if code == pkgerr.OK {
+			farmActor.RequireFlush()
+		}
 		obs.L().Debug("farmrpc cross reserve",
 			"component", "farmrpc",
 			"op", "cross_reserve",
@@ -722,6 +725,9 @@ func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
 		}
 		now := h.now()
 		response.Reward, response.PlayerDelta, code = cross.SettleVisitor(farmActor.Aggregate, result, now)
+		if code != pkgerr.Timeout {
+			farmActor.RequireFlush()
+		}
 		obs.L().Debug("farmrpc cross settle",
 			"component", "farmrpc",
 			"op", "cross_settle",

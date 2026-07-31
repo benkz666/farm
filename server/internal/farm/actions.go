@@ -85,10 +85,6 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	if int(act.PlotIndex) >= int(a.UnlockedPlots) || int(act.PlotIndex) >= len(a.Plots) {
 		return ActionResult{Err: pkgerr.PlotNotFound}
 	}
-	// 与地块推进同批惰性回滚超时预占：任何一次动作都会把冻结的金币放回账面，
-	// 返回的 Patch 已携带 Coin，客户端无需额外一轮同步。
-	a.ExpireCrossPending(now)
-
 	work := a.Plots[act.PlotIndex]
 	a.advancePlot(&work, now, act.PlotIndex)
 	if !AllowsPlotAction(work.State, act.Kind) {

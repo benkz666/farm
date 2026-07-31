@@ -143,10 +143,10 @@ func (s *Store) GetAccountByUsername(ctx context.Context, username string) (uint
 func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	agg := &farm.Aggregate{UID: uid}
 
-	var codexBitmap, dailyBlob, petBlob, crossBlob []byte
+	var codexBitmap, dailyBlob, petBlob, crossBlob, crossReceiptBlob []byte
 	err := s.db.QueryRowContext(ctx,
-		`SELECT nickname, level, exp, coin, unlocked_plots, codex_bitmap, daily_blob, pet_blob, cross_blob, farm_seq FROM player WHERE uid = ?`, uid,
-	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &codexBitmap, &dailyBlob, &petBlob, &crossBlob, &agg.FarmSeq)
+		`SELECT nickname, level, exp, coin, unlocked_plots, codex_bitmap, daily_blob, pet_blob, cross_blob, cross_receipt_blob, farm_seq FROM player WHERE uid = ?`, uid,
+	).Scan(&agg.Nickname, &agg.Level, &agg.Exp, &agg.Coin, &agg.UnlockedPlots, &codexBitmap, &dailyBlob, &petBlob, &crossBlob, &crossReceiptBlob, &agg.FarmSeq)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrFarmNotFound
 	}
@@ -166,6 +166,11 @@ func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggreg
 	if len(crossBlob) > 0 {
 		if err := json.Unmarshal(crossBlob, &agg.CrossPending); err != nil {
 			return nil, fmt.Errorf("store: decode cross pending: %w", err)
+		}
+	}
+	if len(crossReceiptBlob) > 0 {
+		if err := json.Unmarshal(crossReceiptBlob, &agg.CrossReceipts); err != nil {
+			return nil, fmt.Errorf("store: decode cross receipts: %w", err)
 		}
 	}
 
@@ -278,11 +283,17 @@ func (s *Store) saveFarmToMySQL(ctx context.Context, agg *farm.Aggregate) error 
 			return fmt.Errorf("store: encode cross pending: %w", err)
 		}
 	}
+	crossReceiptBlob := []byte{}
+	if len(agg.CrossReceipts) > 0 {
+		if crossReceiptBlob, err = json.Marshal(agg.CrossReceipts); err != nil {
+			return fmt.Errorf("store: encode cross receipts: %w", err)
+		}
+	}
 	// 不做 RowsAffected==0 → ErrFarmNotFound：MySQL 默认 RowsAffected 只计「实际改动的行」，
 	// 无脏写时会误判；注册路径已保证 player 行存在，缺行由后续业务/读路径暴露。
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, codex_bitmap = ?, daily_blob = ?, pet_blob = ?, cross_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
-		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, encodeCodexBitmap(agg.CodexHarvests), dailyBlob, petBlob, crossBlob, agg.FarmSeq, now, agg.UID,
+		`UPDATE player SET nickname = ?, level = ?, exp = ?, coin = ?, unlocked_plots = ?, codex_bitmap = ?, daily_blob = ?, pet_blob = ?, cross_blob = ?, cross_receipt_blob = ?, farm_seq = ?, updated_at = ? WHERE uid = ?`,
+		agg.Nickname, agg.Level, agg.Exp, agg.Coin, agg.UnlockedPlots, encodeCodexBitmap(agg.CodexHarvests), dailyBlob, petBlob, crossBlob, crossReceiptBlob, agg.FarmSeq, now, agg.UID,
 	); err != nil {
 		return fmt.Errorf("store: update player: %w", err)
 	}

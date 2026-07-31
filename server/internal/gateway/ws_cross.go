@@ -319,6 +319,10 @@ func (g *Gateway) reserveCrossVisitor(action cross.CrossAction, dayID uint32) pk
 				return errors.New("gateway: visitor actor aggregate is nil")
 			}
 			code = cross.ReserveVisitor(visitor.Aggregate, reservation, g.Now())
+			if code == pkgerr.OK {
+				// 预占成功后才允许发布跨农场动作；同步落盘确保重启后仍能结算或回滚。
+				visitor.RequireFlush()
+			}
 			return nil
 		}); err != nil {
 			return pkgerr.Internal
@@ -347,6 +351,10 @@ func (g *Gateway) settleCrossVisitor(
 				return errors.New("gateway: visitor actor aggregate is nil")
 			}
 			reward, playerDelta, code = cross.SettleVisitor(visitor.Aggregate, result, g.Now())
+			if code != pkgerr.Timeout {
+				// 结算会删除预占并可能解冻金币或发放果实，必须与客户端结果原子持久化。
+				visitor.RequireFlush()
+			}
 			return nil
 		}); err != nil {
 			return cross.VisitorReward{ReqID: result.ReqID}, nil, pkgerr.Internal

@@ -57,6 +57,10 @@ type Aggregate struct {
 	// 它必须与聚合一起持久化，否则冻结的金币会随进程一起消失，见 cross_pending.go。
 	CrossPending map[uint64]CrossReservation `json:"cross_pending,omitempty"`
 
+	// CrossReceipts 是本玩家作为主人时已裁决的跨农场动作结果。它与地块变更一同
+	// 持久化，使 Actor 卸载或消息重投后仍能返回原始裁决，而不是重复执行业务动作。
+	CrossReceipts map[uint64]CrossReceipt `json:"cross_receipts,omitempty"`
+
 	// HazardSalt 是草/虫确定性哈希盐（架构 5.4），由 Runtime 在加载时注入。
 	// 非持久化、不下发协议：json:"-" 保证不进 Redis 缓存 / 存档 / 快照。
 	HazardSalt uint64 `json:"-"`

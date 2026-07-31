@@ -622,6 +622,7 @@ function showPlotTip(plotId) {
     [PLOT.MATURE]: farm.isMe ? '选择 🧺 收获工具收取果实' : '选择 🥷 偷菜工具摘取果实',
     [PLOT.RESIDUE]: '选择 ⛏️ 清理残株后重新播种',
     [PLOT.WITHERED]: '作物已枯萎，选择 ⛏️ 清理',
+    [PLOT.UNKNOWN]: '地块状态无法识别，请刷新游戏',
   };
   ui.toast(tips[plot.state] || '', 'info');
 }
@@ -646,6 +647,8 @@ function tooltipHTML(plotId) {
       const name = c?.name ?? '作物';
       return `<h4>🥀 ${name}（枯萎）</h4><div class="row"><span>状态</span><b>产量全失，需清理</b></div>`;
     }
+    case PLOT.UNKNOWN:
+      return `<h4>⚠️ 状态异常</h4><div class="row"><span>地块状态</span><b>请刷新游戏</b></div>`;
     case PLOT.GROWING:
     case PLOT.MATURE: {
       const c = cropOf(plot);

@@ -58,9 +58,8 @@ func (fn DeltaPublisherFunc) Publish(ctx context.Context, delta farm.FarmDelta, 
 // Owner consumes CrossAction messages for farms owned by this process and
 // returns one CrossResult per delivery.
 //
-// 幂等由主人 Actor 自己的结果缓存保证（actor.FarmActor.CachedResult）：查缓存与
-// 改地块在同一个串行区内完成，所以并发重投不会把同一块地改两次；缓存随 Actor
-// 卸载回收，不会按历史在线玩家数无限增长。
+// 幂等由两层结果缓存保证：Actor 内存缓存覆盖热重投，聚合里的 CrossReceipts 与
+// 地块变更同步持久化，覆盖 Actor 卸载、进程重启和消息总线的延迟重放。
 type Owner struct {
 	runtime Runtime
 	friends FriendChecker
@@ -237,6 +236,21 @@ func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 				return nil
 			}
 		}
+		if receipt, ok := owner.Aggregate.FindCrossReceipt(action.ReqID, action.VisitorUID, action.OwnerUID, o.now()); ok {
+			outcome.result = CrossResult{
+				ReqID:        receipt.ReqID,
+				VisitorUID:   receipt.VisitorUID,
+				OwnerUID:     receipt.OwnerUID,
+				Code:         pkgerr.Code(receipt.Code),
+				CropID:       receipt.CropID,
+				Amount:       receipt.Amount,
+				Compensation: receipt.Compensation,
+				DogType:      receipt.DogType,
+			}
+			owner.CacheResult(action.ReqID, outcome.result)
+			outcome.replayed = true
+			return nil
+		}
 
 		outcome.result = CrossResult{
 			ReqID:      action.ReqID,
@@ -248,7 +262,20 @@ func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 		} else {
 			o.applyMaintenance(owner, action, &outcome)
 		}
+		owner.Aggregate.RecordCrossReceipt(farm.CrossReceipt{
+			ReqID:        outcome.result.ReqID,
+			VisitorUID:   outcome.result.VisitorUID,
+			OwnerUID:     outcome.result.OwnerUID,
+			Code:         int(outcome.result.Code),
+			CropID:       outcome.result.CropID,
+			Amount:       outcome.result.Amount,
+			Compensation: outcome.result.Compensation,
+			DogType:      outcome.result.DogType,
+		}, o.now())
 		owner.CacheResult(action.ReqID, outcome.result)
+		// 结果回执与主人侧地块变更必须一起落盘；否则 Actor 卸载后同一
+		// req_id 会丢失原始裁决，访客无法安全结算预占。
+		owner.RequireFlush()
 		return nil
 	})
 	if err != nil {

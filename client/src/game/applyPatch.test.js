@@ -2,7 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { PLOT, defaultState } from './state.js'
-import { applyFarmDelta, applyPatch } from './applyPatch.js'
+import { applyFarmDelta, applyPatch, plotStateFromNum } from './applyPatch.js'
+
+test('未知服务端地块状态不会伪装成荒地', () => {
+  assert.equal(plotStateFromNum(99), PLOT.UNKNOWN)
+})
 
 test('FarmDelta 只投影变更地块', () => {
   const state = defaultState()

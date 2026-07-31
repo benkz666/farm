@@ -4,7 +4,7 @@
 import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, logicDayStart } from './config.js';
 
 // 地块状态机（5.1 节）
-export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered' };
+export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered', UNKNOWN: 'unknown' };
 
 export function makePlot(id) {
   return {

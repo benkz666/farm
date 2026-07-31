@@ -75,7 +75,7 @@ export function applyCodexProgress(state, progress) {
  */
 export function plotStateFromNum(stateNum) {
   const s = PLOT_STATE_BY_NUM[stateNum]
-  return s ?? PLOT.WASTELAND
+  return s ?? PLOT.UNKNOWN
 }
 
 /**
