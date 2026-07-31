@@ -13,7 +13,7 @@ const (
 	StateGrowing                // 生长中：作物正在生长，可照料
 	StateMature                 // 成熟：可收获，也可被访客偷取
 	StateResidue                // 待清理：末季收获完成，残留植株待清理
-	StateWithered               // 枯萎：成熟后超时未收获，本次产量全部作废
+	StateWithered               // 枯萎：兼容历史数据/预留特殊作物，普通作物不会随时间进入
 	stateCount
 )
 

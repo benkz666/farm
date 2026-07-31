@@ -75,6 +75,7 @@ services:
       FARM_LOGICAL_SHARDS: "1024"
       FARM_BUS: kafka
       FARM_KAFKA_BROKERS: kafka:9092
+      FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_FARM_URLS: '{"farm-0":"http://farm-0:9100","farm-1":"http://farm-1:9101"}'
       FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway-0:9200","gateway-1":"http://gateway-1:9201"}'
       FARM_ROLE: farm

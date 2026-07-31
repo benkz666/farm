@@ -88,14 +88,14 @@ type taskNotifyMailboxKey struct {
 }
 
 type handshakeRequest struct {
-	Token           string `json:"token"`
-	ResumeFarmUID   uint64 `json:"resume_farm_uid"`
-	ResumeFarmSeq   uint64 `json:"resume_farm_seq"`
-	ClientConfigVer uint32 `json:"client_config_ver"`
+	Token           string         `json:"token"`
+	ResumeFarmUID   pkgjson.UID    `json:"resume_farm_uid"`
+	ResumeFarmSeq   pkgjson.Uint64 `json:"resume_farm_seq"`
+	ClientConfigVer uint32         `json:"client_config_ver"`
 }
 
 type handshakeResponse struct {
-	UID uint64 `json:"uid"`
+	UID pkgjson.UID `json:"uid"`
 }
 
 type pingRequest struct {
@@ -112,10 +112,12 @@ type enterFarmRequest struct {
 }
 
 type enterFarmResponse struct {
-	Snapshot   any    `json:"snapshot"`
-	FarmSeq    uint64 `json:"farm_seq"`
-	ServerTime int64  `json:"server_time"`
-	Relation   string `json:"relation"`
+	Snapshot           any            `json:"snapshot"`
+	FarmSeq            pkgjson.Uint64 `json:"farm_seq"`
+	ServerTime         int64          `json:"server_time"`
+	TimeProfile        string         `json:"time_profile"`
+	TimeProfileMutable bool           `json:"time_profile_mutable"`
+	Relation           string         `json:"relation"`
 }
 
 func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +301,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			}
 			return response
 		}
-		response.Payload = marshalPayload(handshakeResponse{UID: uid})
+		response.Payload = marshalPayload(handshakeResponse{UID: pkgjson.UID(uid)})
 		return response
 	}
 
@@ -338,6 +340,8 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 	case CommandTaskList, CommandTaskClaim, CommandMailList, CommandMailRead,
 		CommandMailClaim, CommandMailDelete, CommandCodexList, CommandClaimDailyLogin:
 		return g.handleTaskMailRequest(connection, request)
+	case CommandSetTimeProfile:
+		return g.handleSetTimeProfile(connection, request)
 	default:
 		response.Err = pkgerr.BadRequest
 	}

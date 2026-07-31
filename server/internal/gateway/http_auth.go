@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,6 +21,7 @@ import (
 	"farm/server/internal/bus"
 	"farm/server/internal/connreg"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
 	"farm/server/internal/pkgjson"
@@ -49,6 +51,8 @@ type Gateway struct {
 	friends                   store.FriendStore
 	inviteSecret              []byte
 	now                       func() int64
+	timeProfiles              *gameconf.TimeProfileSwitch
+	debugTimeProfileMu        sync.Mutex
 	offsetMs                  atomic.Int64
 	rooms                     *RoomHub
 	nextConnID                atomic.Uint64
@@ -79,6 +83,26 @@ type Gateway struct {
 
 // Option configures optional Gateway boundaries.
 type Option func(*Gateway)
+
+// WithTimeProfile sets the process-wide authoritative farm clock profile.
+// Every Gateway/Farm instance in one deployment must receive the same value.
+func WithTimeProfile(profile string) Option {
+	return func(gateway *Gateway) {
+		if gameconf.ValidTimeProfile(profile) {
+			gateway.timeProfiles = gameconf.NewTimeProfileSwitch(profile)
+		}
+	}
+}
+
+// WithTimeProfileSwitch shares the process-wide runtime profile switch with
+// Farm RPC handlers and debug endpoints.
+func WithTimeProfileSwitch(profiles *gameconf.TimeProfileSwitch) Option {
+	return func(gateway *Gateway) {
+		if profiles != nil {
+			gateway.timeProfiles = profiles
+		}
+	}
+}
 
 // WithFriendStore configures the friendship persistence boundary.
 func WithFriendStore(friends store.FriendStore) Option {
@@ -191,11 +215,12 @@ func WithMetrics(m *obs.Metrics) Option {
 // New constructs the transport gateway from its application boundaries.
 func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, options ...Option) *Gateway {
 	gateway := &Gateway{
-		auth:     auth,
-		sessions: sessions,
-		runtime:  runtime,
-		rooms:    NewRoomHub(),
-		now:      func() int64 { return time.Now().UnixMilli() },
+		auth:         auth,
+		sessions:     sessions,
+		runtime:      runtime,
+		rooms:        NewRoomHub(),
+		now:          func() int64 { return time.Now().UnixMilli() },
+		timeProfiles: gameconf.NewTimeProfileSwitch(gameconf.TimeProfileDemo),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -261,6 +286,11 @@ func (g *Gateway) Now() int64 {
 	return g.now() + g.offsetMs.Load()
 }
 
+// TimeProfile returns the current server-authoritative runtime profile.
+func (g *Gateway) TimeProfile() string {
+	return g.timeProfiles.Get()
+}
+
 // Handler returns the complete HTTP routing surface of the gateway.
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -276,6 +306,7 @@ func (g *Gateway) Handler() http.Handler {
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 		mux.HandleFunc("/internal/v1/debug/advance", g.debugAdvanceLocal)
+		mux.HandleFunc("/internal/v1/debug/time-profile", g.debugTimeProfileLocal)
 	}
 	return mux
 }
@@ -628,6 +659,10 @@ type debugAdvanceRequest struct {
 	MS int64 `json:"ms"`
 }
 
+type debugTimeProfileRequest struct {
+	TimeProfile string `json:"time_profile"`
+}
+
 func (g *Gateway) debugAdvance(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeHTTPError(w, pkgerr.BadRequest, http.StatusMethodNotAllowed)
@@ -679,6 +714,30 @@ func (g *Gateway) debugAdvanceLocal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"server_time": g.Now()})
 }
 
+// debugTimeProfileLocal updates only this Gateway process. Gateway peers use
+// it during debug fan-out; the bearer token prevents public direct access.
+func (g *Gateway) debugTimeProfileLocal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if g.debugFarmToken != "" {
+		want := "Bearer " + g.debugFarmToken
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+	}
+	var req debugTimeProfileRequest
+	if err := decodeJSON(io.LimitReader(r.Body, 4<<10), &req); err != nil ||
+		!gameconf.ValidTimeProfile(req.TimeProfile) ||
+		!g.timeProfiles.Set(req.TimeProfile) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"time_profile": g.TimeProfile()})
+}
+
 func (g *Gateway) fanoutDebugAdvance(ctx context.Context, ms int64) error {
 	body, err := json.Marshal(debugAdvanceRequest{MS: ms})
 	if err != nil {
@@ -718,6 +777,96 @@ func (g *Gateway) fanoutDebugAdvance(ctx context.Context, ms int64) error {
 		}
 	}
 	return nil
+}
+
+func (g *Gateway) switchTimeProfile(ctx context.Context, profile string) error {
+	if !gameconf.ValidTimeProfile(profile) {
+		return errors.New("gateway: invalid debug time profile")
+	}
+	g.debugTimeProfileMu.Lock()
+	defer g.debugTimeProfileMu.Unlock()
+
+	previous := g.TimeProfile()
+	if previous == profile {
+		return nil
+	}
+	if err := g.fanoutDebugTimeProfile(ctx, profile); err != nil {
+		// 每个远端端点会在收到 POST 时立即切换。如果中途失败，必须把所有
+		// 目标恢复为旧值（而不是只恢复已知成功者：断连可能发生在对方已提交
+		// 但响应尚未返回之后）。这样重试会收敛到一个全服档位。
+		if rollbackErr := g.fanoutDebugTimeProfile(ctx, previous); rollbackErr != nil {
+			return fmt.Errorf("gateway: switch time profile: %w; rollback to %q: %v", err, previous, rollbackErr)
+		}
+		return err
+	}
+	if !g.timeProfiles.Set(profile) {
+		return errors.New("gateway: set local debug time profile")
+	}
+	return nil
+}
+
+func (g *Gateway) fanoutDebugTimeProfile(ctx context.Context, profile string) error {
+	body, err := json.Marshal(debugTimeProfileRequest{TimeProfile: profile})
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	post := func(label, url string) error {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("gateway: build debug time profile for %s: %w", label, err)
+		}
+		if g.debugFarmToken != "" {
+			request.Header.Set("Authorization", "Bearer "+g.debugFarmToken)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.Do(request)
+		if err != nil {
+			return fmt.Errorf("gateway: debug time profile %s: %w", label, err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return fmt.Errorf("gateway: debug time profile %s HTTP %d", label, response.StatusCode)
+		}
+		return nil
+	}
+	for _, target := range g.debugTimeProfileTargets() {
+		if err := post(target.label, target.url); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type debugTimeProfileTarget struct {
+	label string
+	url   string
+}
+
+// debugTimeProfileTargets produces a stable fan-out order. Apart from making
+// failures reproducible, it lets a failed switch deterministically run the
+// rollback pass across exactly the same Farm and Gateway endpoints.
+func (g *Gateway) debugTimeProfileTargets() []debugTimeProfileTarget {
+	targets := make([]debugTimeProfileTarget, 0, len(g.debugFarmURLs)+len(g.debugGatewayURLs))
+	for farmID, endpoint := range g.debugFarmURLs {
+		targets = append(targets, debugTimeProfileTarget{
+			label: "farm " + farmID,
+			url:   endpoint + "/internal/v1/debug/time-profile",
+		})
+	}
+	for gatewayID, endpoint := range g.debugGatewayURLs {
+		if gatewayID == g.gatewayID {
+			continue
+		}
+		targets = append(targets, debugTimeProfileTarget{
+			label: "gateway " + gatewayID,
+			url:   endpoint + "/internal/v1/debug/time-profile",
+		})
+	}
+	sort.Slice(targets, func(left, right int) bool {
+		return targets[left].label < targets[right].label
+	})
+	return targets
 }
 
 type authRequest struct {

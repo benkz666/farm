@@ -7,7 +7,10 @@
 // 禁止依赖真实长等待（见期 2 规格 4.5）。
 package gameconf
 
-import "time"
+import (
+	"sync/atomic"
+	"time"
+)
 
 // 时间档名称常量，避免魔法字符串散落。
 const (
@@ -30,6 +33,55 @@ const LogicDayMinMs int64 = 5 * 60 * 1000
 // profile 不存在时返回 0，调用方应在装配阶段校验。
 func HourMs(profile string) int64 {
 	return hourMsTable[profile]
+}
+
+// ValidTimeProfile reports whether profile is a supported runtime profile.
+// The browser-visible setting and every authoritative Farm process must use
+// the same value; unknown values are rejected during process startup.
+func ValidTimeProfile(profile string) bool {
+	return HourMs(profile) > 0
+}
+
+// TimeProfileSwitch stores the process-wide authoritative time profile.
+//
+// Debug builds may update it while requests are in flight, so readers must not
+// access a plain string shared between HTTP/WS goroutines. Farm access applies
+// the active value to persisted growing crops while preserving their progress;
+// new seasons, pet feeding intervals and logic-day calculations also read it.
+type TimeProfileSwitch struct {
+	value atomic.Value
+}
+
+// NewTimeProfileSwitch creates a runtime profile switch. Invalid input falls
+// back to demo; process startup performs stricter validation before this point.
+func NewTimeProfileSwitch(profile string) *TimeProfileSwitch {
+	if !ValidTimeProfile(profile) {
+		profile = TimeProfileDemo
+	}
+	profiles := &TimeProfileSwitch{}
+	profiles.value.Store(profile)
+	return profiles
+}
+
+// Get returns the currently active authoritative profile.
+func (profiles *TimeProfileSwitch) Get() string {
+	if profiles == nil {
+		return TimeProfileDemo
+	}
+	value, ok := profiles.value.Load().(string)
+	if !ok || !ValidTimeProfile(value) {
+		return TimeProfileDemo
+	}
+	return value
+}
+
+// Set atomically switches to profile. Unknown profiles are rejected.
+func (profiles *TimeProfileSwitch) Set(profile string) bool {
+	if profiles == nil || !ValidTimeProfile(profile) {
+		return false
+	}
+	profiles.value.Store(profile)
+	return true
 }
 
 // LogicDayMs 返回某时间档下逻辑日的真实毫秒数，受 LogicDayMinMs 兜底。

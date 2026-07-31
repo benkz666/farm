@@ -387,6 +387,32 @@ test('重连打开后 Handshake 携带 resume_farm_uid/seq，再 EnterFarm 并�
   assert.equal(restored[0].payload.snapshot.owner_uid, 99)
 })
 
+test('重连上下文保留 19 位好友 UID 字符串精度', () => {
+  const ownerUid = '1785402171458126005'
+  const client = new NetClient({
+    getResumeContext: () => ({ resume_farm_uid: ownerUid, resume_farm_seq: 7 }),
+  })
+
+  assert.deepEqual(client._resumeContext(), {
+    resume_farm_uid: ownerUid,
+    resume_farm_seq: 7,
+  })
+})
+
+test('重连上下文保留 2^53 后的 farm_seq 字符串精度', () => {
+  const client = new NetClient({
+    getResumeContext: () => ({
+      resume_farm_uid: '1785402171458126005',
+      resume_farm_seq: '9007199254740993',
+    }),
+  })
+
+  assert.deepEqual(client._resumeContext(), {
+    resume_farm_uid: '1785402171458126005',
+    resume_farm_seq: '9007199254740993',
+  })
+})
+
 test('好友权限撤销时 EnterFarm 回退自己农场，不无限重连', async () => {
   const restored = []
   const { client, clock, ws } = await openClient({

@@ -56,7 +56,6 @@ export const WATER_SPAN = 0.35;             // 水分持续 = 本季 × 35%
 export const RISK_WINDOW = 0.10;            // 风险窗口 = 本季 × 10%
 export const WEED_CHANCE = 0.12;            // 单窗口长草概率
 export const PEST_CHANCE = 0.10;            // 单窗口生虫概率
-export const WITHER_SPAN = 3.0;             // 枯萎时限 = 3 × 本季时长
 
 // ---- 偷菜与守卫（18.4）----
 export const STEAL_CAP_RATIO = 0.40;        // 被偷上限 = 实际产量 40%

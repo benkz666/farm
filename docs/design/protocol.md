@@ -112,6 +112,8 @@ message EnterFarmRsp {
   uint64       farm_seq    = 2;
   int64        server_time = 3;   // 用于客户端立即校准一次时钟
   Relation     relation    = 4;   // SELF / FRIEND，决定客户端展示哪些操作按钮
+  string       time_profile = 5;  // 服务端权威档位：demo / fast / authentic
+  bool         time_profile_mutable = 6; // 仅 FARM_ALLOW_DEBUG_TIME=1 时为 true
 }
 
 message FarmDelta {
@@ -128,6 +130,9 @@ message SyncFarmRsp {
   repeated FarmDelta deltas = 1;  // 增量补齐路径
   FarmSnapshot snapshot     = 2;  // 全量降级路径，二者只有一个非空
   uint64 farm_seq           = 3;
+  int64 server_time         = 4;
+  string time_profile       = 5;  // 重连/补同步时再次校准当前全服档位
+  bool time_profile_mutable = 6;  // 当前连接是否允许发起调试热切换
 }
 ```
 
@@ -450,6 +455,7 @@ message SearchUserRsp { uint64 uid = 1; string nickname = 2; }
 | 610 | `MailDelete` | 删除；`mail_id` 指定单封，`all=true` 清理可删除邮件；未领取附件始终保留 |
 | 612 | `CodexList` | 每种已解锁作物的权威收获次数、牌子阶段和下一目标（策划 16 章） |
 | 614 | `ClaimDailyLogin` | 每日登录 task_id=4 的兼容领取入口；同一服务器本地自然日重复返回 `ERR_DUPLICATE_OK` |
+| 616 | `SetTimeProfile` | 仅 `FARM_ALLOW_DEBUG_TIME=1` 可用；热切换全服权威档位，载荷为 `time_profile`；客户端随后 `SyncFarm`，生长中地块按当前进度换算并返回 Delta |
 
 ### 5.8 服务端推送（9000—9099）
 

@@ -1,11 +1,19 @@
 import { applyPatch } from './applyPatch.js'
+import {
+  compareUint64,
+  isNextUint64,
+  sameUid,
+  sameUint64,
+  wireUid,
+  wireUint64,
+} from '../net/jsonSafe.js'
 
 /**
  * 将当前房间的 FarmDelta 依序投影到本地状态；发现序列缺口时请求服务端补齐。
  * @param {{
  *   state: object,
- *   session: { viewingOwnerUid?: number|null, lastFarmSeq: number, farmViewGeneration?: number },
- *   syncFarm: (ownerUid: number, fromSeq: number) => Promise<object|undefined>,
+ *   session: { uid?: string|number|null, viewingOwnerUid?: string|number|null, relation?: 'SELF'|'FRIEND'|null, lastFarmSeq: string|number, farmViewGeneration?: number },
+ *   syncFarm: (ownerUid: string|number, fromSeq: string|number) => Promise<object|undefined>,
  *   onApplied?: () => void,
  * }} options
  */
@@ -14,8 +22,16 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
   let disposed = false
 
   function currentView() {
+    const selfView = session.relation === 'SELF'
+    const ownerUid = selfView
+      ? (wireUid(session.uid) ?? wireUid(session.viewingOwnerUid) ?? 0)
+      : (wireUid(session.viewingOwnerUid) ?? 0)
     return {
-      ownerUid: Number(session.viewingOwnerUid),
+      ownerUid,
+      // 协议约定 owner_uid=0 永远表示本人农场。SELF 视图不能复用内存里
+      // 可能残留的好友 UID，否则成熟边界同步会误入好友关系校验。
+      requestOwnerUid: selfView ? 0 : ownerUid,
+      relation: session.relation || null,
       generation: Number.isSafeInteger(session.farmViewGeneration)
         ? session.farmViewGeneration
         : null,
@@ -24,7 +40,9 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
 
   function isCurrentView(view) {
     const current = currentView()
-    return current.ownerUid === view.ownerUid && current.generation === view.generation
+    return sameUid(current.ownerUid, view.ownerUid) &&
+      current.relation === view.relation &&
+      current.generation === view.generation
   }
 
   async function applySync(result, requestedView = currentView()) {
@@ -34,16 +52,24 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
     if (!isCurrentView(requestedView)) return false
 
     if (payload.snapshot && typeof payload.snapshot === 'object') {
-      if (Number(payload.snapshot.owner_uid) !== requestedView.ownerUid) return false
-      applyPatch(state, { snapshot: payload.snapshot }, {
+      if (!sameUid(payload.snapshot.owner_uid, requestedView.ownerUid)) return false
+      applyPatch(state, payload, {
         farmViewOnly: session.relation === 'FRIEND',
       })
-      session.lastFarmSeq = Number(payload.farm_seq) || 0
+      const farmSeq = wireUint64(payload.farm_seq)
+      if (farmSeq == null) return false
+      session.lastFarmSeq = farmSeq
       onApplied()
       return true
     }
 
-    if (!Array.isArray(payload.deltas)) return false
+    // 没有新 Delta 是一次合法同步结果（例如客户端时钟略早于服务端边界）。
+    if (!Array.isArray(payload.deltas)) {
+      if (!sameUint64(payload.farm_seq, session.lastFarmSeq)) return false
+      applyPatch(state, payload)
+      return true
+    }
+    applyPatch(state, payload)
     for (const delta of payload.deltas) {
       if (!isCurrentView(requestedView)) return false
       if (!applyDelta(delta)) return false
@@ -54,9 +80,9 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
   function applyDelta(delta) {
     if (disposed) return false
     if (!delta || typeof delta !== 'object') return false
-    if (Number(delta.owner_uid) !== Number(session.viewingOwnerUid)) return false
-    const seq = Number(delta.farm_seq)
-    if (!Number.isSafeInteger(seq) || seq !== session.lastFarmSeq + 1) return false
+    if (!sameUid(delta.owner_uid, session.viewingOwnerUid)) return false
+    const seq = wireUint64(delta.farm_seq)
+    if (seq == null || !isNextUint64(seq, session.lastFarmSeq)) return false
     applyPatch(state, delta)
     session.lastFarmSeq = seq
     onApplied()
@@ -64,16 +90,18 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
   }
 
   function bufferDelta(sync, delta) {
-    if (!sync.buffer.some((item) => Number(item.farm_seq) === Number(delta.farm_seq))) {
+    if (!sync.buffer.some((item) => sameUint64(item.farm_seq, delta.farm_seq))) {
       sync.buffer.push(delta)
     }
   }
 
   function applyBufferedDeltas(sync, view) {
-    sync.buffer.sort((left, right) => Number(left.farm_seq) - Number(right.farm_seq))
+    sync.buffer.sort((left, right) => compareUint64(left.farm_seq, right.farm_seq) ?? 0)
     while (sync.buffer.length > 0) {
-      sync.buffer = sync.buffer.filter((delta) => Number(delta.farm_seq) > session.lastFarmSeq)
-      const next = sync.buffer.find((delta) => Number(delta.farm_seq) === session.lastFarmSeq + 1)
+      sync.buffer = sync.buffer.filter(
+        (delta) => (compareUint64(delta.farm_seq, session.lastFarmSeq) ?? -1) > 0,
+      )
+      const next = sync.buffer.find((delta) => isNextUint64(delta.farm_seq, session.lastFarmSeq))
       if (!next) return sync.buffer.length === 0
       sync.buffer = sync.buffer.filter((delta) => delta !== next)
       if (!isCurrentView(view) || !applyDelta(next)) return false
@@ -93,7 +121,7 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
     const promise = (async () => {
       let retried = false
       while (isCurrentView(view)) {
-        const result = await syncFarm(view.ownerUid, session.lastFarmSeq)
+        const result = await syncFarm(view.requestOwnerUid, session.lastFarmSeq)
         if (!await applySync(result, view)) return false
         if (applyBufferedDeltas(sync, view)) return true
         if (retried) return false
@@ -112,12 +140,15 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
   return {
     async onDelta(delta) {
       if (disposed) return false
-      if (Number(delta?.owner_uid) !== Number(session.viewingOwnerUid)) return false
-      if (syncing && syncing.view.ownerUid === Number(session.viewingOwnerUid)) {
+      if (!sameUid(delta?.owner_uid, session.viewingOwnerUid)) return false
+      if (syncing && sameUid(syncing.view.ownerUid, session.viewingOwnerUid)) {
         return requestSync(delta)
       }
       if (applyDelta(delta)) return true
       return requestSync(delta)
+    },
+    async syncNow() {
+      return requestSync(null)
     },
     applySync,
     dispose() {

@@ -47,6 +47,7 @@ const (
 	CommandMailDelete          uint32 = 610
 	CommandCodexList           uint32 = 612
 	CommandClaimDailyLogin     uint32 = 614
+	CommandSetTimeProfile      uint32 = 616
 
 	CommandFarmDelta   = wireenv.CommandFarmDelta
 	CommandPlayerDelta = wireenv.CommandPlayerDelta

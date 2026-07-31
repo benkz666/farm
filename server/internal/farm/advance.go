@@ -29,8 +29,6 @@ type AdvanceConfig struct {
 	RiskWindowNumerator   int64
 	RiskWindowDenominator int64
 
-	WitherSpanMultiplier int64
-
 	// 确定性草/虫：阈值与哈希上下文（架构 5.4）。
 	WeedThreshold int64
 	PestThreshold int64
@@ -52,7 +50,6 @@ func NewAdvanceConfig(crop gameconf.CropConf) AdvanceConfig {
 		WaterSpanDenominator:  healthPointsPerFullPenalty,
 		RiskWindowNumerator:   int64(gameconf.RiskWindowRatio * float64(healthPointsPerFullPenalty)),
 		RiskWindowDenominator: healthPointsPerFullPenalty,
-		WitherSpanMultiplier:  int64(gameconf.WitherSpanRatio),
 		WeedThreshold:         gameconf.WeedHazardThreshold,
 		PestThreshold:         gameconf.PestHazardThreshold,
 		RiskWindows:           gameconf.RiskWindowsPerSeason,
@@ -72,42 +69,26 @@ func Advance(p *Plot, now int64, cfg AdvanceConfig) {
 		return
 	}
 
-	for {
-		switch p.State {
-		case StateGrowing:
-			// 未播种完整的地块（缺 MatureAt/时长）不随时间演化，避免脏数据误成熟。
-			if p.MatureAt <= 0 || p.SeasonDuration <= 0 {
-				return
-			}
-			if now < p.MatureAt {
-				settleTo(p, now, cfg)
-				return
-			}
-
-			settleTo(p, p.MatureAt, cfg)
-			p.FinalYield = computeFinalYield(p, cfg)
-			p.State = StateMature
-			p.HarvestRound++
-			p.StolenCount = 0
-			p.Stealers = p.Stealers[:0]
-
-		case StateMature:
-			witherAt := p.MatureAt + cfg.WitherSpanMultiplier*p.SeasonDuration
-			if now < witherAt {
-				return
-			}
-
-			p.State = StateWithered
-			p.FinalYield = 0
-			p.CropID = 0
-			p.SeasonIndex = 0
-			p.Stealers = nil
-			return
-
-		default:
-			return
-		}
+	if p.State != StateGrowing {
+		// 普通作物成熟后永久保持可收获状态；跨季只由收获动作触发。
+		return
 	}
+
+	// 未播种完整的地块（缺 MatureAt/时长）不随时间演化，避免脏数据误成熟。
+	if p.MatureAt <= 0 || p.SeasonDuration <= 0 {
+		return
+	}
+	if now < p.MatureAt {
+		settleTo(p, now, cfg)
+		return
+	}
+
+	settleTo(p, p.MatureAt, cfg)
+	p.FinalYield = computeFinalYield(p, cfg)
+	p.State = StateMature
+	p.HarvestRound++
+	p.StolenCount = 0
+	p.Stealers = p.Stealers[:0]
 }
 
 // settleTo 把健康度结算推进到 to。调用方保证 to <= MatureAt（成熟点由 Advance 截断）。

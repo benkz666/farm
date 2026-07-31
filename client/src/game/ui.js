@@ -9,8 +9,19 @@ import { taskCardViewModel } from './taskCardView.js';
 import { cropIconHTML } from './cropIcons.js';
 import { petBadgeHTML } from './petIcons.js';
 import { codexPlaqueViewModel } from './codexPlaque.js';
+import { compareUint64, wireUint64 } from '../net/jsonSafe.js';
 
 const $ = (s) => document.querySelector(s);
+
+function exactIntegerText(value) {
+  const normalized = wireUint64(value);
+  if (normalized == null) return '0';
+  return BigInt(normalized).toLocaleString();
+}
+
+function hasAtLeast(value, required) {
+  return (compareUint64(value, required) ?? -1) >= 0;
+}
 
 export function badgeHTML(def, sm = false) {
   const name = String(def?.name || '作物').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -27,7 +38,7 @@ export const fmtTime = (ms) => {
 
 /** 返回影响 HUD 的可见状态，避免游戏 tick 重复写入相同 DOM。 */
 export function hudSignature(state, readOnly) {
-  const gold = Math.floor(Number(state.gold) || 0);
+  const gold = wireUint64(state.gold) ?? 0;
   const exp = Number(state.exp) || 0;
   const dogBowl = Math.floor(Number(state.dogBowl) || 0);
   const mailDot = mailDotVisible(state.mails, state.friendRequests);
@@ -41,9 +52,8 @@ export function hudSignature(state, readOnly) {
 export function canExpandLand(state, readOnly = false) {
   if (readOnly) return false;
   const level = levelOf(Number(state.exp) || 0);
-  const gold = Math.floor(Number(state.gold) || 0);
   const next = EXPANSION.find(e => e[0] === state.unlockedPlots + 1);
-  return !!next && level >= next[1] && gold >= next[2];
+  return !!next && level >= next[1] && hasAtLeast(state.gold, next[2]);
 }
 
 export class UI {
@@ -81,9 +91,8 @@ export class UI {
     if (signature === this.lastHUDSignature) return;
     this.lastHUDSignature = signature;
 
-    const gold = Math.floor(Number(state.gold) || 0);
     const exp = Number(state.exp) || 0;
-    $('#gold-num').textContent = gold.toLocaleString();
+    $('#gold-num').textContent = exactIntegerText(state.gold);
     const lv = levelOf(exp);
     $('#level-badge').textContent = `Lv.${lv}`;
     $('#exp-fill').style.width = `${expProgress(exp) * 100}%`;
@@ -217,7 +226,7 @@ export class UI {
         const btn = document.createElement('button');
         btn.className = 'buy-btn';
         btn.textContent = locked ? `Lv.${c.unlock} 解锁` : '购买';
-        btn.disabled = locked || state.gold < c.seedPrice;
+        btn.disabled = locked || !hasAtLeast(state.gold, c.seedPrice);
         btn.onclick = async () => { await this.cb.onBuySeed(c.id); this.renderShop(this.cb.getState(), tab); };
         card.appendChild(btn);
         grid.appendChild(card);
@@ -231,7 +240,7 @@ export class UI {
           <div class="price">💰 ${f.price}</div>`;
         const btn = document.createElement('button');
         btn.className = 'buy-btn'; btn.textContent = '购买';
-        btn.disabled = state.gold < f.price;
+        btn.disabled = !hasAtLeast(state.gold, f.price);
         btn.onclick = () => { this.cb.onBuyFert(f.id); this.renderShop(state, tab); };
         card.appendChild(btn);
         grid.appendChild(card);
@@ -275,7 +284,7 @@ export class UI {
               : locked
                 ? `Lv.${d.unlock} 解锁`
                 : '购买并启用';
-        btn.disabled = active || locked || !onlineReady || (!owned && state.gold < d.price);
+        btn.disabled = active || locked || !onlineReady || (!owned && !hasAtLeast(state.gold, d.price));
         btn.onclick = async () => {
           if (owned) await this.cb.onActivatePet?.(d.id);
           else await this.cb.onBuyDog(d.id);
@@ -757,13 +766,17 @@ export class UI {
         info.append(title, sub);
         const apply = document.createElement('button');
         apply.type = 'button';
-        apply.className = 'nb-btn nb-btn--visit';
-        apply.textContent = '申请';
-        apply.onclick = async () => {
-          if (await this.cb.onRequestFriend?.(u.uid)) {
-            this.renderFriends(this.cb.getState());
-          }
-        };
+        const isSelf = u.isSelf === true;
+        apply.className = `nb-btn nb-btn--visit${isSelf ? ' nb-btn--self' : ''}`;
+        apply.textContent = isSelf ? '自己' : '申请';
+        apply.disabled = isSelf;
+        if (!isSelf) {
+          apply.onclick = async () => {
+            if (await this.cb.onRequestFriend?.(u.uid)) {
+              this.renderFriends(this.cb.getState());
+            }
+          };
+        }
         card.append(plate, info, apply);
         resultBox.appendChild(card);
       });
@@ -865,15 +878,27 @@ export class UI {
     const body = this.openModal('⚙️ 设置', 'settings');
     const tsRow = document.createElement('div');
     tsRow.className = 'set-row';
-    tsRow.innerHTML = `<div><div class="lab">⏳ 时间档</div><div class="desc">新播种的作物按当前时间档折算（在途作物不受影响）</div></div>`;
+    tsRow.innerHTML = `<div><div class="lab">⏳ 时间档</div><div class="desc">${
+      s.timeScaleMutable
+        ? '测试模式：立即按当前进度换算生长中作物'
+        : '由服务器统一配置；当前环境禁止在线修改'
+    }</div></div>`;
     const seg = document.createElement('div');
     seg.className = 'seg';
     for (const [id, def] of Object.entries(TIME_SCALES)) {
       const b = document.createElement('button');
       b.textContent = def.label.split(' ')[0];
-      b.title = def.label;
+      b.title = s.timeScaleMutable
+        ? `${def.label} · 点击热切换服务器档位`
+        : `${def.label} · 当前服务器禁止在线修改`;
       b.className = s.timeScale === id ? 'active' : '';
-      b.onclick = () => { this.cb.onSetTimeScale(id); this.renderSettings(); };
+      b.disabled = !s.timeScaleMutable;
+      b.onclick = async () => {
+        if (s.timeScale === id) return;
+        b.disabled = true;
+        if (await this.cb.onSetTimeScale?.(id)) this.renderSettings();
+        else b.disabled = !s.timeScaleMutable;
+      };
       seg.appendChild(b);
     }
     tsRow.appendChild(seg);

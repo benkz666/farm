@@ -2,6 +2,7 @@
 // 游戏状态：创建、派生计算（期 3：不再以 localStorage 为权威）
 // ============================================================
 import { INITIAL_GOLD, INITIAL_PLOTS, MAX_PLOTS, EXP_PER_LEVEL, logicDayStart } from './config.js';
+import { compareUint64, wireUint64 } from '../net/jsonSafe.js';
 
 // 地块状态机（5.1 节）
 export const PLOT = { WASTELAND: 'wasteland', TILLED: 'tilled', GROWING: 'growing', MATURE: 'mature', RESIDUE: 'residue', WITHERED: 'withered', UNKNOWN: 'unknown' };
@@ -15,6 +16,7 @@ export function makePlot(id) {
     plantTime: 0,         // 本季开始时刻
     matureTime: 0,        // 本季成熟时刻
     seasonMs: 0,          // 本季生长时长（已缩放）
+    health: 100,          // 服务端最近一次结算后的权威健康度
     penalty: 0,           // 本季累计健康度扣减
     settleTime: 0,        // 上次结算时刻
     waterUntil: 0,        // 水分充足截止时刻
@@ -36,6 +38,7 @@ export function defaultState() {
     version: 1,
     createdAt: now,
     timeScale: 'demo',
+    timeScaleMutable: false,
     nickname: null,
     gold: INITIAL_GOLD,
     exp: 0,
@@ -70,7 +73,8 @@ export const expProgress = (exp) => (exp % EXP_PER_LEVEL) / EXP_PER_LEVEL;
 /** 标记邮件附件已取走；金币余额只由服务端 PlayerDelta 更新。 */
 export function applyMailClaimReceipt(state, mailId, payload = {}) {
   const mail = state.mails.find((item) => item.id === mailId);
-  const reward = Number(mail?.gold || mail?.attachmentCoin || payload?.attachment_coin) || 0;
+  const rawReward = wireUint64(mail?.gold || mail?.attachmentCoin || payload?.attachment_coin);
+  const reward = rawReward != null && (compareUint64(rawReward, 0) ?? 0) > 0 ? rawReward : 0;
   if (mail) {
     mail.claimed = true;
     mail.read = true;

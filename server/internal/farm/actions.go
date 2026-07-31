@@ -4,13 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"math/big"
+	"math/bits"
 	"time"
 
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
 
-// 默认时间档：期 2 单测与 demo 一致；Gateway 后续可按配置覆盖。
+// 默认时间档：保持旧调用与单测为 demo；线上动作由装配层显式传入权威档位。
 const defaultTimeProfile = gameconf.TimeProfileDemo
 
 // PlotActionKind 是地块动作种类。
@@ -58,6 +59,9 @@ type PlotAction struct {
 	Kind      PlotActionKind
 	PlotIndex uint8
 	Arg       uint16
+	// TimeProfile 由服务端装配层注入，禁止从浏览器请求直接透传。
+	// 空值兼容旧调用并回落 demo。
+	TimeProfile string
 }
 
 // ActionPatch 描述一次成功动作后，客户端可应用的变更摘要。
@@ -86,7 +90,11 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 		return ActionResult{Err: pkgerr.PlotNotFound}
 	}
 	work := a.Plots[act.PlotIndex]
+	timeProfile := actionTimeProfile(act.TimeProfile)
 	a.advancePlot(&work, now, act.PlotIndex)
+	if work.State == StateGrowing && gameconf.ValidTimeProfile(act.TimeProfile) {
+		reprofileGrowingPlot(&work, now, timeProfile)
+	}
 	if !AllowsPlotAction(work.State, act.Kind) {
 		return ActionResult{Err: plotActionStateError(work.State, act.Kind)}
 	}
@@ -97,7 +105,7 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	case Clear:
 		return a.commitClear(act.PlotIndex, &work)
 	case Plant:
-		return a.commitPlant(act.PlotIndex, &work, act.Arg, now)
+		return a.commitPlant(act.PlotIndex, &work, act.Arg, now, timeProfile)
 	case Water:
 		return a.commitWater(act.PlotIndex, &work, now)
 	case Weed:
@@ -107,10 +115,17 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	case Fertilize:
 		return a.commitFertilize(act.PlotIndex, &work, act.Arg, now)
 	case Harvest:
-		return a.commitHarvest(act.PlotIndex, &work, now)
+		return a.commitHarvest(act.PlotIndex, &work, now, timeProfile)
 	default:
 		return ActionResult{Err: pkgerr.BadRequest}
 	}
+}
+
+func actionTimeProfile(profile string) string {
+	if gameconf.ValidTimeProfile(profile) {
+		return profile
+	}
+	return defaultTimeProfile
 }
 
 func (a *Aggregate) advancePlot(p *Plot, now int64, plotIndex uint8) {
@@ -136,6 +151,19 @@ func (a *Aggregate) plotAdvanceConfig(cropID uint16) AdvanceConfig {
 
 // AdvanceAll 将所有已种植地块惰性推进到 now，并返回发生可见变化的地块。
 func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
+	return a.advanceAll(now, "")
+}
+
+// AdvanceAllWithProfile 在惰性推进后，把仍在生长的当前季按已完成进度切换到
+// profile。它用于调试时间档热切换：成熟作物不回退，正在生长的作物不重置进度。
+func (a *Aggregate) AdvanceAllWithProfile(now int64, profile string) []PlotChange {
+	if !gameconf.ValidTimeProfile(profile) {
+		return a.AdvanceAll(now)
+	}
+	return a.advanceAll(now, profile)
+}
+
+func (a *Aggregate) advanceAll(now int64, profile string) []PlotChange {
 	if a == nil {
 		return nil
 	}
@@ -145,10 +173,16 @@ func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
 	changes := make([]PlotChange, 0)
 	for i := range a.Plots {
 		p := &a.Plots[i]
-		if p.State == StateGrowing || p.State == StateMature {
+		if p.State == StateGrowing {
 			before := PlotSnapshotOf(uint8(i), *p)
 			a.advancePlot(p, now, uint8(i))
+			if p.State == StateGrowing && profile != "" {
+				reprofileGrowingPlot(p, now, profile)
+			}
 			after := PlotSnapshotOf(uint8(i), *p)
+			// LastSettleAt 是客户端插值健康度的基准，但它自身推进不属于可见变化；
+			// 只有状态、风险、健康度或产量等字段改变时才占用一个 FarmSeq。
+			before.LastSettleAt = after.LastSettleAt
 			if before != after {
 				changes = append(changes, plotChangeFromSnapshot(after))
 			}
@@ -160,6 +194,77 @@ func (a *Aggregate) AdvanceAll(now int64) []PlotChange {
 	return changes
 }
 
+// reprofileGrowingPlot 保留当前季的完成比例、施肥推进和健康度，把后续时间轴
+// 映射到新的档位。所有输入均为非负毫秒；最大作物季时长远小于 int64 上限，
+// 比例乘法仍使用 128 位中间值，避免以后扩大配置时出现溢出。
+func reprofileGrowingPlot(p *Plot, now int64, profile string) bool {
+	if p == nil || p.State != StateGrowing || p.SeasonDuration <= 0 || p.MatureAt <= now {
+		return false
+	}
+	crop, ok := gameconf.CropByID(p.CropID)
+	if !ok {
+		return false
+	}
+	newDuration := gameconf.SeasonDurationMs(crop, p.SeasonIndex, profile)
+	oldDuration := p.SeasonDuration
+	if newDuration <= 0 || newDuration == oldDuration {
+		return false
+	}
+
+	oldRemaining := p.MatureAt - now
+	if oldRemaining > oldDuration {
+		oldRemaining = oldDuration
+	}
+	newRemaining := scaleDuration(oldRemaining, newDuration, oldDuration)
+	oldElapsed := now - p.SeasonStartAt
+	if oldElapsed < 0 {
+		oldElapsed = 0
+	}
+	if oldElapsed > oldDuration {
+		oldElapsed = oldDuration
+	}
+	newSeasonStart := now - scaleDuration(oldElapsed, newDuration, oldDuration)
+
+	p.AccruedWeighted = scaleDuration(p.AccruedWeighted, newDuration, oldDuration)
+	p.LastWaterAt = scalePastTimestamp(p.LastWaterAt, now, newDuration, oldDuration, newSeasonStart)
+	p.WeedSince = scalePastTimestamp(p.WeedSince, now, newDuration, oldDuration, newSeasonStart)
+	p.PestSince = scalePastTimestamp(p.PestSince, now, newDuration, oldDuration, newSeasonStart)
+	p.SeasonStartAt = newSeasonStart
+	p.SeasonDuration = newDuration
+	p.MatureAt = now + newRemaining
+	p.LastSettleAt = now
+	return true
+}
+
+func scaleDuration(value, numerator, denominator int64) int64 {
+	if value <= 0 || numerator <= 0 || denominator <= 0 {
+		return 0
+	}
+	hi, lo := bits.Mul64(uint64(value), uint64(numerator))
+	if hi >= uint64(denominator) {
+		return int64(^uint64(0) >> 1)
+	}
+	quotient, _ := bits.Div64(hi, lo, uint64(denominator))
+	if quotient > uint64(^uint64(0)>>1) {
+		return int64(^uint64(0) >> 1)
+	}
+	return int64(quotient)
+}
+
+func scalePastTimestamp(timestamp, now, numerator, denominator, lowerBound int64) int64 {
+	if timestamp <= 0 {
+		return 0
+	}
+	if timestamp >= now {
+		return now
+	}
+	scaled := now - scaleDuration(now-timestamp, numerator, denominator)
+	if scaled < lowerBound {
+		return lowerBound
+	}
+	return scaled
+}
+
 func plotChangeFromSnapshot(s PlotSnapshot) PlotChange {
 	return PlotChange{
 		Index:          s.Index,
@@ -167,9 +272,11 @@ func plotChangeFromSnapshot(s PlotSnapshot) PlotChange {
 		CropID:         s.CropID,
 		SeasonIndex:    s.SeasonIndex,
 		SeasonTotal:    s.SeasonTotal,
+		SeasonStartAt:  s.SeasonStartAt,
 		MatureAt:       s.MatureAt,
 		SeasonDuration: s.SeasonDuration,
 		FinalYield:     s.FinalYield,
+		LastSettleAt:   s.LastSettleAt,
 		LastWaterAt:    s.LastWaterAt,
 		WeedSince:      s.WeedSince,
 		PestSince:      s.PestSince,
@@ -202,7 +309,7 @@ func (a *Aggregate) commitClear(idx uint8, work *Plot) ActionResult {
 	return a.okPatch(idx)
 }
 
-func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64) ActionResult {
+func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64, timeProfile string) ActionResult {
 	crop, ok := gameconf.CropByID(cropID)
 	if !ok {
 		return ActionResult{Err: pkgerr.BadRequest}
@@ -220,7 +327,7 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64)
 		delete(a.Items, seedKey)
 	}
 
-	duration := seasonDuration(crop, 0)
+	duration := seasonDuration(crop, 0, timeProfile)
 	a.Plots[idx] = Plot{
 		State:          StateGrowing,
 		SeasonIndex:    0,
@@ -309,6 +416,10 @@ func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, 
 	if work.SeasonDuration <= 0 || work.StageCount == 0 {
 		return ActionResult{Err: pkgerr.Internal}
 	}
+	crop, ok := gameconf.CropByID(work.CropID)
+	if !ok {
+		return ActionResult{Err: pkgerr.Internal}
+	}
 
 	progress := work.SeasonDuration - (work.MatureAt - now)
 	if progress < 0 {
@@ -323,7 +434,14 @@ func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, 
 		return ActionResult{Err: pkgerr.StageAlreadyFertilized}
 	}
 	stageEnd := (stage + 1) * work.SeasonDuration / int64(work.StageCount)
-	reduce := fertilizer.ReduceDuration(defaultTimeProfile)
+	// 当前季时长已在播种/进入新季度时固化。由它反推该季的 hourMs，确保
+	// 服务重启切换全局档位后，旧作物的化肥效果仍沿用原档位。
+	seasonMinutes := gameconf.SeasonMinutes(crop, work.SeasonIndex)
+	if seasonMinutes == 0 || work.SeasonDuration%int64(seasonMinutes) != 0 {
+		return ActionResult{Err: pkgerr.Internal}
+	}
+	hourMs := work.SeasonDuration / int64(seasonMinutes) * 60
+	reduce := int64(fertilizer.ReduceHours * float64(hourMs))
 	if remaining := stageEnd - progress; reduce > remaining {
 		reduce = remaining
 	}
@@ -337,12 +455,16 @@ func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, 
 	}
 	work.MatureAt -= reduce
 	work.FertMask |= stageBit
+	// 最后一个生长阶段可能被化肥恰好压缩到当前时刻。此时应在同一次
+	// 施肥响应里完成成熟结算，避免客户端停在 Growing + 00:00，直到
+	// 下一次 SyncFarm 才看到成熟。
+	a.advancePlot(work, now, idx)
 	a.Plots[idx] = *work
 	a.FarmSeq++
 	return a.okPatch(idx)
 }
 
-func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult {
+func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64, timeProfile string) ActionResult {
 	cropID := work.CropID
 	crop, ok := gameconf.CropByID(cropID)
 	if !ok {
@@ -363,7 +485,7 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 	codex := a.RecordCodexHarvest(cropID)
 
 	if work.SeasonIndex+1 < work.SeasonTotal {
-		enterNextSeason(work, crop, now)
+		enterNextSeason(work, crop, now, timeProfile)
 		a.Plots[idx] = *work
 	} else {
 		a.Plots[idx] = Plot{
@@ -378,10 +500,10 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64) ActionResult
 	return result
 }
 
-func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64) {
+func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64, timeProfile string) {
 	p.SeasonIndex++
 	p.SeasonStartAt = now
-	p.SeasonDuration = seasonDuration(crop, p.SeasonIndex)
+	p.SeasonDuration = seasonDuration(crop, p.SeasonIndex, timeProfile)
 	p.MatureAt = now + p.SeasonDuration
 	p.LastSettleAt = now
 	p.LastWaterAt = now
@@ -395,8 +517,8 @@ func enterNextSeason(p *Plot, crop gameconf.CropConf, now int64) {
 	p.State = StateGrowing
 }
 
-func seasonDuration(crop gameconf.CropConf, seasonIndex uint8) int64 {
-	return gameconf.SeasonDurationMs(crop, seasonIndex, defaultTimeProfile)
+func seasonDuration(crop gameconf.CropConf, seasonIndex uint8, timeProfile string) int64 {
+	return gameconf.SeasonDurationMs(crop, seasonIndex, actionTimeProfile(timeProfile))
 }
 
 func stageCount(crop gameconf.CropConf) uint8 {

@@ -4,16 +4,22 @@
 // ============================================================
 import {
   TIME_SCALES, CROP_MAP, FERTILIZERS, DOGS, EXPANSION,
-  YIELD_FLOOR, WITHER_SPAN, STEAL_CAP_RATIO, DOG_BOWL_CAP, DOG_FOOD_SHOP_ITEM_ID,
+  YIELD_FLOOR, STEAL_CAP_RATIO, DOG_BOWL_CAP, DOG_FOOD_SHOP_ITEM_ID,
   stageCount, STAGE_NAMES_3, STAGE_NAMES_4, logicDayPhase,
 } from './config.js';
 import { PLOT, defaultState, applyMailClaimReceipt } from './state.js';
 import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
-import { enterOnline, isOnline, leaveOnline, logout, session, setFarmView } from '../net/session.js';
+import { enterOnline, farmNow, isOnline, leaveOnline, logout, session, setFarmView, setServerTime } from '../net/session.js';
 import { CMD_FERTILIZE, CMD_HARVEST, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
+import {
+  compareUint64,
+  sameUid,
+  wireUid,
+  wireUint64,
+} from '../net/jsonSafe.js';
 import { applyCodexProgress, applyPatch, cropIdToKey, cropKeyToId } from './applyPatch.js';
 import { createFarmMirror } from './farmMirror.js';
 import { plotCmdForTool, isVisitTool } from './onlineActions.js';
@@ -22,8 +28,9 @@ import {
   applyAuthoritativeFarmEnter,
   bindFarmReconnectRestore,
 } from './reconnectRestore.js';
-import { cropOf, stageOf, computePlotInfo } from './plotInfo.js';
+import { cropOf, stageOf, computePlotInfo, projectedHealthOf } from './plotInfo.js';
 import { bindPageUnload } from './pageLifecycle.js';
+import { createFarmAdvanceScheduler } from './farmAdvanceScheduler.js';
 import {
   applyTaskListSchedule,
   createTaskResetScheduler,
@@ -59,6 +66,7 @@ let hoverPlot = null;
 /** @type {import('../net/client.js').NetClient|null} */
 let netClient = hmrRuntime?.netClient || null;
 let farmMirror = null;
+let farmAdvanceScheduler = null;
 let stopDeltaSubscription = null;
 let stopPlayerDeltaSubscription = null;
 let stopMailNotifySubscription = null;
@@ -76,6 +84,8 @@ let taskResetAt = 0;
 let taskResetScheduler = null;
 /** @type {ReturnType<typeof createTaskSession>|null} */
 let taskSession = null;
+let observedFarmGeneration = null;
+let observedPlotStates = [];
 
 function createLiveTaskResetScheduler() {
   return createTaskResetScheduler({
@@ -168,8 +178,12 @@ const isVisitingFriend = () => session.relation === 'FRIEND';
 
 function applyResponsePatch(payload) {
   applyPatch(state, payload || {});
-  const farmSeq = Number(payload?.farm_seq);
-  if (session.relation === 'SELF' && Number.isSafeInteger(farmSeq) && farmSeq >= session.lastFarmSeq) {
+  const farmSeq = wireUint64(payload?.farm_seq);
+  if (
+    session.relation === 'SELF' &&
+    farmSeq != null &&
+    (compareUint64(farmSeq, session.lastFarmSeq) ?? -1) >= 0
+  ) {
     session.lastFarmSeq = farmSeq;
   }
 }
@@ -207,17 +221,50 @@ function refreshFarmMirror() {
     : null);
   refreshToolbar();
   refreshSubBar();
-  syncAllPlots();
+  refreshPlotPresentation();
   ui.updateHUD(state);
   if (!visiting) void refreshPetStatus();
 }
 
-const healthOf = (plot) => Math.max(0, Math.min(100, 100 - plot.penalty));
 const yieldFactor = (h) => YIELD_FLOOR + (1 - YIELD_FLOOR) * (h / 100);
 const actualYield = (crop, h) => Math.floor(crop.yield * yieldFactor(h));
 
 function stageName(crop, stage) {
   return (stageCount(crop) === 3 ? STAGE_NAMES_3 : STAGE_NAMES_4)[stage] || '';
+}
+
+function announceMatureTransitions() {
+  const generation = Number(session.farmViewGeneration) || 0;
+  const current = state.plots.map((plot) => plot?.state);
+  if (observedFarmGeneration !== generation) {
+    observedFarmGeneration = generation;
+    observedPlotStates = current;
+    return;
+  }
+
+  const matured = [];
+  for (let i = 0; i < current.length; i++) {
+    if (observedPlotStates[i] === PLOT.GROWING && current[i] === PLOT.MATURE) {
+      matured.push(i);
+    }
+  }
+  observedPlotStates = current;
+  if (matured.length === 0) return;
+
+  sfx.mature();
+  matured.forEach((plotId) => scene.matureAnim(plotId));
+  ui.toast(
+    matured.length === 1
+      ? `✨ ${cropOf(state.plots[matured[0]])?.name || '作物'}已成熟，可以收获了！`
+      : `✨ ${matured.length} 块地的作物已成熟，可以收获了！`,
+    'gold',
+  );
+}
+
+function refreshPlotPresentation() {
+  syncAllPlots();
+  announceMatureTransitions();
+  farmAdvanceScheduler?.schedule();
 }
 
 // ---------------- 农事反馈 ----------------
@@ -259,6 +306,8 @@ function reconnectRestoreDeps(client) {
       stopTaskNotifySubscription?.();
       stopTaskNotifySubscription = null;
       disposeTaskRuntime();
+      farmAdvanceScheduler?.dispose?.();
+      farmAdvanceScheduler = null;
       farmMirror = null;
       netClient = null;
       reconnectBinding = null;
@@ -287,9 +336,25 @@ function bindOnlineClient(client) {
     syncFarm: async (viewOwnerUid, fromSeq) => {
       const response = await client.syncFarm(viewOwnerUid, fromSeq);
       if (response.err !== 0) throw new Error(errText(response.err));
+      setServerTime(response.payload?.server_time);
+      applyPatch(state, {
+        time_profile: response.payload?.time_profile,
+        time_profile_mutable: response.payload?.time_profile_mutable,
+      });
       return response;
     },
     onApplied: refreshFarmMirror,
+  });
+  farmAdvanceScheduler?.dispose?.();
+  farmAdvanceScheduler = createFarmAdvanceScheduler({
+    setTimeout,
+    clearTimeout,
+    now: farmNow,
+    getPlots: () => state.plots,
+    isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid,
+    sync: async () => {
+      await farmMirror?.syncNow?.();
+    },
   });
   stopDeltaSubscription = client.onDelta((deltaEnv) => {
     void farmMirror.onDelta(deltaEnv.payload).catch((error) => {
@@ -349,7 +414,7 @@ async function enterFarm(ownerUid, nickname = '') {
     }
     const snapshot = response.payload?.snapshot || {};
     const friend = Array.isArray(state.friends)
-      ? state.friends.find((f) => Number(f.uid) === Number(ownerUid || snapshot.owner_uid))
+      ? state.friends.find((f) => sameUid(f.uid, ownerUid || snapshot.owner_uid))
       : null;
     applyAuthoritativeFarmEnter(reconnectRestoreDeps(netClient), response, {
       fallbackOwnerUid: ownerUid || netClient.uid,
@@ -411,6 +476,20 @@ async function onPlotClickOnline(plotId) {
   const plot = farm.plots[plotId];
   if (!plot || plotId >= farm.unlocked) return;
 
+  // 到期边界先向服务端同步一次，避免画面仍是 Growing 时把浇水等旧状态动作发出去。
+  if (plot.state === PLOT.GROWING && plot.matureTime > 0 && farmNow() >= plot.matureTime) {
+    onlineBusy = true;
+    try {
+      await farmMirror?.syncNow?.();
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+      return;
+    } finally {
+      onlineBusy = false;
+    }
+    if (plot.state !== PLOT.GROWING) return showPlotTip(plotId);
+  }
+
   if (!activeTool) return showPlotTip(plotId);
   if (isVisitingFriend() && !isVisitTool(activeTool)) {
     return fail('好友农场仅可浇水、除草、除虫或偷菜');
@@ -420,10 +499,13 @@ async function onPlotClickOnline(plotId) {
   if (cmd == null) {
     if (activeTool === 'till') return fail('这块地不需要锄地');
     if (activeTool === 'steal') return fail('这块地没有可偷的成熟作物');
+    if (plot.state === PLOT.MATURE && ['water', 'weed', 'pest', 'fert'].includes(activeTool)) {
+      return fail('作物已成熟，本季照料已结算，请收获');
+    }
     return showPlotTip(plotId);
   }
 
-  const ownerUid = isVisitingFriend() ? Number(session.viewingOwnerUid) || 0 : 0;
+  const ownerUid = isVisitingFriend() ? (wireUid(session.viewingOwnerUid) ?? 0) : 0;
 
   let arg = 0;
   if (cmd === CMD_PLANT) {
@@ -460,7 +542,7 @@ async function onPlotClickOnline(plotId) {
       if (shouldApplyPatchFromError(rsp.err, rsp.payload)) {
         applyResponsePatch(rsp.payload);
         ui.updateHUD(state);
-        syncAllPlots();
+        refreshPlotPresentation();
         refreshSubBar();
       }
       fail(errText(rsp.err));
@@ -482,7 +564,7 @@ async function onPlotClickOnline(plotId) {
       ok(cmd === CMD_HARVEST ? harvestSuccessText(rsp.payload) : '操作成功');
     }
     ui.updateHUD(state);
-    syncAllPlots();
+    refreshPlotPresentation();
     refreshSubBar();
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
@@ -630,7 +712,7 @@ function showPlotTip(plotId) {
 // ---------------- Tooltip ----------------
 function tooltipHTML(plotId) {
   const farm = currentFarm();
-  const now = Date.now();
+  const now = farmNow();
   const plot = farm.plots[plotId];
   if (!plot) return '';
   if (plotId >= farm.unlocked) {
@@ -653,21 +735,24 @@ function tooltipHTML(plotId) {
     case PLOT.MATURE: {
       const c = cropOf(plot);
       const { stage, total } = stageOf(plot, now);
-      const h = Math.round(healthOf(plot));
+      const h = Math.round(projectedHealthOf(plot, now));
       const dry = now > plot.waterUntil;
       const mature = plot.state === PLOT.MATURE;
-      const yieldEst = plot.finalYield > 0 ? plot.finalYield : actualYield(c, h);
+      const yieldEst = mature ? plot.finalYield : actualYield(c, h);
       const cap = Math.floor(yieldEst * STEAL_CAP_RATIO);
-      let rows = `<div class="row"><span>第 ${plot.season + 1}/${c.seasons} 季</span><b>${mature ? '✨ 已成熟' : stageName(c, stage)}</b></div>`;
-      rows += `<div class="row"><span>${mature ? '枯萎倒计时' : '成熟倒计时'}</span><b>${fmtTime(mature ? plot.matureTime + plot.seasonMs * WITHER_SPAN - now : plot.matureTime - now)}</b></div>`;
-      rows += `<div class="row"><span>健康度</span><b>${h}</b></div><div class="bar"><i style="width:${h}%"></i></div>`;
-      rows += `<div class="row"><span>预计产量</span><b>${yieldEst}${plot.stolenTotal ? `（被偷 ${plot.stolenTotal}）` : ''}</b></div>`;
+      const phaseValue = mature
+        ? '✨ 已成熟 · 可收获'
+        : `${stageName(c, stage)} · ⏳ ${fmtTime(plot.matureTime - now)}`;
+      let rows = `<div class="row"><span>第 ${plot.season + 1}/${c.seasons} 季</span><b class="${mature ? 'mature-value' : ''}">${phaseValue}</b></div>`;
+      rows += `<div class="row"><span>${mature ? '成熟健康度' : '当前健康度'}</span><b>${h}</b></div><div class="bar"><i style="width:${h}%"></i></div>`;
+      rows += `<div class="row"><span>${mature ? '最终产量' : '预计产量'}</span><b>${yieldEst}${plot.stolenTotal ? `（被偷 ${plot.stolenTotal}）` : ''}</b></div>`;
       let tags = '';
       if (!mature) {
         if (dry) tags += `<span class="tag dry">💧 缺水</span>`;
         if (plot.weedSince) tags += `<span class="tag weed">🌿 杂草</span>`;
         if (plot.pestSince) tags += `<span class="tag pest">🐛 害虫</span>`;
       } else {
+        tags += `<span class="tag mature">🧺 本季照料已结算</span>`;
         tags += `<span class="tag steal">🥷 可偷 ${Math.max(0, cap - plot.stolenTotal)}</span>`;
       }
       return `<h4><span>${c.name}</span><span class="stage">${c.hidden ? '✨' : ''}</span></h4>${rows}${tags ? `<div class="tags">${tags}</div>` : ''}`;
@@ -678,7 +763,7 @@ function tooltipHTML(plotId) {
 
 // ---------------- 3D 同步 ----------------
 function syncAllPlots() {
-  const now = Date.now();
+  const now = farmNow();
   const farm = currentFarm();
   scene.forEachPlot((g, i) => {
     const plot = farm.plots[i];
@@ -712,10 +797,12 @@ async function refreshPetStatus() {
 
 function mapServerMails(mails) {
   return (Array.isArray(mails) ? mails : []).map((m) => {
-    const gold = Number(m.attachment_coin) || 0;
+    const rawGold = wireUint64(m.attachment_coin);
+    const gold = rawGold != null && (compareUint64(rawGold, 0) ?? 0) > 0 ? rawGold : 0;
     const claimed = !!m.claimed;
+    const id = wireUint64(m.id);
     return {
-      id: Number(m.id),
+      id,
       title: m.title || '系统邮件',
       content: '',
       gold,
@@ -851,7 +938,7 @@ async function clearAllMails() {
     const affected = Math.max(0, Number(response.payload?.affected) || 0);
     await refreshMails();
     const protectedCount = state.mails.filter((mail) =>
-      !mail.claimed && Number(mail.gold || mail.attachmentCoin) > 0
+      !mail.claimed && (compareUint64(mail.gold || mail.attachmentCoin, 0) ?? 0) > 0
     ).length;
     ui.updateHUD(state);
     if (ui.isPanelOpen('mail')) ui.renderMail(state);
@@ -907,12 +994,6 @@ function inviteTokenFromInput(value) {
   }
 }
 
-/** 比较 uid（雪花经 JSON 后可能丢精度，同端两侧通常同为 Number）。 */
-function sameUid(a, b) {
-  if (a == null || b == null) return false;
-  return String(a) === String(b);
-}
-
 async function refreshFriendRequests() {
   if (!netClient) return [];
   try {
@@ -931,7 +1012,7 @@ async function refreshFriendRequests() {
   }
 }
 
-/** 搜索用户（精确用户名）；邀请链接走 acceptInvite。不返回自己。 */
+/** 搜索用户（精确用户名或 UID）；邀请链接走 acceptInvite。 */
 async function searchNeighbors(value) {
   if (!netClient) return { ok: false, users: [] };
   const selfUid = session.uid ?? netClient.uid;
@@ -957,14 +1038,18 @@ async function searchNeighbors(value) {
     }
   }
   try {
-    // 纯数字 UID：直接作为搜索结果卡片，发申请（排除自己）
-    const peerUid = Number(input);
-    if (Number.isSafeInteger(peerUid) && peerUid > 0 && String(peerUid) === input) {
-      if (sameUid(peerUid, selfUid)) {
-        fail('不能添加自己为好友');
-        return { ok: true, users: [] };
-      }
-      return { ok: true, users: [{ uid: peerUid, nickname: `UID ${peerUid}` }] };
+    // 纯数字 UID：保留字符串精度，19 位 UID 不能先转成 Number。
+    const peerUid = wireUid(input);
+    if (peerUid != null && String(peerUid) === input) {
+      const isSelf = sameUid(peerUid, selfUid);
+      return {
+        ok: true,
+        users: [{
+          uid: peerUid,
+          nickname: isSelf ? (state.nickname || `UID ${peerUid}`) : `UID ${peerUid}`,
+          isSelf,
+        }],
+      };
     }
     const search = await netClient.searchUser(input);
     if (search.err !== 0) {
@@ -978,7 +1063,7 @@ async function searchNeighbors(value) {
     if (!users.length && search.payload?.uid) {
       users = [{ uid: search.payload.uid, nickname: search.payload.nickname || '' }];
     }
-    users = users.filter((u) => !sameUid(u.uid, selfUid));
+    users = users.map((u) => ({ ...u, isSelf: sameUid(u.uid, selfUid) }));
     return { ok: true, users };
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
@@ -1215,7 +1300,10 @@ const ui = new UI({
       if (rsp.err !== 0) return fail(errText(rsp.err));
       const reward = applyMailClaimReceipt(state, id, rsp.payload);
       sfx.gold();
-      ui.toast(reward > 0 ? `领取 💰${reward}` : '附件已领取', 'gold');
+      ui.toast(
+        (compareUint64(reward, 0) ?? 0) > 0 ? `领取 💰${reward}` : '附件已领取',
+        'gold',
+      );
       ui.updateHUD(state);
       await refreshMails();
     } catch (e) {
@@ -1347,7 +1435,43 @@ const ui = new UI({
     return fail('线上暂不支持');
   },
 
-  onSetTimeScale(id) { state.timeScale = id; sfx.click(); },
+  async onSetTimeScale(profile) {
+    if (!isOnline() || !netClient) {
+      fail('请先登录后再操作');
+      return false;
+    }
+    if (!state.timeScaleMutable) {
+      fail('当前环境禁止在线修改时间档');
+      return false;
+    }
+    if (onlineBusy) return false;
+    onlineBusy = true;
+    try {
+      const rsp = await netClient.setTimeProfile(profile);
+      if (rsp.err !== 0) {
+        fail(errText(rsp.err));
+        return false;
+      }
+      applyPatch(state, rsp.payload || {});
+      const synced = await farmMirror?.syncNow?.();
+      if (synced === false) {
+        fail('时间档已切换，但当前农场刷新失败，请重新进入农场');
+        return false;
+      }
+      sfx.click();
+      ui.toast(
+        `时间档已切换为 ${TIME_SCALES[state.timeScale]?.label || state.timeScale}，生长进度已换算`,
+        'ok',
+      );
+      return true;
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error));
+      return false;
+    } finally {
+      onlineBusy = false;
+    }
+  },
+
   onSetSound(v) { state.settings.sound = v; sfx.enabled = v; sfx.click(); },
   onLogout() {
     disposeTaskRuntime();
@@ -1373,9 +1497,10 @@ const CLOCK_ICONS = [[0.22, '🌙'], [0.28, '🌅'], [0.42, '☀️'], [0.68, '�
 let lastTick = Date.now();
 
 function tick() {
-  const now = Date.now();
-  const dt = now - lastTick;
-  lastTick = now;
+  const localNow = Date.now();
+  const now = farmNow(localNow);
+  const dt = localNow - lastTick;
+  lastTick = localNow;
 
   // 期 3：不做本地权威地块推进 / NPC 假好友写；镜像仅由 snapshot/Rsp/Delta 更新
 
@@ -1438,9 +1563,9 @@ tick();
 
 // 页面卸载：清 tick / pointermove / scene，并保留网络关闭与 reconnect cleanup
 removePageUnload = bindPageUnload({
-  addEventListener,
-  removeEventListener,
-  clearInterval,
+  addEventListener: (type, listener) => window.addEventListener(type, listener),
+  removeEventListener: (type, listener) => window.removeEventListener(type, listener),
+  clearInterval: (id) => window.clearInterval(id),
   tickIntervalId,
   onPointerMove: onGlobalPointerMove,
   getReconnectBinding: () => reconnectBinding,
@@ -1449,6 +1574,8 @@ removePageUnload = bindPageUnload({
   getNetClient: () => netClient,
   onCleanup: () => {
     disposeTaskRuntime();
+    farmAdvanceScheduler?.dispose?.();
+    farmAdvanceScheduler = null;
     stopTaskNotifySubscription?.();
     stopTaskNotifySubscription = null;
   },
@@ -1468,6 +1595,8 @@ function disposeRuntimeForHMR() {
   // 旧实例用旧 state、新实例用新 state，金币/经验就会反复跳动。
   clearInterval(tickIntervalId);
   disposeTaskRuntime();
+  farmAdvanceScheduler?.dispose?.();
+  farmAdvanceScheduler = null;
   stopDeltaSubscription?.();
   stopDeltaSubscription = null;
   stopPlayerDeltaSubscription?.();

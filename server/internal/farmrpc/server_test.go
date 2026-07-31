@@ -20,7 +20,13 @@ import (
 
 func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
 	runtime := runtimeStub{actor: &actor.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
-	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
+	handler := NewHandler(
+		runtime,
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTimeProfile(gameconf.TimeProfileAuthentic),
+	)
 
 	body, err := json.Marshal(CommandRequest{Operation: OperationEnterFarm, FarmUID: 42})
 	if err != nil {
@@ -46,8 +52,52 @@ func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
 	if err := json.Unmarshal(response.Payload, &payload); err != nil {
 		t.Fatalf("decode enter response: %v", err)
 	}
-	if payload.Snapshot.OwnerUID != 42 || payload.ServerTime != 123 {
+	if payload.Snapshot.OwnerUID != 42 || payload.ServerTime != 123 || payload.TimeProfile != gameconf.TimeProfileAuthentic {
 		t.Fatalf("enter payload = %#v", payload)
+	}
+}
+
+func TestHandlerReadsHotSwitchedTimeProfile(t *testing.T) {
+	profiles := gameconf.NewTimeProfileSwitch(gameconf.TimeProfileDemo)
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		SeasonStartAt:  123,
+		SeasonDuration: 10 * gameconf.HourMs(gameconf.TimeProfileDemo),
+		MatureAt:       123 + 10*gameconf.HourMs(gameconf.TimeProfileDemo),
+		LastSettleAt:   123,
+		LastWaterAt:    123,
+	}
+	handler := NewHandler(
+		runtimeStub{actor: &actor.FarmActor{Aggregate: aggregate}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTimeProfileSwitch(profiles),
+	)
+	if !profiles.Set(gameconf.TimeProfileFast) {
+		t.Fatal("failed to switch profile")
+	}
+
+	response := handler.execute(CommandRequest{Operation: OperationEnterFarm, FarmUID: 42})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("EnterFarm err = %d", response.Err)
+	}
+	var payload EnterFarmResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode EnterFarm: %v", err)
+	}
+	if payload.TimeProfile != gameconf.TimeProfileFast {
+		t.Fatalf("time profile = %q, want fast", payload.TimeProfile)
+	}
+	wantDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileFast))
+	if got := payload.Snapshot.Plots[0].SeasonDuration; got != wantDuration {
+		t.Fatalf("growing plot duration = %d, want hot-switched %d", got, wantDuration)
+	}
+	if got := payload.Snapshot.Plots[0].MatureAt; got != 123+wantDuration {
+		t.Fatalf("growing plot mature_at = %d, want %d", got, 123+wantDuration)
 	}
 }
 
@@ -182,6 +232,58 @@ func TestHandlerExecutesShardedPlotShopSyncAndPetCommands(t *testing.T) {
 	if aggregate.Plots[0].State != farm.StateGrowing || aggregate.Pet.ActiveDog != farm.DogMutt ||
 		aggregate.Pet.BowlEmptyAt <= 123 {
 		t.Fatalf("aggregate after routed commands = %#v", aggregate)
+	}
+}
+
+func TestHandlerSyncFarmAdvancesMatureStateAndPublishesDelta(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		SeasonTotal:    1,
+		SeasonStartAt:  10_000,
+		SeasonDuration: 10_000,
+		MatureAt:       20_000,
+		LastSettleAt:   10_000,
+		LastWaterAt:    19_999,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
+	}
+	publisher := &deltaPublisherStub{published: make(chan struct{}, 1)}
+	handler := NewHandler(
+		runtimeStub{actor: &actor.FarmActor{Aggregate: aggregate}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 20_000 },
+		WithDeltaPublisher(publisher),
+	)
+
+	response := handler.execute(CommandRequest{
+		Operation: OperationSyncFarm,
+		FarmUID:   42,
+		Payload:   marshalPayload(SyncFarmRequest{FromSeq: 0}),
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("SyncFarm response = %#v", response)
+	}
+	var payload SyncFarmResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode SyncFarm response: %v", err)
+	}
+	if payload.FarmSeq != 1 || payload.ServerTime != 20_000 || len(payload.Deltas) != 1 {
+		t.Fatalf("SyncFarm payload = %#v", payload)
+	}
+	if got := payload.Deltas[0].Plots[0]; got.State != farm.StateMature ||
+		got.FinalYield == 0 || got.LastSettleAt != 20_000 {
+		t.Fatalf("mature delta = %#v", got)
+	}
+	select {
+	case <-publisher.published:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mature Delta publish")
+	}
+	if deltas := publisher.Deltas(); len(deltas) != 1 || deltas[0].FarmSeq != 1 {
+		t.Fatalf("published deltas = %#v", deltas)
 	}
 }
 

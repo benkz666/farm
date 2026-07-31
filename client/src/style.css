@@ -270,7 +270,9 @@ body {
 #tooltip .tag.dry { background: rgba(255, 183, 77, 0.25); color: #ffcc80; }
 #tooltip .tag.weed { background: rgba(129, 199, 132, 0.25); color: #a5d6a7; }
 #tooltip .tag.pest { background: rgba(229, 115, 115, 0.25); color: #ef9a9a; }
+#tooltip .tag.mature { background: rgba(255, 213, 79, 0.24); color: #ffe082; }
 #tooltip .tag.steal { background: rgba(186, 104, 200, 0.3); color: #e1bee7; }
+#tooltip .row b.mature-value { color: #ffe082; text-shadow: 0 0 10px rgba(255, 213, 79, 0.35); }
 #tooltip .bar { height: 7px; border-radius: 99px; background: rgba(255,255,255,0.15); margin-top: 7px; overflow: hidden; }
 #tooltip .bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #9be15d, #4caf50); }
 
@@ -671,6 +673,15 @@ body {
   padding: 7px 14px;
   font-size: 12.5px;
 }
+.nb-btn--self,
+.nb-btn--self:disabled {
+  cursor: default;
+  color: #7c6c5f;
+  background: rgba(107, 74, 56, 0.11);
+  box-shadow: none;
+  opacity: 1;
+}
+.nb-btn--self:hover { transform: none; }
 .nb-btn--ghost {
   background: transparent;
   color: var(--ink-soft);
@@ -834,6 +845,8 @@ body {
 .seg { display: flex; gap: 4px; background: rgba(62,50,41,0.07); border-radius: 999px; padding: 3px; }
 .seg button { border: none; background: transparent; border-radius: 999px; padding: 6px 14px; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); cursor: pointer; }
 .seg button.active { background: #fff; color: var(--green-dark); box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+.seg button:disabled { cursor: default; opacity: 0.45; }
+.seg button.active:disabled { opacity: 1; }
 .danger-btn {
   border: none; border-radius: 999px; padding: 9px 20px;
   background: linear-gradient(135deg, #ff8a75, #e04536); color: #fff;

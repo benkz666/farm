@@ -15,14 +15,17 @@ import (
 var errFriendAccessRevoked = errors.New("gateway: friend access revoked during enter")
 
 type syncFarmRequest struct {
-	OwnerUID pkgjson.UID `json:"owner_uid"`
-	FromSeq  uint64      `json:"from_seq"`
+	OwnerUID pkgjson.UID    `json:"owner_uid"`
+	FromSeq  pkgjson.Uint64 `json:"from_seq"`
 }
 
 type syncFarmResponse struct {
-	Deltas   []farm.FarmDelta       `json:"deltas,omitempty"`
-	Snapshot *farm.FarmSnapshotJSON `json:"snapshot,omitempty"`
-	FarmSeq  uint64                 `json:"farm_seq"`
+	Deltas             []farm.FarmDelta       `json:"deltas,omitempty"`
+	Snapshot           *farm.FarmSnapshotJSON `json:"snapshot,omitempty"`
+	FarmSeq            pkgjson.Uint64         `json:"farm_seq"`
+	ServerTime         int64                  `json:"server_time"`
+	TimeProfile        string                 `json:"time_profile"`
+	TimeProfileMutable bool                   `json:"time_profile_mutable"`
 }
 
 func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) Envelope {
@@ -82,10 +85,12 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			}
 		}
 		response.Payload = marshalPayload(enterFarmResponse{
-			Snapshot:   redactFarmSnapshot(remote.Snapshot, relation),
-			FarmSeq:    remote.FarmSeq,
-			ServerTime: remote.ServerTime,
-			Relation:   relation,
+			Snapshot:           redactFarmSnapshot(remote.Snapshot, relation),
+			FarmSeq:            pkgjson.Uint64(remote.FarmSeq),
+			ServerTime:         remote.ServerTime,
+			TimeProfile:        remote.TimeProfile,
+			TimeProfileMutable: g.allowDebug,
+			Relation:           relation,
 		})
 		if relation == "FRIEND" {
 			// 已经拿到快照并组好响应，串门任务计数失败不能让玩家进不去好友农场。
@@ -107,12 +112,14 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("gateway: actor aggregate is nil")
 		}
-		changes := farmActor.Aggregate.AdvanceAll(g.Now())
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(g.Now(), g.TimeProfile())
 		enter = enterFarmResponse{
-			Snapshot:   redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation),
-			FarmSeq:    farmActor.Aggregate.FarmSeq,
-			ServerTime: g.Now(),
-			Relation:   relation,
+			Snapshot:           redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation),
+			FarmSeq:            pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
+			ServerTime:         g.Now(),
+			TimeProfile:        g.TimeProfile(),
+			TimeProfileMutable: g.allowDebug,
+			Relation:           relation,
 		}
 		if err := g.enterRoom(connection, ownerUID); err != nil {
 			return err
@@ -128,6 +135,8 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			}
 		}
 		if len(changes) > 0 {
+			// 进入农场时惰性推进出的成熟/枯萎是权威状态，必须在响应前落盘。
+			farmActor.RequireFlush()
 			delta := farm.FarmDelta{
 				OwnerUID: ownerUID,
 				FarmSeq:  farmActor.Aggregate.FarmSeq,
@@ -186,7 +195,7 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
 			Operation:  farmrpc.OperationSyncFarm,
 			Originator: g.connectionRef(connection),
-			Payload:    marshalPayload(farmrpc.SyncFarmRequest{FromSeq: payload.FromSeq}),
+			Payload:    marshalPayload(farmrpc.SyncFarmRequest{FromSeq: uint64(payload.FromSeq)}),
 		})
 		if err != nil {
 			response.Err = pkgerr.Internal
@@ -203,27 +212,50 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 				safe := redactFarmSnapshot(*sync.Snapshot, relation)
 				sync.Snapshot = &safe
 			}
+			sync.TimeProfileMutable = g.allowDebug
 			response.Payload = marshalPayload(sync)
 		}
 		return response
 	}
 
 	var sync syncFarmResponse
+	var advancedDelta *farm.FarmDelta
+	var stealable bool
+	var refreshHint bool
 	if err := g.runtime.Do(ownerUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("gateway: actor aggregate is nil")
 		}
 
-		sync.FarmSeq = farmActor.Aggregate.FarmSeq
-		if payload.FromSeq == sync.FarmSeq {
+		now := g.Now()
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(now, g.TimeProfile())
+		if len(changes) > 0 {
+			// SyncFarm 既是补 Delta，也是客户端到期时主动触发惰性时间推进的读屏障。
+			// 成熟/枯萎与最终产量必须先持久化，再返回给请求方和房间内其他观察者。
+			farmActor.RequireFlush()
+			emitted := farm.FarmDelta{
+				OwnerUID: ownerUID,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    changes,
+			}
+			farmActor.Deltas.Append(emitted)
+			advancedDelta = &emitted
+			stealable = farmActor.Aggregate.HasStealable()
+			refreshHint = true
+		}
+		sync.FarmSeq = pkgjson.Uint64(farmActor.Aggregate.FarmSeq)
+		sync.ServerTime = now
+		sync.TimeProfile = g.TimeProfile()
+		sync.TimeProfileMutable = g.allowDebug
+		if uint64(payload.FromSeq) == uint64(sync.FarmSeq) {
 			return nil
 		}
-		if payload.FromSeq > sync.FarmSeq {
+		if uint64(payload.FromSeq) > uint64(sync.FarmSeq) {
 			snapshot := redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation)
 			sync.Snapshot = &snapshot
 			return nil
 		}
-		deltas, ok := farmActor.Deltas.Since(payload.FromSeq + 1)
+		deltas, ok := farmActor.Deltas.Since(uint64(payload.FromSeq) + 1)
 		if !ok || len(deltas) == 0 {
 			snapshot := redactFarmSnapshot(farmActor.Aggregate.Snapshot(), relation)
 			sync.Snapshot = &snapshot
@@ -236,6 +268,12 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		return response
 	}
 
+	if advancedDelta != nil {
+		g.rooms.BroadcastExcept(*advancedDelta, connection.id)
+	}
+	if refreshHint {
+		g.writeStealHint(ownerUID, stealable)
+	}
 	response.Payload = marshalPayload(sync)
 	return response
 }

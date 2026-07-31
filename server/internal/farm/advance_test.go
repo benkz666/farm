@@ -1,6 +1,7 @@
 package farm
 
 import (
+	"reflect"
 	"testing"
 
 	"farm/server/internal/gameconf"
@@ -33,23 +34,29 @@ func TestAdvanceMaturesAndFinalizesYield(t *testing.T) {
 	}
 }
 
-func TestAdvanceWithersAfterMatureGracePeriod(t *testing.T) {
+func TestAdvanceKeepsMatureCropHarvestableIndefinitely(t *testing.T) {
 	p := growingPlot()
-	now := p.MatureAt + 3*p.SeasonDuration
+	now := p.MatureAt + 1000*p.SeasonDuration
 	cfg := advanceConfig(t, p.CropID)
 	cfg.WeedThreshold = 0
 	cfg.PestThreshold = 0
 
 	Advance(&p, now, cfg)
 
-	if p.State != StateWithered {
-		t.Fatalf("State = %d, want StateWithered", p.State)
+	if p.State != StateMature {
+		t.Fatalf("State = %d, want StateMature", p.State)
 	}
-	if p.FinalYield != 0 {
-		t.Fatalf("FinalYield = %d, want 0", p.FinalYield)
+	if p.FinalYield != 14 {
+		t.Fatalf("FinalYield = %d, want 14", p.FinalYield)
 	}
-	if p.CropID != 0 {
-		t.Fatalf("CropID = %d, want 0", p.CropID)
+	if p.CropID != 1 {
+		t.Fatalf("CropID = %d, want 1", p.CropID)
+	}
+
+	before := p
+	Advance(&p, now+1000*p.SeasonDuration, cfg)
+	if !reflect.DeepEqual(p, before) {
+		t.Fatalf("mature plot changed over time: before=%#v after=%#v", before, p)
 	}
 }
 

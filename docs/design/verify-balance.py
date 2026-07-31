@@ -51,8 +51,6 @@ WATER_DURATION_RATIO = 0.35         # [设计] 一次浇水的水分持续时长
 RISK_WINDOW_RATIO = 0.10            # [设计] 风险判定窗口长度占本季比例 -> 每季恰好 10 次判定
 P_WEED_PER_WINDOW = 0.12            # [设计] 单窗口长草概率
 P_PEST_PER_WINDOW = 0.10            # [设计] 单窗口生虫概率
-WITHER_RATIO = 3.0                  # [设计] 成熟后超过 N 倍本季生长时长未收获则枯萎
-
 # --- 偷菜与守卫 ---
 STEAL_CAP_RATIO = 0.40              # [原版] 单轮成熟被访客合计偷走的产量上限
 STEAL_MIN, STEAL_MAX = 1, 10        # [设计] 单次偷取数量区间（原版记为版本参数）

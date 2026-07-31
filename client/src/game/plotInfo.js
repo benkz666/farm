@@ -1,6 +1,6 @@
 // 地块视觉信息计算 —— 从 main.js 抽出的纯函数，便于单测。
 // 规则对照 docs/design/game-design-full.md 5.1 / 6.4。
-import { CROP_MAP, EXPANSION, stageCount } from './config.js';
+import { CROP_MAP, EXPANSION, W_DRY, W_WEED, W_PEST, stageCount } from './config.js';
 import { PLOT } from './state.js';
 
 /** 由 plot.cropId 取作物定义；crop_id 被服务端清空时返回 undefined。 */
@@ -15,6 +15,37 @@ export function stageOf(plot, now) {
   const total = stageCount(crop);
   const progress = Math.max(0, Math.min(0.9999, (now - plot.plantTime) / plot.seasonMs));
   return { stage: Math.floor(progress * total), total };
+}
+
+/**
+ * 基于服务端最近一次健康度结算点，插值当前仍在持续的不良状态影响。
+ * 新生成的草/虫仍以服务端风险窗口裁决为准；到窗口边界会由同步调度器刷新。
+ */
+export function projectedHealthOf(plot, now) {
+  const authoritative = Number.isFinite(Number(plot?.health))
+    ? Number(plot.health)
+    : 100 - (Number(plot?.penalty) || 0);
+  const base = Math.max(0, Math.min(100, authoritative));
+  if (!plot || plot.state !== PLOT.GROWING || plot.seasonMs <= 0) return base;
+
+  const from = Number(plot.settleTime) || 0;
+  const matureAt = Number(plot.matureTime) || 0;
+  const to = matureAt > 0 ? Math.min(Number(now) || 0, matureAt) : Number(now) || 0;
+  if (from <= 0 || to <= from) return base;
+
+  const activeMs = (since) => {
+    const start = Math.max(from, Number(since) || 0);
+    return start > 0 && start < to ? to - start : 0;
+  };
+  const dryMs = activeMs(plot.waterUntil);
+  const weedMs = plot.weedSince ? activeMs(plot.weedSince) : 0;
+  const pestMs = plot.pestSince ? activeMs(plot.pestSince) : 0;
+  const extraPenalty = 100 * (
+    W_DRY * dryMs +
+    W_WEED * weedMs +
+    W_PEST * pestMs
+  ) / plot.seasonMs;
+  return Math.max(0, Math.min(100, base - extraPenalty));
 }
 
 /**

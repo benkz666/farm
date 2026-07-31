@@ -3,6 +3,7 @@ package farm
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
@@ -409,6 +410,142 @@ func TestApplyPlotActionFertilizeMovesMatureAtWithoutChangingSeasonDuration(t *t
 	}
 }
 
+func TestApplyPlotActionUsesAuthoritativeTimeProfile(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Level = 6
+	agg.Items[SeedItem(10)] = 1
+	agg.Plots[0].State = StateTilled
+
+	result := agg.ApplyPlotAction(PlotAction{
+		Kind:        Plant,
+		PlotIndex:   0,
+		Arg:         10,
+		TimeProfile: gameconf.TimeProfileAuthentic,
+	}, actionNow)
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	want := int64(17 * time.Hour / time.Millisecond)
+	if got := agg.Plots[0].SeasonDuration; got != want {
+		t.Fatalf("SeasonDuration = %d, want authentic tomato duration %d", got, want)
+	}
+	if got := agg.Plots[0].MatureAt; got != actionNow+want {
+		t.Fatalf("MatureAt = %d, want %d", got, actionNow+want)
+	}
+}
+
+func TestFertilizerUsesHotSwitchedCurrentSeasonTimeProfile(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[FertilizerItem(1)] = 1
+	demoDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileDemo))
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		SeasonDuration: demoDuration,
+		MatureAt:       actionNow + demoDuration,
+		LastSettleAt:   actionNow,
+		LastWaterAt:    actionNow,
+	}
+
+	result := agg.ApplyPlotAction(PlotAction{
+		Kind:        Fertilize,
+		PlotIndex:   0,
+		Arg:         1,
+		TimeProfile: gameconf.TimeProfileAuthentic,
+	}, actionNow)
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	authenticDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileAuthentic))
+	if got, want := agg.Plots[0].SeasonDuration, authenticDuration; got != want {
+		t.Fatalf("SeasonDuration = %d, want hot-switched duration %d", got, want)
+	}
+	if got, want := agg.Plots[0].MatureAt, actionNow+authenticDuration-gameconf.HourMs(gameconf.TimeProfileAuthentic); got != want {
+		t.Fatalf("MatureAt = %d, want hot-switched fertilizer result %d", got, want)
+	}
+}
+
+func TestAdvanceAllWithProfileReprofilesGrowingSeasonWithoutResettingProgress(t *testing.T) {
+	const now int64 = 1_700_000_000_000
+	demoDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileDemo))
+	authenticDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileAuthentic))
+	agg := NewAggregate(1, "alice")
+	agg.Plots[0] = Plot{
+		State:           StateGrowing,
+		CropID:          1,
+		StageCount:      3,
+		SeasonStartAt:   now - demoDuration/2,
+		SeasonDuration:  demoDuration,
+		MatureAt:        now + demoDuration/2,
+		LastSettleAt:    now,
+		LastWaterAt:     now - demoDuration/4,
+		WeedSince:       now - demoDuration/12,
+		AccruedWeighted: demoDuration * 10,
+	}
+
+	changes := agg.AdvanceAllWithProfile(now, gameconf.TimeProfileAuthentic)
+	if len(changes) != 1 || agg.FarmSeq != 1 {
+		t.Fatalf("changes = %#v, FarmSeq = %d, want one reprofile delta", changes, agg.FarmSeq)
+	}
+	got := agg.Plots[0]
+	if got.SeasonDuration != authenticDuration {
+		t.Fatalf("SeasonDuration = %d, want %d", got.SeasonDuration, authenticDuration)
+	}
+	if got.SeasonStartAt != now-authenticDuration/2 || got.MatureAt != now+authenticDuration/2 {
+		t.Fatalf("reprofiled timeline = start:%d mature:%d", got.SeasonStartAt, got.MatureAt)
+	}
+	if got.LastWaterAt != now-authenticDuration/4 ||
+		got.WeedSince != now-authenticDuration/12 {
+		t.Fatalf("care timestamps = water:%d weed:%d", got.LastWaterAt, got.WeedSince)
+	}
+	if got.AccruedWeighted != authenticDuration*10 || PlotHealth(got) != 90 {
+		t.Fatalf("health = %d accrued = %d, want preserved 90", PlotHealth(got), got.AccruedWeighted)
+	}
+
+	back := agg.AdvanceAllWithProfile(now, gameconf.TimeProfileDemo)
+	if len(back) != 1 || agg.Plots[0].SeasonDuration != demoDuration {
+		t.Fatalf("switch back changes = %#v plot = %#v", back, agg.Plots[0])
+	}
+	if agg.Plots[0].MatureAt != now+demoDuration/2 || PlotHealth(agg.Plots[0]) != 90 {
+		t.Fatalf("switch back did not preserve progress/health: %#v", agg.Plots[0])
+	}
+}
+
+func TestAdvanceAllWithProfilePreservesFertilizerJumpSeparatelyFromElapsedTime(t *testing.T) {
+	const now int64 = 1_700_000_000_000
+	demoDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileDemo))
+	authenticDuration := int64(10 * gameconf.HourMs(gameconf.TimeProfileAuthentic))
+	agg := NewAggregate(1, "alice")
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		StageCount:     3,
+		FertMask:       1,
+		SeasonStartAt:  now - demoDuration/6,
+		SeasonDuration: demoDuration,
+		// 已自然生长 1/6，并通过施肥再推进 1/6，合计完成 1/3。
+		MatureAt:     now + demoDuration*2/3,
+		LastSettleAt: now,
+		LastWaterAt:  now - demoDuration/12,
+	}
+
+	changes := agg.AdvanceAllWithProfile(now, gameconf.TimeProfileAuthentic)
+	if len(changes) != 1 {
+		t.Fatalf("changes = %#v, want one reprofile delta", changes)
+	}
+	got := agg.Plots[0]
+	if got.SeasonStartAt != now-authenticDuration/6 {
+		t.Fatalf("SeasonStartAt = %d, want elapsed-time mapping %d", got.SeasonStartAt, now-authenticDuration/6)
+	}
+	if got.MatureAt != now+authenticDuration*2/3 {
+		t.Fatalf("MatureAt = %d, want fertilizer-preserving %d", got.MatureAt, now+authenticDuration*2/3)
+	}
+	if got.FertMask != 1 {
+		t.Fatalf("FertMask = %03b, want preserved 001", got.FertMask)
+	}
+}
+
 func TestApplyPlotActionFertilizeRejectsSameStageWithoutMutation(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Items[FertilizerItem(1)] = 1
@@ -434,6 +571,47 @@ func TestApplyPlotActionFertilizeRejectsSameStageWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestApplyPlotActionFertilizeMaturesImmediatelyAtLastStageBoundary(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[FertilizerItem(1)] = 1
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		StageCount:     4,
+		FertMask:       0b0111,
+		SeasonStartAt:  actionNow - 55_000,
+		SeasonDuration: 60_000,
+		MatureAt:       actionNow + 5_000,
+		LastSettleAt:   actionNow,
+		LastWaterAt:    actionNow,
+	}
+
+	result := agg.ApplyPlotAction(PlotAction{Kind: Fertilize, PlotIndex: 0, Arg: 1}, actionNow)
+
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Err = %d, want OK", result.Err)
+	}
+	got := agg.Plots[0]
+	if got.State != StateMature {
+		t.Fatalf("State = %d, want Mature", got.State)
+	}
+	if got.MatureAt != actionNow {
+		t.Fatalf("MatureAt = %d, want %d", got.MatureAt, actionNow)
+	}
+	if got.FinalYield == 0 {
+		t.Fatal("FinalYield = 0, want maturity settlement")
+	}
+	if got.HarvestRound != 1 {
+		t.Fatalf("HarvestRound = %d, want 1", got.HarvestRound)
+	}
+	if got.FertMask != 0b1111 {
+		t.Fatalf("FertMask = %04b, want 1111", got.FertMask)
+	}
+	if result.Patch.Plot.State != StateMature {
+		t.Fatalf("patch State = %d, want Mature", result.Patch.Plot.State)
+	}
+}
+
 func TestAdvanceAllVisibleChangeIncrementsFarmSeqAndReturnsPlotChange(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Plots[0] = Plot{
@@ -452,6 +630,30 @@ func TestAdvanceAllVisibleChangeIncrementsFarmSeqAndReturnsPlotChange(t *testing
 	}
 	if len(changes) != 1 || changes[0].Index != 0 || changes[0].State != StateMature {
 		t.Fatalf("changes = %#v, want mature plot 0", changes)
+	}
+}
+
+func TestAdvanceAllKeepsMaturePlotStableWithoutDelta(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.FarmSeq = 7
+	agg.Plots[0] = Plot{
+		State:          StateMature,
+		CropID:         1,
+		SeasonDuration: 1_000,
+		MatureAt:       actionNow,
+		LastSettleAt:   actionNow,
+		FinalYield:     14,
+		HarvestRound:   1,
+	}
+	before := cloneAggregate(agg)
+
+	changes := agg.AdvanceAll(actionNow + 1_000_000)
+
+	if len(changes) != 0 {
+		t.Fatalf("changes = %#v, want none", changes)
+	}
+	if !reflect.DeepEqual(*agg, before) {
+		t.Fatalf("mature aggregate changed over time:\n got %#v\nwant %#v", *agg, before)
 	}
 }
 

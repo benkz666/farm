@@ -103,7 +103,6 @@ func benchAdvanceFixture() (Plot, AdvanceConfig, int64) {
 		WaterSpanDenominator:  100,
 		RiskWindowNumerator:   10,
 		RiskWindowDenominator: 100,
-		WitherSpanMultiplier:  3,
 		WeedThreshold:         1200,
 		PestThreshold:         800,
 		RiskWindows:           10,

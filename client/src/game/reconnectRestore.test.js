@@ -176,6 +176,33 @@ test('onFarmRestored 自己农场：更新为 SELF view', () => {
   assert.equal(h.onlineBusy, false)
 })
 
+test('SELF 恢复忽略残留好友 owner_uid，并用本人 UID 重建视图', () => {
+  const h = makeHarness({ viewingOwnerUid: 99, relation: 'SELF', lastFarmSeq: 7 })
+  bindFarmReconnectRestore(h.deps)
+
+  h.client.emitRestored({
+    err: 0,
+    payload: {
+      farm_seq: 4,
+      relation: 'SELF',
+      snapshot: { owner_uid: 99, coin: 10 },
+    },
+  })
+
+  assert.equal(h.session.viewingOwnerUid, 42)
+  assert.equal(h.session.relation, 'SELF')
+})
+
+test('SELF 重连上下文固定发送 owner_uid=0', () => {
+  const h = makeHarness({ viewingOwnerUid: 99, relation: 'SELF', lastFarmSeq: 7 })
+  bindFarmReconnectRestore(h.deps)
+
+  assert.deepEqual(h.client.getResumeContext(), {
+    resume_farm_uid: 0,
+    resume_farm_seq: 7,
+  })
+})
+
 test('权限撤销回退自己的响应不会保留旧好友 view', () => {
   const h = makeHarness({ viewingOwnerUid: 99, relation: 'FRIEND', lastFarmSeq: 7 })
   bindFarmReconnectRestore(h.deps)

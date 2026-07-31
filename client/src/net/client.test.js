@@ -64,6 +64,27 @@ test('Steal / Pet / Task / Mail / DailyLogin 使用约定命令和载荷', async
   assert.deepEqual(await client.mailDeleteAll(), { cmd: 610, payload: { all: true } })
   assert.deepEqual(await client.codexList(), { cmd: 612, payload: {} })
   assert.deepEqual(await client.claimDailyLogin(), { cmd: 614, payload: {} })
+  assert.deepEqual(await client.setTimeProfile('fast'), {
+    cmd: 616,
+    payload: { time_profile: 'fast' },
+  })
+})
+
+test('邮件 ID 与 farm_seq 超过 2^53 后按十进制字符串原样回传', async () => {
+  const client = new NetClient()
+  client.request = async (cmd, payload) => ({ cmd, payload })
+
+  assert.deepEqual(await client.mailClaim('9007199254740993'), {
+    cmd: 608,
+    payload: { mail_id: '9007199254740993' },
+  })
+  assert.deepEqual(await client.syncFarm('1785402171458126005', '9007199254740993'), {
+    cmd: 204,
+    payload: {
+      owner_uid: '1785402171458126005',
+      from_seq: '9007199254740993',
+    },
+  })
 })
 
 test('FarmDelta 主动推送交给 delta 订阅者', () => {

@@ -3,6 +3,7 @@ package farm
 import (
 	"math"
 
+	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
 )
 
@@ -177,6 +178,12 @@ func (a *Aggregate) PetStatus(now int64) PetStatus {
 // PetActivate changes the only active guard dog and preserves the remaining
 // whole grams while applying the newly active breed's consumption rate.
 func (a *Aggregate) PetActivate(dog DogType, now int64) ActionResult {
+	return a.PetActivateWithProfile(dog, now, gameconf.TimeProfileDemo)
+}
+
+// PetActivateWithProfile switches breed using the server-authoritative rate.
+// Existing callers retain demo semantics through PetActivate.
+func (a *Aggregate) PetActivateWithProfile(dog DogType, now int64, timeProfile string) ActionResult {
 	if a == nil {
 		return ActionResult{Err: pkgerr.Internal}
 	}
@@ -188,7 +195,7 @@ func (a *Aggregate) PetActivate(dog DogType, now int64) ActionResult {
 	}
 	remaining := a.Pet.remainingGrams(now)
 	a.Pet.ActiveDog = dog
-	a.Pet.MsPerGram = dogMsPerGram(dog)
+	a.Pet.MsPerGram = dogMsPerGram(dog, timeProfile)
 	if remaining > 0 {
 		a.Pet.BowlEmptyAt = now + int64(remaining)*a.Pet.MsPerGram
 	} else {
@@ -201,13 +208,19 @@ func (a *Aggregate) PetActivate(dog DogType, now int64) ActionResult {
 // PetFeed tops up the bowl without exceeding capacity. Excess requested grams
 // remain in the bag, so a retry cannot consume food that did not fit.
 func (a *Aggregate) PetFeed(req PetFeedReq, now int64) ActionResult {
+	return a.PetFeedWithProfile(req, now, gameconf.TimeProfileDemo)
+}
+
+// PetFeedWithProfile applies the current server profile to newly refilled food.
+// BowlEmptyAt remains self-describing between later profile changes.
+func (a *Aggregate) PetFeedWithProfile(req PetFeedReq, now int64, timeProfile string) ActionResult {
 	if a == nil {
 		return ActionResult{Err: pkgerr.Internal}
 	}
 	if req.Grams == 0 {
 		return ActionResult{Err: pkgerr.BadQuantity}
 	}
-	rate := dogMsPerGram(a.Pet.ActiveDog)
+	rate := dogMsPerGram(a.Pet.ActiveDog, timeProfile)
 	if rate <= 0 || !a.Pet.HasDog(a.Pet.ActiveDog) {
 		return ActionResult{Err: pkgerr.DogNotOwned}
 	}
@@ -294,14 +307,18 @@ func dogBaseInterception(dog DogType) uint8 {
 	}
 }
 
-func dogMsPerGram(dog DogType) int64 {
+func dogMsPerGram(dog DogType, timeProfile string) int64 {
+	hourMs := gameconf.HourMs(timeProfile)
+	if hourMs <= 0 {
+		hourMs = gameconf.HourMs(gameconf.TimeProfileDemo)
+	}
 	switch dog {
 	case DogMutt:
-		return MuttMsPerGram
+		return hourMs / 4
 	case DogShepherd:
-		return ShepherdMsPerGram
+		return hourMs / 5
 	case DogMastiff:
-		return MastiffMsPerGram
+		return hourMs / 7
 	default:
 		return 0
 	}

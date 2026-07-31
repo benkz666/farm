@@ -37,17 +37,17 @@ export function plotCmdForTool(tool, plotState) {
       if (plotState === PLOT.RESIDUE || plotState === PLOT.WITHERED) return CMD_CLEAR
       return null
     case 'plant':
-      return CMD_PLANT
+      return plotState === PLOT.TILLED ? CMD_PLANT : null
     case 'water':
-      return CMD_WATER
+      return plotState === PLOT.GROWING ? CMD_WATER : null
     case 'weed':
-      return CMD_REMOVE_WEED
+      return plotState === PLOT.GROWING ? CMD_REMOVE_WEED : null
     case 'pest':
-      return CMD_REMOVE_PEST
+      return plotState === PLOT.GROWING ? CMD_REMOVE_PEST : null
     case 'harvest':
-      return CMD_HARVEST
+      return plotState === PLOT.MATURE ? CMD_HARVEST : null
     case 'fert':
-      return CMD_FERTILIZE
+      return plotState === PLOT.GROWING ? CMD_FERTILIZE : null
     case 'steal':
       return plotState === PLOT.MATURE ? CMD_STEAL : null
     default:

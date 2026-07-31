@@ -123,11 +123,6 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			response.Err = pkgerr.Internal
 			return response
 		}
-		// 搜到自己视为未找到，避免客户端展示「向自己申请」
-		if user.UID == connection.uid {
-			response.Err = pkgerr.UserNotFound
-			return response
-		}
 		response.Payload = marshalPayload(searchUserResponse{
 			Users: []searchUserResponseItem{{
 				UID:      pkgjson.UID(user.UID),

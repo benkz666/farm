@@ -7,6 +7,7 @@ import (
 
 	"farm/server/internal/bus"
 	"farm/server/internal/farm"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
 )
 
@@ -15,6 +16,24 @@ func TestLoadConfigRejectsInvalidRole(t *testing.T) {
 
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("loadConfig accepted an unsupported FARM_ROLE")
+	}
+}
+
+func TestLoadConfigTimeProfile(t *testing.T) {
+	t.Setenv("FARM_ROLE", "all")
+	t.Setenv("FARM_TIME_PROFILE", gameconf.TimeProfileAuthentic)
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig authentic: %v", err)
+	}
+	if cfg.timeProfile != gameconf.TimeProfileAuthentic {
+		t.Fatalf("timeProfile = %q, want authentic", cfg.timeProfile)
+	}
+
+	t.Setenv("FARM_TIME_PROFILE", "turbo")
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("loadConfig accepted unsupported FARM_TIME_PROFILE")
 	}
 }
 

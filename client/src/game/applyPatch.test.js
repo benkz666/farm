@@ -8,6 +8,47 @@ test('未知服务端地块状态不会伪装成荒地', () => {
   assert.equal(plotStateFromNum(99), PLOT.UNKNOWN)
 })
 
+test('EnterFarm 使用服务端下发的权威时间档', () => {
+  const state = defaultState()
+  applyPatch(state, {
+    time_profile: 'authentic',
+    time_profile_mutable: true,
+    snapshot: { owner_uid: 1, unlocked_plots: 6, plots: [] },
+  })
+  assert.equal(state.timeScale, 'authentic')
+  assert.equal(state.timeScaleMutable, true)
+
+  applyPatch(state, { time_profile: 'unknown', time_profile_mutable: false, farm_seq: 1 })
+  assert.equal(state.timeScale, 'authentic')
+  assert.equal(state.timeScaleMutable, false)
+})
+
+test('地块快照应用服务端健康度与真实本季时间基准', () => {
+  const state = defaultState()
+  applyFarmDelta(state, {
+    owner_uid: 42,
+    farm_seq: 8,
+    plots: [{
+      index: 0,
+      state: 2,
+      crop_id: 1,
+      season_start_at: 1_000,
+      mature_at: 11_000,
+      season_duration: 10_000,
+      last_settle_at: 4_000,
+      last_water_at: 1_000,
+      health: 73,
+    }],
+  })
+
+  const plot = state.plots[0]
+  assert.equal(plot.plantTime, 1_000)
+  assert.equal(plot.settleTime, 4_000)
+  assert.equal(plot.health, 73)
+  assert.equal(plot.penalty, 27)
+  assert.equal(plot.waterUntil, 4_500)
+})
+
 test('FarmDelta 只投影变更地块', () => {
   const state = defaultState()
   state.plots[1].state = PLOT.GROWING
@@ -63,6 +104,20 @@ test('SELF 农场快照仍权威覆盖金币', () => {
     snapshot: { owner_uid: 1, coin: 4242, unlocked_plots: 6, plots: [] },
   })
   assert.equal(state.gold, 4242)
+})
+
+test('SELF 农场快照保留超过 2^53 的金币精度', () => {
+  const state = defaultState()
+  applyPatch(state, {
+    relation: 'SELF',
+    snapshot: {
+      owner_uid: '1785402171458126005',
+      coin: '9007199254740993',
+      unlocked_plots: 6,
+      plots: [],
+    },
+  })
+  assert.equal(state.gold, '9007199254740993')
 })
 
 test('收获补丁写入单作物图鉴次数和牌子阶段', () => {

@@ -2,6 +2,7 @@
  * 断线恢复接线（可单测）：权威 EnterFarm 覆盖 + restore/fail 订阅。
  * 不依赖 Three.js / 页面启动副作用；依赖由调用方注入。
  */
+import { wireUid, wireUint64 } from '../net/jsonSafe.js'
 
 /** @type {WeakMap<object, () => void>} */
 const boundDisposeByClient = new WeakMap()
@@ -10,7 +11,7 @@ const boundDisposeByClient = new WeakMap()
  * @typedef {{
  *   state: object,
  *   applyPatch: (state: object, payload: object, opts?: { farmViewOnly?: boolean }) => void,
- *   setFarmView: (view: { ownerUid: number, farmSeq: number, relation: 'SELF'|'FRIEND', ownerName?: string|null }) => void,
+ *   setFarmView: (view: { ownerUid: string|number, farmSeq: string|number, relation: 'SELF'|'FRIEND', ownerName?: string|null }) => void,
  *   setOnlineBusy?: (busy: boolean) => void,
  *   getSelfUid?: () => number|null|undefined,
  *   refreshUI?: (info: { relation: 'SELF'|'FRIEND', visiting: boolean }) => void,
@@ -19,11 +20,11 @@ const boundDisposeByClient = new WeakMap()
  *
  * @typedef {ApplyDeps & {
  *   client: {
- *     getResumeContext?: () => { resume_farm_uid: number, resume_farm_seq: number },
+ *     getResumeContext?: () => { resume_farm_uid: string|number, resume_farm_seq: string|number },
  *     onFarmRestored: (h: Function) => () => void,
  *     onFarmRestoreFailed: (h: Function) => () => void,
  *   },
- *   session: { viewingOwnerUid?: number|null, lastFarmSeq?: number },
+ *   session: { viewingOwnerUid?: string|number|null, relation?: 'SELF'|'FRIEND'|null, lastFarmSeq?: string|number },
  *   leaveOnline: () => void,
  *   fail: (msg: string) => void,
  *   errText: (err: number) => string,
@@ -45,21 +46,26 @@ export function applyAuthoritativeFarmEnter(deps, enterEnv, opts = {}) {
   deps.setOnlineBusy?.(false)
   const payload = enterEnv.payload || {}
   const snapshot = payload.snapshot || {}
-  const ownerUid =
-    Number(snapshot.owner_uid) ||
-    Number(opts.fallbackOwnerUid) ||
-    Number(deps.getSelfUid?.()) ||
-    0
   const relation = payload.relation === 'FRIEND' ? 'FRIEND' : 'SELF'
+  const selfUid = wireUid(deps.getSelfUid?.()) ?? 0
+  const snapshotOwnerUid = wireUid(snapshot.owner_uid) ?? 0
+  const ownerUid = relation === 'SELF'
+    ? (selfUid || snapshotOwnerUid || wireUid(opts.fallbackOwnerUid) || 0)
+    : (snapshotOwnerUid || wireUid(opts.fallbackOwnerUid) || 0)
   const ownerName = relation === 'FRIEND'
     ? (opts.ownerName || snapshot.nickname || null)
     : null
+  const farmSeq = wireUint64(payload.farm_seq)
+  if (farmSeq == null) {
+    throw new Error('applyAuthoritativeFarmEnter: invalid farm_seq')
+  }
   deps.applyPatch(deps.state, payload, { farmViewOnly: relation === 'FRIEND' })
   deps.setFarmView({
     ownerUid,
-    farmSeq: Number(payload.farm_seq) || 0,
+    farmSeq,
     relation,
     ownerName,
+    serverTime: Number(payload.server_time) || 0,
   })
   deps.refreshUI?.({ relation, visiting: relation === 'FRIEND' })
   if (opts.toast) deps.toast?.(opts.toast, 'ok')
@@ -92,8 +98,11 @@ export function bindFarmReconnectRestore(deps) {
   }
 
   client.getResumeContext = () => ({
-    resume_farm_uid: Number(session.viewingOwnerUid) || 0,
-    resume_farm_seq: Number(session.lastFarmSeq) || 0,
+    // SELF 一律用协议保留值 0；不要把可能残留的好友 UID 带进重连恢复。
+    resume_farm_uid: session.relation === 'FRIEND'
+      ? (wireUid(session.viewingOwnerUid) ?? 0)
+      : 0,
+    resume_farm_seq: wireUint64(session.lastFarmSeq) ?? 0,
   })
 
   unsubRestored = client.onFarmRestored((enterEnv) => {

@@ -19,6 +19,7 @@ import (
 	"farm/server/internal/gameconf"
 	"farm/server/internal/obs"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/store"
 )
 
@@ -61,14 +62,15 @@ type CommandResponse struct {
 // EnterFarmResponse is the Farm-owned portion of an EnterFarm response.
 // Relation remains a Gateway concern because it depends on social access.
 type EnterFarmResponse struct {
-	Snapshot   farm.FarmSnapshotJSON `json:"snapshot"`
-	FarmSeq    uint64                `json:"farm_seq"`
-	ServerTime int64                 `json:"server_time"`
+	Snapshot    farm.FarmSnapshotJSON `json:"snapshot"`
+	FarmSeq     pkgjson.Uint64        `json:"farm_seq"`
+	ServerTime  int64                 `json:"server_time"`
+	TimeProfile string                `json:"time_profile"`
 }
 
 // ActionResponse is the Farm-owned result for a plot mutation.
 type ActionResponse struct {
-	FarmSeq      uint64                   `json:"farm_seq"`
+	FarmSeq      pkgjson.Uint64           `json:"farm_seq"`
 	Patch        farm.PatchJSON           `json:"patch"`
 	CodexRewards []farm.CodexRewardNotice `json:"codex_rewards,omitempty"`
 }
@@ -102,9 +104,11 @@ type SyncFarmRequest struct {
 
 // SyncFarmResponse mirrors the public SyncFarm payload.
 type SyncFarmResponse struct {
-	Deltas   []farm.FarmDelta       `json:"deltas,omitempty"`
-	Snapshot *farm.FarmSnapshotJSON `json:"snapshot,omitempty"`
-	FarmSeq  uint64                 `json:"farm_seq"`
+	Deltas      []farm.FarmDelta       `json:"deltas,omitempty"`
+	Snapshot    *farm.FarmSnapshotJSON `json:"snapshot,omitempty"`
+	FarmSeq     pkgjson.Uint64         `json:"farm_seq"`
+	ServerTime  int64                  `json:"server_time"`
+	TimeProfile string                 `json:"time_profile"`
 }
 
 // PetOperation identifies the local pet mutation.
@@ -150,6 +154,7 @@ type Handler struct {
 	token                []byte
 	owns                 func(uint64) bool
 	now                  func() int64
+	timeProfiles         *gameconf.TimeProfileSwitch
 	deltaPublisher       DeltaPublisher
 	playerDeltaPublisher PlayerDeltaPublisher
 	stealHints           StealHintWriter
@@ -189,6 +194,26 @@ type MailClaimer interface {
 
 // Option configures optional Farm RPC behavior.
 type Option func(*Handler)
+
+// WithTimeProfile configures the server-authoritative growth profile. It is a
+// process-level setting and is never accepted from browser action payloads.
+func WithTimeProfile(profile string) Option {
+	return func(handler *Handler) {
+		if gameconf.ValidTimeProfile(profile) {
+			handler.timeProfiles = gameconf.NewTimeProfileSwitch(profile)
+		}
+	}
+}
+
+// WithTimeProfileSwitch shares a runtime-switchable authoritative profile with
+// the process bootstrap. It is used only by the debug hot-switch surface.
+func WithTimeProfileSwitch(profiles *gameconf.TimeProfileSwitch) Option {
+	return func(handler *Handler) {
+		if profiles != nil {
+			handler.timeProfiles = profiles
+		}
+	}
+}
 
 // WithDeltaPublisher emits FarmDelta callbacks after authoritative mutations.
 func WithDeltaPublisher(publisher DeltaPublisher) Option {
@@ -272,10 +297,11 @@ func NewHandler(runtime Runtime, token []byte, owns func(uint64) bool, now func(
 		owns = func(uint64) bool { return false }
 	}
 	handler := &Handler{
-		runtime: runtime,
-		token:   append([]byte(nil), token...),
-		owns:    owns,
-		now:     now,
+		runtime:      runtime,
+		token:        append([]byte(nil), token...),
+		owns:         owns,
+		now:          now,
+		timeProfiles: gameconf.NewTimeProfileSwitch(gameconf.TimeProfileDemo),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -363,13 +389,16 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		changes := farmActor.Aggregate.AdvanceAll(h.now())
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(h.now(), h.timeProfiles.Get())
 		response = EnterFarmResponse{
-			Snapshot:   farmActor.Aggregate.Snapshot(),
-			FarmSeq:    farmActor.Aggregate.FarmSeq,
-			ServerTime: h.now(),
+			Snapshot:    farmActor.Aggregate.Snapshot(),
+			FarmSeq:     pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
+			ServerTime:  h.now(),
+			TimeProfile: h.timeProfiles.Get(),
 		}
 		if len(changes) > 0 {
+			// 进入农场时惰性推进出的成熟/枯萎是权威状态，必须在响应前落盘。
+			farmActor.RequireFlush()
 			emitted := farm.FarmDelta{
 				OwnerUID: command.FarmUID,
 				FarmSeq:  farmActor.Aggregate.FarmSeq,
@@ -407,13 +436,14 @@ func (h *Handler) till(command CommandRequest) CommandResponse {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
 		result = farmActor.Aggregate.ApplyPlotAction(farm.PlotAction{
-			Kind:      farm.Till,
-			PlotIndex: uint8(request.PlotIndex),
-			Arg:       uint16(request.Arg),
+			Kind:        farm.Till,
+			PlotIndex:   uint8(request.PlotIndex),
+			Arg:         uint16(request.Arg),
+			TimeProfile: h.timeProfiles.Get(),
 		}, h.now())
 		if result.Err == pkgerr.OK {
 			response = ActionResponse{
-				FarmSeq: farmActor.Aggregate.FarmSeq,
+				FarmSeq: pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
 			}
 			emitted := farm.FarmDelta{
@@ -455,13 +485,14 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		}
 		beforeFarmSeq := farmActor.Aggregate.FarmSeq
 		result = farmActor.Aggregate.ApplyPlotAction(farm.PlotAction{
-			Kind:      request.Kind,
-			PlotIndex: uint8(request.PlotIndex),
-			Arg:       uint16(request.Arg),
+			Kind:        request.Kind,
+			PlotIndex:   uint8(request.PlotIndex),
+			Arg:         uint16(request.Arg),
+			TimeProfile: h.timeProfiles.Get(),
 		}, h.now())
 		if result.Err == pkgerr.OK {
 			response = ActionResponse{
-				FarmSeq: farmActor.Aggregate.FarmSeq,
+				FarmSeq: pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
 			}
 		}
@@ -575,7 +606,7 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			// 同 Gateway 侧买卖：金币改动按 A 档同步落盘（架构 5.3 节）。
 			farmActor.RequireFlush()
 			response = ActionResponse{
-				FarmSeq: farmActor.Aggregate.FarmSeq,
+				FarmSeq: pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
 			}
 		}
@@ -615,15 +646,35 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: pkgerr.BadRequest}
 	}
 	var response SyncFarmResponse
+	var delta *farm.FarmDelta
+	var stealable bool
+	var refreshHint bool
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *actor.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		response.FarmSeq = farmActor.Aggregate.FarmSeq
-		if request.FromSeq == response.FarmSeq {
+		now := h.now()
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(now, h.timeProfiles.Get())
+		if len(changes) > 0 {
+			// SyncFarm 是客户端在风险窗口和成熟点触发的惰性推进屏障。
+			farmActor.RequireFlush()
+			emitted := farm.FarmDelta{
+				OwnerUID: command.FarmUID,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    changes,
+			}
+			farmActor.Deltas.Append(emitted)
+			delta = &emitted
+			stealable = farmActor.Aggregate.HasStealable()
+			refreshHint = true
+		}
+		response.FarmSeq = pkgjson.Uint64(farmActor.Aggregate.FarmSeq)
+		response.ServerTime = now
+		response.TimeProfile = h.timeProfiles.Get()
+		if request.FromSeq == uint64(response.FarmSeq) {
 			return nil
 		}
-		if request.FromSeq > response.FarmSeq {
+		if request.FromSeq > uint64(response.FarmSeq) {
 			snapshot := farmActor.Aggregate.Snapshot()
 			response.Snapshot = &snapshot
 			return nil
@@ -638,6 +689,10 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: pkgerr.Internal}
+	}
+	h.publishDelta(delta, command.Originator)
+	if refreshHint {
+		h.writeStealHint(command.FarmUID, stealable)
 	}
 	return CommandResponse{Err: pkgerr.OK, Payload: marshalPayload(response)}
 }
@@ -657,9 +712,9 @@ func (h *Handler) pet(command CommandRequest) CommandResponse {
 		case PetStatus:
 			result.Err = pkgerr.OK
 		case PetActivate:
-			result = farmActor.Aggregate.PetActivate(request.DogType, h.now())
+			result = farmActor.Aggregate.PetActivateWithProfile(request.DogType, h.now(), h.timeProfiles.Get())
 		case PetFeed:
-			result = farmActor.Aggregate.PetFeed(farm.PetFeedReq{Grams: request.Grams}, h.now())
+			result = farmActor.Aggregate.PetFeedWithProfile(farm.PetFeedReq{Grams: request.Grams}, h.now(), h.timeProfiles.Get())
 		default:
 			result.Err = pkgerr.BadRequest
 		}

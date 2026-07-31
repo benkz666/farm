@@ -103,6 +103,22 @@ func TestSwitchingBreedPreservesFoodAndAppliesNewConsumptionRate(t *testing.T) {
 	}
 }
 
+func TestPetFeedUsesAuthoritativeTimeProfile(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Pet.Owned = 1 << uint(DogMutt-1)
+	agg.Pet.ActiveDog = DogMutt
+	agg.Items[DogFoodItem()] = 4
+
+	result := agg.PetFeedWithProfile(PetFeedReq{Grams: 4}, 1_000, gameconf.TimeProfileAuthentic)
+	if result.Err != pkgerr.OK {
+		t.Fatalf("PetFeedWithProfile Err = %d, want OK", result.Err)
+	}
+	wantRate := gameconf.HourMs(gameconf.TimeProfileAuthentic) / 4
+	if agg.Pet.MsPerGram != wantRate || agg.Pet.BowlEmptyAt != 1_000+4*wantRate {
+		t.Fatalf("pet timing = rate:%d empty:%d, want rate:%d empty:%d", agg.Pet.MsPerGram, agg.Pet.BowlEmptyAt, wantRate, 1_000+4*wantRate)
+	}
+}
+
 func TestDogBreedsGrowAndInterceptIndependently(t *testing.T) {
 	pet := PetState{Owned: 0b111, ActiveDog: DogShepherd}
 	for range 20 {

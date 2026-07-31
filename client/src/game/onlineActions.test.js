@@ -21,4 +21,7 @@ test('偷菜只在成熟地块映射 Steal 命令', () => {
   assert.equal(plotCmdForTool('weed', PLOT.GROWING), CMD_REMOVE_WEED)
   assert.equal(plotCmdForTool('pest', PLOT.GROWING), CMD_REMOVE_PEST)
   assert.equal(plotCmdForTool('harvest', PLOT.MATURE), CMD_HARVEST)
+  assert.equal(plotCmdForTool('water', PLOT.MATURE), null)
+  assert.equal(plotCmdForTool('weed', PLOT.MATURE), null)
+  assert.equal(plotCmdForTool('pest', PLOT.MATURE), null)
 })

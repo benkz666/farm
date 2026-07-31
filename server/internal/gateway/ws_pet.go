@@ -92,13 +92,13 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 			if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.DogType > 0xFF {
 				return errors.New("gateway: invalid pet activate payload")
 			}
-			result = farmActor.Aggregate.PetActivate(farm.DogType(payload.DogType), g.Now())
+			result = farmActor.Aggregate.PetActivateWithProfile(farm.DogType(payload.DogType), g.Now(), g.TimeProfile())
 		case CommandPetFeed:
 			var payload petFeedRequest
 			if err := unmarshalPayload(request.Payload, &payload); err != nil {
 				return err
 			}
-			result = farmActor.Aggregate.PetFeed(farm.PetFeedReq{Grams: payload.Grams}, g.Now())
+			result = farmActor.Aggregate.PetFeedWithProfile(farm.PetFeedReq{Grams: payload.Grams}, g.Now(), g.TimeProfile())
 		default:
 			return errors.New("gateway: unsupported pet command")
 		}

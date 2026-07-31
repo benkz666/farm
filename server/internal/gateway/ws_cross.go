@@ -398,5 +398,5 @@ func ownerKey(uid uint64) string {
 
 // logicDayID 返回 Gateway 当前时钟所属的逻辑日，与 farm 侧共用 gameconf 口径。
 func (g *Gateway) logicDayID() uint32 {
-	return gameconf.LogicDayID(gameconf.TimeProfileDemo, g.Now())
+	return gameconf.LogicDayID(g.TimeProfile(), g.Now())
 }

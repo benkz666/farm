@@ -618,6 +618,10 @@ export class FarmScene {
   waterAnim(id) { this.burst(id, 0x5cb3ff, 22, false); }
   harvestAnim(id) { this.burst(id, 0xffd54f, 20, true); }
   magicAnim(id) { this.burst(id, 0xc77dff, 16, true); }
+  matureAnim(id) {
+    this.burst(id, 0xffd54f, 24, true);
+    this.burst(id, 0x9be15d, 14, true);
+  }
 
   // ---------------- 日夜 ----------------
   setDayPhase(phase) {

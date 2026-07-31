@@ -116,7 +116,7 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	enter := readEnvelope(t, conn)
 	var enterPayload struct {
 		Snapshot farm.FarmSnapshotJSON `json:"snapshot"`
-		FarmSeq  uint64                `json:"farm_seq"`
+		FarmSeq  pkgjson.Uint64        `json:"farm_seq"`
 		Relation string                `json:"relation"`
 	}
 	if err := json.Unmarshal(enter.Payload, &enterPayload); err != nil {
@@ -136,6 +136,129 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	})
 	if got := readEnvelope(t, conn); got.Err != pkgerr.NotFriend {
 		t.Fatalf("foreign EnterFarm error = %d, want %d", got.Err, pkgerr.NotFriend)
+	}
+}
+
+func TestDebugTimeProfileHotSwitchOverWebSocket(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: aggregate},
+		WithTimeProfile(gameconf.TimeProfileDemo),
+	)
+	gateway.EnableDebugTime()
+	connection := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, connection, "token-42")
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandSetTimeProfile,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"time_profile":"authentic"}`),
+	})
+	response := readEnvelope(t, connection)
+	if response.Err != pkgerr.OK {
+		t.Fatalf("SetTimeProfile response = %#v", response)
+	}
+	var payload setTimeProfileResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode SetTimeProfile: %v", err)
+	}
+	if payload.TimeProfile != gameconf.TimeProfileAuthentic || !payload.TimeProfileMutable {
+		t.Fatalf("SetTimeProfile payload = %#v", payload)
+	}
+	if got := gateway.TimeProfile(); got != gameconf.TimeProfileAuthentic {
+		t.Fatalf("gateway profile = %q, want authentic", got)
+	}
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandEnterFarm,
+		ClientSeq: 3,
+		Payload:   json.RawMessage(`{"owner_uid":0}`),
+	})
+	enter := readEnvelope(t, connection)
+	var enterPayload enterFarmResponse
+	if err := json.Unmarshal(enter.Payload, &enterPayload); err != nil {
+		t.Fatalf("decode EnterFarm: %v", err)
+	}
+	if enterPayload.TimeProfile != gameconf.TimeProfileAuthentic || !enterPayload.TimeProfileMutable {
+		t.Fatalf("EnterFarm payload profile = %#v", enterPayload)
+	}
+}
+
+func TestTimeProfileHotSwitchRejectedOutsideDebugMode(t *testing.T) {
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+	)
+	connection := openWebSocket(t, gateway.Handler())
+	handshakeWebSocket(t, connection, "token-42")
+
+	writeEnvelope(t, connection, Envelope{
+		Cmd:       CommandSetTimeProfile,
+		ClientSeq: 2,
+		Payload:   json.RawMessage(`{"time_profile":"authentic"}`),
+	})
+	if response := readEnvelope(t, connection); response.Err != pkgerr.BadRequest {
+		t.Fatalf("SetTimeProfile outside debug err = %d, want %d", response.Err, pkgerr.BadRequest)
+	}
+	if got := gateway.TimeProfile(); got != gameconf.TimeProfileDemo {
+		t.Fatalf("rejected switch changed profile to %q", got)
+	}
+}
+
+func TestTimeProfileHotSwitchRollsBackPeersOnFailure(t *testing.T) {
+	var mu sync.Mutex
+	okProfile := gameconf.TimeProfileDemo
+	okRequests := make([]string, 0, 2)
+	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request debugTimeProfileRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode peer request: %v", err)
+		}
+		mu.Lock()
+		okRequests = append(okRequests, request.TimeProfile)
+		okProfile = request.TimeProfile
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer okServer.Close()
+
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request debugTimeProfileRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode failing peer request: %v", err)
+		}
+		if request.TimeProfile == gameconf.TimeProfileAuthentic {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer failServer.Close()
+
+	gateway := New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+		WithTimeProfile(gameconf.TimeProfileDemo),
+		WithDebugTimeFanout(
+			map[string]string{"a-ok": okServer.URL, "z-fail": failServer.URL},
+			nil,
+			"",
+		),
+	)
+	if err := gateway.switchTimeProfile(context.Background(), gameconf.TimeProfileAuthentic); err == nil {
+		t.Fatal("switch unexpectedly succeeded")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gateway.TimeProfile() != gameconf.TimeProfileDemo || okProfile != gameconf.TimeProfileDemo {
+		t.Fatalf("profiles after failed switch: local=%q peer=%q", gateway.TimeProfile(), okProfile)
+	}
+	if !reflect.DeepEqual(okRequests, []string{gameconf.TimeProfileAuthentic, gameconf.TimeProfileDemo}) {
+		t.Fatalf("peer requests = %#v", okRequests)
 	}
 }
 
@@ -588,7 +711,7 @@ func TestFriendEnterSyncAndLeaveFarmBroadcast(t *testing.T) {
 	friendEnter := readEnvelope(t, friend)
 	var friendEnterPayload struct {
 		Snapshot farm.FarmSnapshotJSON `json:"snapshot"`
-		FarmSeq  uint64                `json:"farm_seq"`
+		FarmSeq  pkgjson.Uint64        `json:"farm_seq"`
 		Relation string                `json:"relation"`
 	}
 	if err := json.Unmarshal(friendEnter.Payload, &friendEnterPayload); err != nil {
@@ -790,12 +913,7 @@ func TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta(t *testing.T) {
 	if delta.Err != pkgerr.OK {
 		t.Fatalf("FarmDelta = %#v", delta)
 	}
-	var playerPayload struct {
-		Coin      int64             `json:"coin"`
-		Exp       uint32            `json:"exp"`
-		Level     uint16            `json:"level"`
-		Warehouse map[string]uint32 `json:"warehouse"`
-	}
+	var playerPayload farm.PlayerDelta
 	if err := json.Unmarshal(playerDelta.Payload, &playerPayload); err != nil {
 		t.Fatalf("decode PlayerDelta: %v", err)
 	}
@@ -958,11 +1076,11 @@ func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
 	aggregate.Plots[0] = farm.Plot{
 		State:          farm.StateGrowing,
 		CropID:         1,
-		SeasonStartAt:  19_000,
-		SeasonDuration: 1_000,
-		MatureAt:       20_000,
-		LastSettleAt:   19_999,
-		LastWaterAt:    19_999,
+		SeasonStartAt:  10_000,
+		SeasonDuration: 60_000,
+		MatureAt:       70_000,
+		LastSettleAt:   69_999,
+		LastWaterAt:    69_999,
 		WeedNextWin:    gameconf.RiskWindowsPerSeason,
 		PestNextWin:    gameconf.RiskWindowsPerSeason,
 	}
@@ -978,7 +1096,7 @@ func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
 		runtime,
 		WithFriendStore(friends),
 	)
-	now := int64(19_999)
+	now := int64(69_999)
 	gateway.SetClock(func() int64 { return now })
 	owner := openWebSocket(t, gateway.Handler())
 	friend := openWebSocket(t, gateway.Handler())
@@ -989,7 +1107,7 @@ func TestEnterFarmAdvanceBroadcastsDeltaToExistingSubscribers(t *testing.T) {
 	if got := readEnvelope(t, owner); got.Err != pkgerr.OK {
 		t.Fatalf("owner EnterFarm = %#v", got)
 	}
-	now = 20_000
+	now = 70_000
 	writeEnvelope(t, friend, Envelope{Cmd: CommandEnterFarm, ClientSeq: 2, Payload: json.RawMessage(`{"owner_uid":42}`)})
 	enter := readEnvelope(t, friend)
 	var enterPayload enterFarmResponse
@@ -1246,14 +1364,26 @@ func TestSearchUserReturnsExactMatchAndNotFound(t *testing.T) {
 		}
 	})
 
-	t.Run("self is not found", func(t *testing.T) {
+	t.Run("self is returned for client-side self marker", func(t *testing.T) {
 		friends.users["self"] = searchUserStub{UID: 42, Nickname: "me"}
 		response := gateway.handleWSRequest(connection, Envelope{
 			Cmd:     CommandSearchUser,
 			Payload: json.RawMessage(`{"username":"self"}`),
 		})
-		if response.Err != pkgerr.UserNotFound {
-			t.Fatalf("SearchUser self err = %d, want %d", response.Err, pkgerr.UserNotFound)
+		if response.Err != pkgerr.OK {
+			t.Fatalf("SearchUser self err = %d, want OK", response.Err)
+		}
+		var payload struct {
+			Users []struct {
+				UID      pkgjson.UID `json:"uid"`
+				Nickname string      `json:"nickname"`
+			} `json:"users"`
+		}
+		if err := json.Unmarshal(response.Payload, &payload); err != nil {
+			t.Fatalf("decode self SearchUser payload: %v", err)
+		}
+		if len(payload.Users) != 1 || uint64(payload.Users[0].UID) != 42 || payload.Users[0].Nickname != "me" {
+			t.Fatalf("SearchUser self payload = %#v", payload)
 		}
 	})
 }
@@ -1745,6 +1875,50 @@ func TestSyncFarmAheadSequenceReturnsSnapshot(t *testing.T) {
 	}
 	if payload.Snapshot == nil || payload.FarmSeq != 3 || len(payload.Deltas) != 0 {
 		t.Fatalf("SyncFarm payload = %#v, want snapshot at seq 3", payload)
+	}
+}
+
+func TestSyncFarmAdvancesExpiredGrowingPlotAndReturnsMatureDelta(t *testing.T) {
+	t.Parallel()
+
+	aggregate := farm.NewAggregate(42, "owner")
+	aggregate.Plots[0] = farm.Plot{
+		State:          farm.StateGrowing,
+		CropID:         1,
+		SeasonIndex:    0,
+		SeasonTotal:    1,
+		SeasonStartAt:  10_000,
+		SeasonDuration: 10_000,
+		MatureAt:       20_000,
+		LastSettleAt:   10_000,
+		LastWaterAt:    19_999,
+		WeedNextWin:    gameconf.RiskWindowsPerSeason,
+		PestNextWin:    gameconf.RiskWindowsPerSeason,
+	}
+	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: aggregate})
+	gateway.SetClock(func() int64 { return 20_000 })
+
+	response := gateway.handleSyncFarm(&wsConnection{uid: 42}, Envelope{
+		Cmd:     CommandSyncFarm,
+		Payload: marshalPayload(syncFarmRequest{OwnerUID: 0, FromSeq: 0}),
+	})
+	if response.Err != pkgerr.OK {
+		t.Fatalf("SyncFarm err = %d, want OK", response.Err)
+	}
+	var payload syncFarmResponse
+	if err := json.Unmarshal(response.Payload, &payload); err != nil {
+		t.Fatalf("decode SyncFarm: %v", err)
+	}
+	if payload.FarmSeq != 1 || payload.ServerTime != 20_000 || len(payload.Deltas) != 1 {
+		t.Fatalf("SyncFarm payload = %#v", payload)
+	}
+	change := payload.Deltas[0].Plots[0]
+	if change.State != farm.StateMature || change.FinalYield == 0 ||
+		change.SeasonStartAt != 10_000 || change.LastSettleAt != 20_000 {
+		t.Fatalf("mature change = %#v", change)
+	}
+	if aggregate.Plots[0].State != farm.StateMature {
+		t.Fatalf("aggregate plot state = %d, want Mature", aggregate.Plots[0].State)
 	}
 }
 

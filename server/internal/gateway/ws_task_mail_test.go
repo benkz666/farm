@@ -173,7 +173,7 @@ func TestDailyLoginAndTaskRewardsAreDirectAndIdempotent(t *testing.T) {
 	notice := storage.addMail("system notice", 0)
 	noAttachment := gateway.handleWSRequest(connection, Envelope{
 		Cmd:     CommandMailClaim,
-		Payload: marshalPayload(mailClaimRequest{MailID: notice.ID}),
+		Payload: marshalPayload(mailClaimRequest{MailID: pkgjson.Uint64(notice.ID)}),
 	})
 	if noAttachment.Err != pkgerr.MailNoAttachment {
 		t.Fatalf("empty MailClaim err = %d, want %d", noAttachment.Err, pkgerr.MailNoAttachment)

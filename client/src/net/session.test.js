@@ -1,7 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { enterOnline, leaveOnline, logout, session, setFarmView } from './session.js'
+import { enterOnline, farmNow, leaveOnline, logout, session, setFarmView, setServerTime } from './session.js'
+
+test('服务端时间校准用于农场倒计时', () => {
+  assert.equal(setServerTime(12_500, 10_000), true)
+  assert.equal(farmNow(10_250), 12_750)
+})
 
 test('进入农场快照记录 owner、序列与关系', () => {
   const previousGeneration = session.farmViewGeneration || 0
@@ -35,4 +40,5 @@ test('logout 清空认证凭证与农场会话', () => {
   assert.equal(session.uid, null)
   assert.equal(session.token, null)
   assert.equal(session.viewingOwnerUid, null)
+  assert.equal(session.serverTimeOffsetMs, 0)
 })

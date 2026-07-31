@@ -24,6 +24,7 @@ import (
 	"farm/server/internal/debugclock"
 	"farm/server/internal/farm"
 	"farm/server/internal/farmrpc"
+	"farm/server/internal/gameconf"
 	"farm/server/internal/gateway"
 	"farm/server/internal/obs"
 	"farm/server/internal/routing"
@@ -78,6 +79,7 @@ type config struct {
 	gatewayURLs   map[string]string
 	busKind       string
 	kafkaBrokers  []string
+	timeProfile   string
 }
 
 func main() {
@@ -139,6 +141,7 @@ func run() error {
 	}
 
 	var handler http.Handler
+	timeProfiles := gameconf.NewTimeProfileSwitch(config.timeProfile)
 	// farmRuntime 在关停时需要被疏散落盘，因此必须活到 switch 之外。
 	var farmRuntime *actor.Runtime
 	var deltaPublisher *farmrpc.FanoutPublisher
@@ -148,7 +151,7 @@ func run() error {
 		runtime.SetHazardSalt(config.hazardSalt)
 		runtime.SetMetrics(metrics)
 		farmRuntime = runtime
-		transport := newGateway(config, storage, runtime, metrics, gateway.WithCrossEventBus(eventBus))
+		transport := newGateway(config, storage, runtime, metrics, timeProfiles, gateway.WithCrossEventBus(eventBus))
 		owner := cross.NewOwner(runtime, storage, eventBus, transport.Now, transport, nil)
 		owner.SetStealHintWriter(storage)
 		owner.SetPlayerDeltaPublisher(transport)
@@ -174,6 +177,7 @@ func run() error {
 				farmrpc.WithMailClaimer(storage),
 				farmrpc.WithCodexRewardStore(storage),
 				farmrpc.WithMailNotifyPublisher(transport),
+				farmrpc.WithTimeProfileSwitch(timeProfiles),
 			),
 		)
 	case roleGateway:
@@ -186,6 +190,7 @@ func run() error {
 			storage,
 			nil,
 			metrics,
+			timeProfiles,
 			gateway.WithFarmRPC(farmrpc.NewHTTPClient(config.farmURLs, config.internalToken), routes),
 			gateway.WithTaskNotifyFanout(farmrpc.NewTaskFanoutPublisher(
 				storage.ConnectionRegistry(),
@@ -251,11 +256,16 @@ func run() error {
 			farmrpc.WithMailClaimer(storage),
 			farmrpc.WithCodexRewardStore(storage),
 			farmrpc.WithMailNotifyPublisher(mailNotifyPublisher),
+			farmrpc.WithTimeProfileSwitch(timeProfiles),
 		)
 		mux := http.NewServeMux()
 		mux.Handle("/internal/v1/cmd", rpcHandler)
 		if os.Getenv("FARM_ALLOW_DEBUG_TIME") == "1" {
 			mux.Handle("/internal/v1/debug/advance", authorizeBearer(config.internalToken, clock.AdvanceHandler()))
+			mux.Handle(
+				"/internal/v1/debug/time-profile",
+				authorizeBearer(config.internalToken, debugTimeProfileHandler(timeProfiles)),
+			)
 			logger.Info("debug time advance enabled", "component", "main", "op", "enable_debug_time", "role", roleFarm)
 		}
 		handler = mux
@@ -279,6 +289,7 @@ func run() error {
 		"op", "listen_http",
 		"role", config.role,
 		"addr", config.httpAddr,
+		"time_profile", config.timeProfile,
 	)
 
 	select {
@@ -341,7 +352,14 @@ func drainActors(runtime *actor.Runtime) {
 	}
 }
 
-func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime, metrics *obs.Metrics, options ...gateway.Option) *gateway.Gateway {
+func newGateway(
+	config config,
+	storage *store.Store,
+	runtime gateway.FarmRuntime,
+	metrics *obs.Metrics,
+	timeProfiles *gameconf.TimeProfileSwitch,
+	options ...gateway.Option,
+) *gateway.Gateway {
 	baseOptions := []gateway.Option{
 		gateway.WithFriendStore(storage),
 		gateway.WithStealHintStore(storage),
@@ -352,8 +370,29 @@ func newGateway(config config, storage *store.Store, runtime gateway.FarmRuntime
 		gateway.WithInternalPushToken(config.internalToken),
 		gateway.WithSessionKickPusher(farmrpc.NewHTTPSessionKickPusher(config.gatewayURLs, config.internalToken)),
 		gateway.WithMetrics(metrics),
+		gateway.WithTimeProfileSwitch(timeProfiles),
 	}
 	return gateway.New(auth.New(storage, storage), storage, runtime, append(baseOptions, options...)...)
+}
+
+func debugTimeProfileHandler(profiles *gameconf.TimeProfileSwitch) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var request struct {
+			TimeProfile string `json:"time_profile"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil || !profiles.Set(request.TimeProfile) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"time_profile": profiles.Get()})
+	}
 }
 
 func combineHandlers(public http.Handler, internal http.Handler) http.Handler {
@@ -425,6 +464,13 @@ func loadConfig() (config, error) {
 		gatewayURLs:   gatewayURLs,
 		busKind:       strings.ToLower(getenv("FARM_BUS", "kafka")),
 		kafkaBrokers:  splitCSV(getenv("FARM_KAFKA_BROKERS", "127.0.0.1:9094")),
+		timeProfile:   strings.ToLower(getenv("FARM_TIME_PROFILE", gameconf.TimeProfileDemo)),
+	}
+	if !gameconf.ValidTimeProfile(cfg.timeProfile) {
+		return config{}, fmt.Errorf(
+			"unsupported FARM_TIME_PROFILE %q (want demo, fast, or authentic)",
+			cfg.timeProfile,
+		)
 	}
 	switch cfg.role {
 	case roleAll:

@@ -26,7 +26,7 @@ type shopRequest struct {
 }
 
 type actionResponse struct {
-	FarmSeq      uint64                   `json:"farm_seq"`
+	FarmSeq      pkgjson.Uint64           `json:"farm_seq"`
 	Patch        farm.PatchJSON           `json:"patch"`
 	CodexRewards []farm.CodexRewardNotice `json:"codex_rewards,omitempty"`
 }
@@ -116,14 +116,15 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			}
 			beforeFarmSeq := farmActor.Aggregate.FarmSeq
 			result = farmActor.Aggregate.ApplyPlotAction(farm.PlotAction{
-				Kind:      kind,
-				PlotIndex: uint8(payload.PlotIndex),
-				Arg:       uint16(payload.Arg),
+				Kind:        kind,
+				PlotIndex:   uint8(payload.PlotIndex),
+				Arg:         uint16(payload.Arg),
+				TimeProfile: g.TimeProfile(),
 			}, g.Now())
 			farmSeq = farmActor.Aggregate.FarmSeq
 			if result.Err == pkgerr.OK {
 				actionPayload = actionResponse{
-					FarmSeq: farmSeq,
+					FarmSeq: pkgjson.Uint64(farmSeq),
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
 				}
 			}
@@ -247,7 +248,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				// 成功，不能留在 30 秒写回窗口里等着被一次强杀抹掉。
 				farmActor.RequireFlush()
 				response.Payload = marshalPayload(actionResponse{
-					FarmSeq: farmActor.Aggregate.FarmSeq,
+					FarmSeq: pkgjson.Uint64(farmActor.Aggregate.FarmSeq),
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
 				})
 			}

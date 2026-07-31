@@ -46,6 +46,17 @@ test('扩地入口只在自己的农场满足下一块土地等级和金币要�
   assert.equal(canExpandLand({ ...state, exp: 1000, gold: 10_000 }, true), false, '好友农场始终隐藏')
 })
 
+test('扩地金币比较不会把超过 2^53 的余额转成 Number', () => {
+  assert.equal(
+    canExpandLand({ ...state, exp: 1000, gold: '9007199254740993' }, false),
+    true,
+  )
+  assert.notEqual(
+    hudSignature({ ...state, gold: '9007199254740992' }, false),
+    hudSignature({ ...state, gold: '9007199254740993' }, false),
+  )
+})
+
 test('任务面板领取决策统一走 claimTask，Task 4 无独立 614 动作', () => {
   const tasks = [
     { id: 1, title: '完成一次播种', progress: 1, target: 1, rewardCoin: 20, done: true, claimed: false },

@@ -9,6 +9,7 @@ import (
 	"farm/server/internal/farmrpc"
 	"farm/server/internal/gameconf"
 	"farm/server/internal/pkgerr"
+	"farm/server/internal/pkgjson"
 	"farm/server/internal/store"
 )
 
@@ -17,12 +18,12 @@ type taskClaimRequest struct {
 }
 
 type mailClaimRequest struct {
-	MailID uint64 `json:"mail_id"`
+	MailID pkgjson.Uint64 `json:"mail_id"`
 }
 
 type mailMutationRequest struct {
-	MailID uint64 `json:"mail_id"`
-	All    bool   `json:"all"`
+	MailID pkgjson.Uint64 `json:"mail_id"`
+	All    bool           `json:"all"`
 }
 
 type taskListResponse struct {
@@ -139,7 +140,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 			response.Err = pkgerr.BadRequest
 			return response
 		}
-		mailID := payload.MailID
+		mailID := uint64(payload.MailID)
 		var (
 			affected int64
 			err      error
@@ -163,7 +164,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 		if g.farmRPC != nil {
 			remote, err := g.executeFarmRPC(ctx, connection.uid, farmrpc.CommandRequest{
 				Operation: farmrpc.OperationMailClaim,
-				Payload:   marshalPayload(farmrpc.MailClaimRequest{MailID: payload.MailID}),
+				Payload:   marshalPayload(farmrpc.MailClaimRequest{MailID: uint64(payload.MailID)}),
 			})
 			if err != nil {
 				response.Err = pkgerr.Internal
@@ -186,7 +187,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
 			}
-			mail, claimErr = g.taskMail.ClaimMail(ctx, connection.uid, payload.MailID)
+			mail, claimErr = g.taskMail.ClaimMail(ctx, connection.uid, uint64(payload.MailID))
 			if claimErr != nil {
 				return nil
 			}

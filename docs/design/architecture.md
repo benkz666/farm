@@ -17,7 +17,7 @@
 
 策划文档定义**规则**，本文定义**机制**。两者的边界是严格的：
 
-- 策划说「成熟后超过 3 倍本季生长时长未收获则枯萎」，本文说「`wither_at` 字段在播种时算好，惰性判定，不用定时器」
+- 策划说「普通作物成熟后永久保持可收获状态」，本文说「`Mature` 不再有时间驱动的后继状态，也不需要 `wither_at`」
 - 策划说「失败不产生任何副作用」，本文说「所有动作强制 validate / commit 两阶段，validate 阶段纯读」
 - 策划说「先到先得」，本文说「单 Actor 串行执行，这是串行化的直接推论，不需要锁」
 
@@ -132,7 +132,7 @@
 
 ### D1 全惰性状态推进，零后台定时器
 
-**决策**：农场中的所有随时间演化的状态——作物成熟、枯萎、缺水、长草、生虫、狗粮消耗、逻辑日重置——一律不设定时器，全部在被访问时按需推进到当前时刻。日常任务同样不需要定时器：读取时用服务器 `time.Local` 的自然日 key 查询或初始化当天记录。
+**决策**：农场中的所有随时间演化的状态——作物成熟、缺水、长草、生虫、狗粮消耗、逻辑日重置——一律不设服务端后台定时器，全部在被访问时按需推进到当前时刻。正在观看农场的客户端只维护一个最近边界 timer，在风险窗口或成熟点发送 `SyncFarm`；`SyncFarm` 先执行 `AdvanceAll(now)`、同步落盘并产生 Delta，再返回权威结果。成熟后没有新的普通作物时间边界。客户端 timer 只是触发一次读取，不直接修改状态。日常任务同样不需要后台定时器：读取时用服务器 `time.Local` 的自然日 key 查询或初始化当天记录。
 
 **驱动理由**
 
@@ -560,7 +560,7 @@ type Plot struct {
 
 所以不需要单独存 `FertShortened` 或阶段进度，一个 `MatureAt` 同时服务于「是否成熟」的热路径判断和「当前处于哪个阶段」的施肥校验。
 
-**`WitherAt` 不存储**。策划 5.3 节定义枯萎时限为 3 倍本季生长时长，直接推导 `MatureAt + 3 × SeasonDuration`。
+**不再需要 `WitherAt`**。策划 5.3 节规定普通作物成熟后永久保持可收获状态；`Mature` 只会被收获动作推进到下一季或残株状态。未来特殊限时作物若需要失效时间，应使用独立、逐作物配置，不能改变普通作物的推进规则。
 
 ### 5.3 惰性推进：advance()
 
@@ -569,41 +569,23 @@ type Plot struct {
 ```go
 // advance 把地块状态惰性推进到 now。
 // 前置条件：now >= p.LastSettleAt（服务端时间单调）
-// 循环最多执行两轮：Growing -> Mature -> Withered
+// 普通作物只随时间从 Growing 推进到 Mature。
 func advance(p *Plot, ctx *Ctx, now int64) {
-    for {
-        switch p.State {
-        case StateGrowing:
-            if now < p.MatureAt {
-                settleTo(p, ctx, now)
-                return
-            }
-            // 跨越成熟点：先把健康度结算到成熟时刻为止，再固化产量
-            settleTo(p, ctx, p.MatureAt)
-            p.FinalYield = computeYield(p, ctx)
-            p.State = StateMature
-            p.HarvestRound++
-            p.StolenCount = 0
-            p.Stealers = p.Stealers[:0]
-            // 不 return，继续判断是否已经跨越了枯萎点
-
-        case StateMature:
-            if now < p.MatureAt+WitherRatio*p.SeasonDuration {
-                return
-            }
-            // 策划 5.3：整株作废，剩余季一并作废
-            p.State = StateWithered
-            p.FinalYield = 0
-            p.CropID = 0
-            p.SeasonIndex = 0
-            p.Stealers = nil
-            return
-
-        default:
-            // Wasteland / Tilled / Residue / Withered 不随时间演化
-            return
-        }
+    if p.State != StateGrowing {
+        // Mature / Wasteland / Tilled / Residue / Withered 不随时间演化
+        return
     }
+    if now < p.MatureAt {
+        settleTo(p, ctx, now)
+        return
+    }
+    // 跨越成熟点：先把健康度结算到成熟时刻为止，再固化产量
+    settleTo(p, ctx, p.MatureAt)
+    p.FinalYield = computeYield(p, ctx)
+    p.State = StateMature
+    p.HarvestRound++
+    p.StolenCount = 0
+    p.Stealers = p.Stealers[:0]
 }
 ```
 
@@ -612,10 +594,9 @@ func advance(p *Plot, ctx *Ctx, now int64) {
 | 跨界 | 触发方式 | 处理 |
 | --- | --- | --- |
 | 跨越成熟点 | 时间驱动，`advance()` 内 | 结算健康度到 `MatureAt` 为止（策划 7.2：成熟后不再产生不良状态），固化 `FinalYield`，轮次 +1，清空偷菜记录 |
-| 跨越枯萎点 | 时间驱动，`advance()` 内 | 整株作废 |
 | 跨越季边界 | **动作驱动**，不在 `advance()` 内 | 由收获动作触发，见下 |
 
-**为什么跨季不由时间驱动**。策划 5.1 的状态机是 `Mature --收获--> Growing`：多季作物必须由主人收获才进入下一季，放着不收会枯萎。所以季边界是动作的效果，不是时间的效果。这让 `advance()` 的循环上界严格为 2。
+**为什么跨季不由时间驱动**。策划 5.1 的状态机是 `Mature --收获--> Growing`：多季作物必须由主人收获才进入下一季，放着不收会一直保持成熟并承受被偷风险。所以季边界是动作的效果，不是时间的效果。
 
 收获时进入下一季的重置逻辑（策划 7.5「多季作物每季独立结算」）：
 
@@ -635,7 +616,7 @@ func enterNextSeason(p *Plot, ctx *Ctx, now int64) {
 }
 ```
 
-`SeasonStartAt = now`（收获时刻）而不是上一季的 `MatureAt`，意味着**拖延收获会拖长全周期**。这是一个刻意的选择：它给「及时收菜」增加了一层激励，与策划 5.3 的枯萎机制方向一致。代价是策划 6.3 表格中的「全周期」成为理论下界而非实际值。这一条也列入 11.3 节待确认。
+`SeasonStartAt = now`（收获时刻）而不是上一季的 `MatureAt`，意味着**拖延收获会拖长全周期**。这是一个刻意的选择：玩家可以永久保留当前成熟季，但不收获就不会开始下一季，同时还会承受被偷风险。策划 6.3 表格中的「全周期」因此是连续及时收获时的理论下界。
 
 ### 5.4 健康度结算与确定性伪随机
 
@@ -1346,7 +1327,7 @@ serverNow() = Date.now() + offset      // offset 由 Ping/Pong 维护
 
 倒计时由 `requestAnimationFrame` 本地推进，**服务端不推送剩余时间**。这是决策 D1 惰性计算在客户端的镜像：既然 `mature_at` 是一个确定的时间戳，客户端拿到它之后完全可以离线算出任意时刻的剩余时间，没有理由让服务端每秒推一次。
 
-一个必要的保守处理：客户端在 `mature_at + 500ms` 之后才把地块渲染成成熟态。校时的残余误差可能有一两百毫秒，如果客户端抢先显示成熟，玩家点收获会收到一次 `ERR_PLOT_NOT_MATURE`——宁可晚半秒显示，也不要让玩家遇到「明明成熟了却收不了」。
+客户端不能仅凭本地倒计时把 `Growing` 改成 `Mature`。它在最近的风险窗口或 `mature_at` 到达时请求一次 `SyncFarm`；服务端推进并返回 Delta 后才切换视觉状态。成熟后普通作物不再安排时间同步。`server_time` 用于校准客户端倒计时，边界操作发出前也会先做一次同步，因此不会出现画面仍显示生长、服务端却提示「作物不在生长中」的矛盾。
 
 ### 9.5 首屏
 
@@ -1436,7 +1417,7 @@ farmctl check-friends <uid>
 | ---: | --- | --- |
 | D1 | 项目骨架、CSV 配置管线与两端代码生成、`.proto` 定义 | `make gen` 能从 CSV 产出 Go 与 JS 两份配置 |
 | D2 | Actor 框架：mailbox、路由表、生命周期、pending 表、事件总线 | 能用单元测试驱动一个 Actor 收发消息并淘汰 |
-| D3 | 地块模型、`advance()` / `settleTo()` / `scanHazard()` / 确定性伪随机 | 惰性推进的单元测试全绿，含跨成熟、跨枯萎、跨季 |
+| D3 | 地块模型、`advance()` / `settleTo()` / `scanHazard()` / 确定性伪随机 | 惰性推进的单元测试全绿，含跨成熟、成熟长期稳定、跨季 |
 | D4 | 动作执行模型（validate / commit）、种植循环 8 个动作 | `6 × 9` 状态机矩阵的表驱动测试全绿 |
 | D5 | 等级经验、扩地、商店、仓库背包、隐藏种子掉落 | 能在测试里跑通「从 0 级到开垦第 7 块地」的完整链路 |
 | D6 | 测试补齐与重构 | 覆盖率达标，`advance()` 的 benchmark 达到 0 allocs/op |

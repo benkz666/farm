@@ -11,9 +11,11 @@ type PlotChange struct {
 	CropID         uint16 `json:"crop_id"`
 	SeasonIndex    uint8  `json:"season_index"`
 	SeasonTotal    uint8  `json:"season_total"`
+	SeasonStartAt  int64  `json:"season_start_at"`
 	MatureAt       int64  `json:"mature_at"`
 	SeasonDuration int64  `json:"season_duration"`
 	FinalYield     uint16 `json:"final_yield"`
+	LastSettleAt   int64  `json:"last_settle_at"`
 	LastWaterAt    int64  `json:"last_water_at"`
 	WeedSince      int64  `json:"weed_since"`
 	PestSince      int64  `json:"pest_since"`

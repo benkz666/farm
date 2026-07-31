@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#102d22" />
+    <title>动物模型工坊 · 经典农场</title>
+  </head>
+  <body>
+    <main id="pet-preview">
+      <header class="workbench-header">
+        <div class="workbench-intro">
+          <p class="eyebrow">经典农场 · 模型工坊</p>
+          <h1 id="workbench-title">动物模型工坊</h1>
+          <p id="workbench-description" class="description">自由环绕模型，滚轮缩放，检查轮廓、毛色与动作骨架。</p>
+        </div>
+        <div class="workbench-actions">
+          <nav class="workshop-switcher" aria-label="选择模型工坊">
+            <button class="workshop-button is-active" type="button" data-workshop="animal">动物模型</button>
+            <button class="workshop-button" type="button" data-workshop="plant">植物模型</button>
+          </nav>
+          <button id="auto-rotate" class="auto-rotate-button" type="button" aria-pressed="false">
+            <span aria-hidden="true">↻</span>
+            <span class="auto-rotate-label">自动旋转：关</span>
+          </button>
+          <a class="back-link" href="/farm">返回农场</a>
+        </div>
+      </header>
+
+      <section class="viewport-shell" aria-label="三维农场模型预览">
+        <div id="pet-preview-canvas"></div>
+
+        <div class="animal-controls workshop-controls" data-controls="animal">
+          <div class="breed-switcher" role="group" aria-label="选择预览品种">
+            <button class="breed-button is-active" type="button" data-breed="all">三犬同屏</button>
+            <button class="breed-button" type="button" data-breed="tugou">土狗</button>
+            <button class="breed-button" type="button" data-breed="muyang">牧羊犬</button>
+            <button class="breed-button" type="button" data-breed="zangao">藏獒</button>
+          </div>
+        </div>
+
+        <div class="plant-controls workshop-controls is-hidden" data-controls="plant">
+          <div id="stage-switcher" class="stage-switcher" role="group" aria-label="选择作物生长阶段"></div>
+          <p id="plant-caption" class="plant-caption"></p>
+        </div>
+        <p class="viewport-hint">拖动自由环绕 · 滚轮缩放 · 双击恢复视角</p>
+      </section>
+
+      <aside class="workbench-ledger" aria-label="模型造型说明">
+        <div class="breed-ledger" data-ledger="animal">
+          <article>
+            <span class="coat-swatch coat-swatch--tugou"></span>
+            <div><strong>土狗</strong><small>暖棕短毛 · 立耳 · 上卷尾</small></div>
+          </article>
+          <article>
+            <span class="coat-swatch coat-swatch--muyang"></span>
+            <div><strong>牧羊犬</strong><small>修长体态 · 黑背白胸 · 垂尾</small></div>
+          </article>
+          <article>
+            <span class="coat-swatch coat-swatch--zangao"></span>
+            <div><strong>藏獒</strong><small>宽厚骨架 · 双层鬃毛 · 粗卷尾</small></div>
+          </article>
+        </div>
+        <div class="plant-ledger is-hidden" data-ledger="plant">
+          <p class="ledger-kicker">生长样本</p>
+          <strong id="plant-ledger-name">白萝卜</strong>
+          <p id="plant-ledger-copy">从破土幼苗到成熟收获，逐阶段检查作物的三维轮廓。</p>
+          <dl>
+            <div><dt>作物类型</dt><dd id="plant-ledger-body">根茎</dd></div>
+            <div><dt>成熟周期</dt><dd id="plant-ledger-cycle">10h</dd></div>
+            <div><dt>可收获产量</dt><dd id="plant-ledger-yield">16 / 季</dd></div>
+          </dl>
+          <section class="plant-warehouse" aria-label="模型种子仓">
+            <header class="warehouse-header">
+              <div>
+                <p>模型种子仓</p>
+                <strong>选择作物样本</strong>
+              </div>
+              <span id="crop-warehouse-count" class="warehouse-count"></span>
+            </header>
+            <div id="crop-switcher" class="crop-switcher" role="group" aria-label="选择预览作物"></div>
+          </section>
+        </div>
+      </aside>
+    </main>
+    <script type="module" src="/src/petPreview.js"></script>
+  </body>
+</html>

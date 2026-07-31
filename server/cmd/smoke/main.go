@@ -56,13 +56,13 @@ type enterFarmPayload struct {
 }
 
 type actionPayload struct {
-	FarmSeq uint64         `json:"farm_seq"`
+	FarmSeq pkgjson.Uint64 `json:"farm_seq"`
 	Patch   farm.PatchJSON `json:"patch"`
 }
 
 type enterFarmResponse struct {
 	Snapshot   farm.FarmSnapshotJSON `json:"snapshot"`
-	FarmSeq    uint64                `json:"farm_seq"`
+	FarmSeq    pkgjson.Uint64        `json:"farm_seq"`
 	ServerTime int64                 `json:"server_time"`
 	Relation   string                `json:"relation"`
 }
@@ -70,7 +70,7 @@ type enterFarmResponse struct {
 type syncFarmResponse struct {
 	Deltas   []farm.FarmDelta       `json:"deltas,omitempty"`
 	Snapshot *farm.FarmSnapshotJSON `json:"snapshot,omitempty"`
-	FarmSeq  uint64                 `json:"farm_seq"`
+	FarmSeq  pkgjson.Uint64         `json:"farm_seq"`
 }
 
 func main() {
@@ -871,13 +871,13 @@ type friendListResponse struct {
 }
 
 type friendEntry struct {
-	UID      uint64 `json:"uid"`
-	Nickname string `json:"nickname"`
+	UID      pkgjson.UID `json:"uid"`
+	Nickname string      `json:"nickname"`
 }
 
 func friendListContains(friends []friendEntry, uid uint64) bool {
 	for _, friend := range friends {
-		if friend.UID == uid {
+		if uint64(friend.UID) == uid {
 			return true
 		}
 	}

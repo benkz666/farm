@@ -31,3 +31,18 @@ test('邮件领取回执不乐观累加金币', () => {
     read: true,
   })
 })
+
+test('邮件领取回执保留超过 2^53 的附件金额精度', () => {
+  const state = defaultState()
+  state.mails = [{
+    id: '9007199254740993',
+    gold: '9007199254740993',
+    attachmentCoin: '9007199254740993',
+    claimed: false,
+  }]
+
+  const reward = applyMailClaimReceipt(state, '9007199254740993')
+
+  assert.equal(reward, '9007199254740993')
+  assert.equal(state.mails[0].claimed, true)
+})

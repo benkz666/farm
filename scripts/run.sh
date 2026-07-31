@@ -29,6 +29,13 @@ VITE_PID_FILE="$RUN_DIR/vite.pid"
 SERVER_LOG="$LOG_DIR/farm-server.log"
 VITE_LOG="$LOG_DIR/vite.log"
 
+# 本地 compose 中 MySQL 的开发账号。密码仅通过 docker exec 的进程环境传入，
+# 不再拼进 mysql 的 -p 命令行参数，避免终端警告和被进程参数读取。
+MYSQL_HOST="${FARM_MYSQL_HOST:-127.0.0.1}"
+MYSQL_USER="${FARM_MYSQL_USER:-farm}"
+MYSQL_PASSWORD="${FARM_MYSQL_PASSWORD:-farm}"
+MYSQL_DATABASE="${FARM_MYSQL_DATABASE:-farm}"
+
 # 固定端口（不可配置覆盖，保证团队一致）
 VITE_PORT=9001
 HTTP_PORT=9002
@@ -124,6 +131,56 @@ ensure_backend_deps() {
   (cd server && go mod download)
 }
 
+mysql_client() {
+  docker compose -f deploy/compose.yml exec -T \
+    -e "MYSQL_PWD=${MYSQL_PASSWORD}" \
+    mysql mysql --protocol=TCP -h "$MYSQL_HOST" -u"$MYSQL_USER" "$@" "$MYSQL_DATABASE"
+}
+
+mysql_admin() {
+  docker compose -f deploy/compose.yml exec -T \
+    -e "MYSQL_PWD=${MYSQL_PASSWORD}" \
+    mysql mysqladmin --protocol=TCP -h "$MYSQL_HOST" -u"$MYSQL_USER" "$@"
+}
+
+run_migrations() {
+  local migration=""
+  local name=""
+  local recorded=""
+  local applied=0
+  local skipped=0
+
+  info "检查数据库迁移"
+  mysql_client -e '
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version VARCHAR(255) NOT NULL,
+      applied_at BIGINT NOT NULL,
+      PRIMARY KEY (version)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ' || die "无法创建迁移记录表"
+
+  for migration in server/migrations/*.sql; do
+    name="${migration##*/}"
+    [[ "$name" =~ ^[0-9]{3}_[A-Za-z0-9_]+\.sql$ ]] || die "迁移文件名不合法：$name"
+    recorded="$(mysql_client --batch --skip-column-names \
+      -e "SELECT 1 FROM schema_migrations WHERE version = '${name}' LIMIT 1" 2>/dev/null || true)"
+    if [[ "$recorded" == "1" ]]; then
+      ((skipped += 1))
+      continue
+    fi
+
+    info "应用迁移: ${name}"
+    mysql_client < "$migration" || die "迁移失败：$migration"
+    mysql_client -e "
+      INSERT INTO schema_migrations (version, applied_at)
+      VALUES ('${name}', CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED));
+    " || die "无法记录已完成迁移：$name"
+    ((applied += 1))
+  done
+
+  info "数据库迁移完成：新应用 ${applied} 个，已跳过 ${skipped} 个"
+}
+
 load_env() {
   set -a
   # shellcheck disable=SC1091
@@ -173,7 +230,10 @@ if [[ ! -f .env ]]; then
   cp .env.example .env
 fi
 
+load_env
+ACTIVE_TIME_PROFILE="${FARM_TIME_PROFILE:-demo}"
 info "模式: ${MODE}"
+info "启动时间档: ${ACTIVE_TIME_PROFILE}（运行后可在设置页热切换，生长中作物按进度换算）"
 stop_pid_file "$VITE_PID_FILE" "Vite"
 stop_pid_file "$SERVER_PID_FILE" "farm-server"
 for role in farm-0 farm-1 gateway-0 gateway-1; do
@@ -196,20 +256,16 @@ docker compose -f deploy/compose.yml up -d mysql redis kafka
 
 info "等待 MySQL healthy"
 for i in $(seq 1 60); do
-  if docker compose -f deploy/compose.yml exec -T mysql mysqladmin ping -h 127.0.0.1 -ufarm -pfarm --silent >/dev/null 2>&1; then
+  if mysql_admin ping --silent >/dev/null 2>&1; then
     break
   fi
   sleep 1
   [[ "$i" -eq 60 ]] && die "MySQL 未就绪"
 done
 
-# 按文件名顺序执行全部迁移，新增迁移不必再改这里。每个迁移都必须可重复执行，
-# 因为每次启动都会把它们重跑一遍。
-info "执行数据库迁移"
-for migration in server/migrations/*.sql; do
-  docker compose -f deploy/compose.yml exec -T mysql \
-    mysql -ufarm -pfarm farm < "$migration" || die "迁移失败：$migration"
-done
+# 按文件名顺序只执行尚未记录的迁移。迁移文件一旦应用不可改名或改内容，
+# 需要数据库变更时新增下一个编号文件。
+run_migrations
 
 if [[ "$MODE" == "shards" ]]; then
   info "启动双分片：farm-0/:${FARM0_PORT} farm-1/:${FARM1_PORT} gateway-0/:${GW0_PORT} gateway-1/:${GW1_PORT}"
@@ -258,6 +314,7 @@ if [[ "$MODE" == "shards" ]]; then
 启动完成（双分片）。
 
   前端:       http://127.0.0.1:${VITE_PORT}/
+  时间档:     ${ACTIVE_TIME_PROFILE}
   Gateway-0:  http://127.0.0.1:${GW0_PORT}/
   Gateway-1:  http://127.0.0.1:${GW1_PORT}/
   Farm-0:     http://127.0.0.1:${FARM0_PORT}/internal/v1/cmd
@@ -277,6 +334,7 @@ else
 
   前端:  http://127.0.0.1:${VITE_PORT}/
   后端:  http://127.0.0.1:${HTTP_PORT}/
+  时间档: ${ACTIVE_TIME_PROFILE}
   日志:  ${LOG_DIR}/
   停止:  ./scripts/stop.sh
 

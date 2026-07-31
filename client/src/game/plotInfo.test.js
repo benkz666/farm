@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import { CROP_MAP } from './config.js'
 import { PLOT, makePlot } from './state.js'
-import { computePlotInfo, cropOf, stageOf } from './plotInfo.js'
+import { computePlotInfo, cropOf, projectedHealthOf, stageOf } from './plotInfo.js'
 
 function makeWitheredPlot(cropId) {
   const p = makePlot(0)
@@ -51,4 +51,33 @@ test('GROWING 有效作物仍按 stageOf 计算阶段（不改变有效 crop 显
 
 test('cropOf 对 crop_id=null 返回 undefined（确认根因入口）', () => {
   assert.equal(cropOf(makeWitheredPlot(null)), undefined)
+})
+
+test('生长中健康度从服务端结算点继续按缺水、杂草和害虫时长插值', () => {
+  const plot = makePlot(0)
+  plot.state = PLOT.GROWING
+  plot.health = 90
+  plot.seasonMs = 10_000
+  plot.matureTime = 20_000
+  plot.settleTime = 10_000
+  plot.waterUntil = 10_000
+  plot.weedSince = 10_000
+  plot.pestSince = 10_000
+
+  // 三项权重合计 1；持续本季 10% 后再扣 10 点。
+  assert.equal(projectedHealthOf(plot, 11_000), 80)
+})
+
+test('成熟后健康度冻结，不再累计仍残留的不良状态', () => {
+  const plot = makePlot(0)
+  plot.state = PLOT.MATURE
+  plot.health = 68
+  plot.seasonMs = 10_000
+  plot.matureTime = 20_000
+  plot.settleTime = 20_000
+  plot.waterUntil = 10_000
+  plot.weedSince = 5_000
+  plot.pestSince = 6_000
+
+  assert.equal(projectedHealthOf(plot, 30_000), 68)
 })

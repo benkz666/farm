@@ -3,8 +3,9 @@
  * 数值 state ↔ PLOT 字符串；crop 数字 ↔ bailuobo 等；bag/warehouse 键转换。
  */
 import { PLOT, makePlot } from './state.js'
-import { WATER_SPAN } from './config.js'
+import { TIME_SCALES, WATER_SPAN } from './config.js'
 import { CROP_ID_TO_KEY as GEN_CROP_ID_TO_KEY, CROP_KEY_TO_ID as GEN_CROP_KEY_TO_ID } from './gen/crops.js'
+import { wireUint64 } from '../net/jsonSafe.js'
 
 /** 服务端地块状态枚举 → 本地 PLOT 字符串（与 farm.State* 一致）。 */
 export const PLOT_STATE_BY_NUM = Object.freeze([
@@ -165,8 +166,14 @@ export function applyPlotSnapshot(plot, snap) {
   plot.matureTime = Number(snap.mature_at) || 0
   const seasonMs = Number(snap.season_duration) || 0
   plot.seasonMs = seasonMs
+  plot.settleTime = Number(snap.last_settle_at) || 0
   plot.weedSince = Number(snap.weed_since) || 0
   plot.pestSince = Number(snap.pest_since) || 0
+  if (typeof snap.health === 'number') {
+    const health = Math.max(0, Math.min(100, Number(snap.health)))
+    plot.health = health
+    plot.penalty = 100 - health
+  }
   // 本地水分截止 ≈ 上次浇水 + 本季×WATER_SPAN（与服务端 WaterSpanRatio 对齐）
   const lastWater = Number(snap.last_water_at) || 0
   plot.waterUntil = lastWater > 0 && seasonMs > 0
@@ -174,8 +181,11 @@ export function applyPlotSnapshot(plot, snap) {
     : 0
   if (typeof snap.final_yield === 'number') plot.finalYield = snap.final_yield
   if (typeof snap.stolen_count === 'number') plot.stolenTotal = snap.stolen_count
-  // 无 SeasonStartAt 时用成熟点回推，便于倒计时展示
-  if (plot.matureTime > 0 && seasonMs > 0) {
+  // 服务端显式下发本季起点；兼容旧快照时才用成熟点回推。
+  const seasonStartAt = Number(snap.season_start_at) || 0
+  if (seasonStartAt > 0) {
+    plot.plantTime = seasonStartAt
+  } else if (plot.matureTime > 0 && seasonMs > 0) {
     plot.plantTime = plot.matureTime - seasonMs
   } else if (stateNum === 0 || stateNum === 1) {
     plot.plantTime = 0
@@ -200,7 +210,8 @@ function applyFullSnapshot(state, snap, opts = {}) {
   const farmViewOnly = opts.farmViewOnly === true
 
   if (!farmViewOnly) {
-    if (typeof snap.coin === 'number') state.gold = snap.coin
+    const coin = wireUint64(snap.coin)
+    if (coin != null) state.gold = coin
     if (typeof snap.exp === 'number') state.exp = snap.exp
     if (typeof snap.nickname === 'string' && snap.nickname.trim()) {
       state.nickname = snap.nickname.trim()
@@ -238,7 +249,8 @@ function applyFullSnapshot(state, snap, opts = {}) {
  * @param {object} patch PatchJSON
  */
 function applyActionPatch(state, patch) {
-  if (typeof patch.coin === 'number') state.gold = patch.coin
+  const coin = wireUint64(patch.coin)
+  if (coin != null) state.gold = coin
   if (typeof patch.exp === 'number') state.exp = patch.exp
 
   if (patch.bag) {
@@ -300,6 +312,15 @@ export function applyFarmDelta(state, delta) {
 export function applyPatch(state, source, opts = {}) {
   if (!state || !source || typeof source !== 'object') return state
 
+  // 时间档由服务端全局配置并随 EnterFarm/SyncFarm 下发。客户端只接受
+  // 已知枚举，不能用本地设置覆盖权威生长时长。
+  if (typeof source.time_profile === 'string' && TIME_SCALES[source.time_profile]) {
+    state.timeScale = source.time_profile
+  }
+  if (typeof source.time_profile_mutable === 'boolean') {
+    state.timeScaleMutable = source.time_profile_mutable
+  }
+
   if (source.snapshot && typeof source.snapshot === 'object') {
     applyFullSnapshot(state, source.snapshot, opts)
     return state
@@ -313,7 +334,7 @@ export function applyPatch(state, source, opts = {}) {
     return state
   }
   // 单地块 / 商店补丁（无外层包装）
-  if (source.plot || source.bag || source.warehouse || typeof source.coin === 'number') {
+  if (source.plot || source.bag || source.warehouse || wireUint64(source.coin) != null) {
     applyActionPatch(state, source)
   }
   return state

@@ -1,9 +1,40 @@
 package gameconf
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestTimeProfileSwitchHotUpdatesSafely(t *testing.T) {
+	profiles := NewTimeProfileSwitch(TimeProfileFast)
+	if got := profiles.Get(); got != TimeProfileFast {
+		t.Fatalf("initial profile = %q, want fast", got)
+	}
+	if profiles.Set("turbo") {
+		t.Fatal("accepted unsupported profile")
+	}
+	if got := profiles.Get(); got != TimeProfileFast {
+		t.Fatalf("invalid update changed profile to %q", got)
+	}
+
+	var wait sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			profile := []string{TimeProfileDemo, TimeProfileFast, TimeProfileAuthentic}[index%3]
+			for j := 0; j < 100; j++ {
+				profiles.Set(profile)
+				if !ValidTimeProfile(profiles.Get()) {
+					t.Errorf("concurrent read returned invalid profile")
+					return
+				}
+			}
+		}(i)
+	}
+	wait.Wait()
+}
 
 func TestLocalDayKeyAndNextResetAtMidnightBoundaries(t *testing.T) {
 	originalLocal := time.Local

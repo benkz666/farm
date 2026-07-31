@@ -22,8 +22,24 @@ chmod +x scripts/run.sh scripts/stop.sh   # 只需一次
 
 1. 检查并安装前端依赖（`client/npm install`，若缺失）
 2. 检查并下载后端 Go 模块（`go mod download`）
-3. 启动 MySQL / Redis / Kafka，执行迁移（含 `001` / `002` / `003`）
+3. 启动 MySQL / Redis / Kafka，并按编号执行尚未应用的数据库迁移
 4. **固定端口**启动：前端 `9001`、后端 `9002`（占用则先 kill 再起）
+
+时间档由服务端全局控制，`.env` 决定服务启动时的默认档位：
+
+```bash
+FARM_TIME_PROFILE=demo       # 1 游戏小时 = 6 秒
+FARM_TIME_PROFILE=fast       # 1 游戏小时 = 1 分钟
+FARM_TIME_PROFILE=authentic  # 1 游戏小时 = 1 真实小时
+```
+
+本地 `.env` 设置 `FARM_ALLOW_DEBUG_TIME=1` 时，登录后可在“设置 → 时间档”
+直接热切换，所有 Gateway 与 Farm 进程会同步更新，无需重启。关闭该调试开关后，
+设置面板只展示当前档位，修改 `.env` 后需重启才会生效。
+
+调试热切换会立即刷新当前农场：生长中作物按“已完成进度比例”换算到新档位，施肥
+推进、健康度、浇水以及草虫持续时间一并保留；成熟作物不会回退。暂未载入的农场会
+在下次进入或同步时完成同样换算。正常重启只改变启动默认档，不主动改写在途作物。
 
 成功后打开：
 

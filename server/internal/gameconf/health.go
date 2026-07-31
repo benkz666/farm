@@ -40,6 +40,3 @@ const (
 	WeedHazardThreshold = 1200
 	PestHazardThreshold = 1000
 )
-
-// WitherSpanRatio 枯萎时限 = 3 × 本季时长（成熟后未收获的宽限）。
-const WitherSpanRatio float64 = 3.0

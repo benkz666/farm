@@ -1,6 +1,6 @@
 /** 期 1/2 联调：HTTP auth + WS Envelope。不写入本地 game/state（由 applyPatch 负责）。 */
 
-import { parseJSONSafe, wireUid } from './jsonSafe.js'
+import { parseJSONSafe, wireUid, wireUint64 } from './jsonSafe.js'
 
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
@@ -52,6 +52,7 @@ export const CMD_MAIL_CLAIM = 608
 export const CMD_MAIL_DELETE = 610
 export const CMD_CODEX_LIST = 612
 export const CMD_CLAIM_DAILY_LOGIN = 614
+export const CMD_SET_TIME_PROFILE = 616
 
 export const WS_SUBPROTOCOL = 'farm.v1.json'
 export const CLIENT_CONFIG_VER = 1
@@ -69,9 +70,9 @@ const FATAL_RECONNECT_ERRS = new Set([1007, 1101, 1102, 1105])
 const ERR_NOT_FRIEND = 1401
 
 /**
- * @typedef {{ uid: number, token: string, ws_url: string }} AuthResult
+ * @typedef {{ uid: string|number, token: string, ws_url: string }} AuthResult
  * @typedef {{ cmd: number, client_seq: number, err: number, payload: object }} Envelope
- * @typedef {{ resume_farm_uid: number, resume_farm_seq: number }} ResumeContext
+ * @typedef {{ resume_farm_uid: string|number, resume_farm_seq: string|number }} ResumeContext
  * @typedef {{
  *   WebSocket?: typeof WebSocket,
  *   setTimeout?: typeof setTimeout,
@@ -91,7 +92,7 @@ export class NetClient {
   constructor(options = {}) {
     /** @type {string|null} */
     this.token = null
-    /** @type {number|null} */
+    /** @type {string|number|null} */
     this.uid = null
     /** @type {string|null} */
     this.wsUrl = null
@@ -225,14 +226,15 @@ export class NetClient {
   /**
    * 从指定序列补齐农场镜像（cmd 204）。
    * @param {string|number} ownerUid
-   * @param {number} fromSeq
+   * @param {string|number} fromSeq
    * @returns {Promise<Envelope>}
    */
   syncFarm(ownerUid, fromSeq) {
     const uid = wireUid(ownerUid)
+    const seq = wireUint64(fromSeq)
     return this.request(CMD_SYNC_FARM, {
       owner_uid: uid == null ? 0 : uid,
-      from_seq: fromSeq,
+      from_seq: seq == null ? 0 : seq,
     })
   }
 
@@ -379,11 +381,11 @@ export class NetClient {
 
   /**
    * 领取邮件附件（cmd 608）。
-   * @param {number} mailId
+   * @param {string|number} mailId
    * @returns {Promise<Envelope>}
    */
   mailClaim(mailId) {
-    return this.request(CMD_MAIL_CLAIM, { mail_id: mailId })
+    return this.request(CMD_MAIL_CLAIM, { mail_id: wireUint64(mailId) })
   }
 
   /** 删除当前收件箱全部邮件（cmd 610）。 */
@@ -399,6 +401,15 @@ export class NetClient {
   /** 领取每日登录奖励（cmd 614）。 */
   claimDailyLogin() {
     return this.request(CMD_CLAIM_DAILY_LOGIN, {})
+  }
+
+  /**
+   * 测试模式下热切换服务端权威时间档（cmd 616）。
+   * 正式环境会拒绝该命令。
+   * @param {'demo'|'fast'|'authentic'} timeProfile
+   */
+  setTimeProfile(timeProfile) {
+    return this.request(CMD_SET_TIME_PROFILE, { time_profile: timeProfile })
   }
 
   /**
@@ -830,8 +841,8 @@ export class NetClient {
     try {
       const ctx = this.getResumeContext?.() || {}
       return {
-        resume_farm_uid: Number(ctx.resume_farm_uid) || 0,
-        resume_farm_seq: Number(ctx.resume_farm_seq) || 0,
+        resume_farm_uid: wireUid(ctx.resume_farm_uid) ?? 0,
+        resume_farm_seq: wireUint64(ctx.resume_farm_seq) ?? 0,
       }
     } catch {
       return { resume_farm_uid: 0, resume_farm_seq: 0 }
