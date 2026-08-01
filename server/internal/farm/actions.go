@@ -29,6 +29,10 @@ const (
 	Steal
 )
 
+// ClearArgUproot is the Clear command's explicit argument for removing a
+// growing crop. The zero value keeps the original residue/withered cleanup.
+const ClearArgUproot uint16 = 1
+
 func (k PlotActionKind) String() string {
 	switch k {
 	case Till:
@@ -54,7 +58,8 @@ func (k PlotActionKind) String() string {
 	}
 }
 
-// PlotAction 是一次地块意图。Plant 时 Arg 为 crop_id，Fertilize 时为 fertilizer_id。
+// PlotAction 是一次地块意图。Plant 时 Arg 为 crop_id，Fertilize 时为
+// fertilizer_id，ClearArgUproot 表示铲除生长中的作物。
 type PlotAction struct {
 	Kind      PlotActionKind
 	PlotIndex uint8
@@ -95,7 +100,11 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	if work.State == StateGrowing && gameconf.ValidTimeProfile(act.TimeProfile) {
 		reprofileGrowingPlot(&work, now, timeProfile)
 	}
-	if !AllowsPlotAction(work.State, act.Kind) {
+	allowed := AllowsPlotAction(work.State, act.Kind)
+	if !allowed && act.Kind == Clear && act.Arg == ClearArgUproot && work.State == StateGrowing {
+		allowed = true
+	}
+	if !allowed {
 		return ActionResult{Err: plotActionStateError(work.State, act.Kind)}
 	}
 
@@ -103,6 +112,9 @@ func (a *Aggregate) ApplyPlotAction(act PlotAction, now int64) ActionResult {
 	case Till:
 		return a.commitTill(act.PlotIndex, &work)
 	case Clear:
+		if act.Arg == ClearArgUproot && work.State == StateGrowing {
+			return a.commitUproot(act.PlotIndex)
+		}
 		return a.commitClear(act.PlotIndex, &work)
 	case Plant:
 		return a.commitPlant(act.PlotIndex, &work, act.Arg, now, timeProfile)
@@ -305,6 +317,14 @@ func (a *Aggregate) commitClear(idx uint8, work *Plot) ActionResult {
 	a.Exp += 3
 	a.RecalcLevel()
 	a.grantHiddenSeed()
+	a.FarmSeq++
+	return a.okPatch(idx)
+}
+
+// commitUproot removes a growing crop without refunding its seed or awarding
+// till/clear experience. The plot remains tilled and can be planted again.
+func (a *Aggregate) commitUproot(idx uint8) ActionResult {
+	a.Plots[idx] = Plot{State: StateTilled}
 	a.FarmSeq++
 	return a.okPatch(idx)
 }

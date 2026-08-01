@@ -286,6 +286,38 @@ func TestApplyPlotActionClearGrowingFailsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestApplyPlotActionUprootGrowingReturnsTilledWithoutReward(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Exp = 120
+	agg.RecalcLevel()
+	agg.Plots[0] = Plot{
+		State:          StateGrowing,
+		CropID:         1,
+		SeasonDuration: 1_000,
+		MatureAt:       actionNow + 1_000,
+		LastSettleAt:   actionNow,
+		LastWaterAt:    actionNow,
+	}
+	seqBefore := agg.FarmSeq
+	expBefore := agg.Exp
+
+	result := agg.ApplyPlotAction(PlotAction{
+		Kind:      Clear,
+		PlotIndex: 0,
+		Arg:       ClearArgUproot,
+	}, actionNow)
+
+	if result.Err != pkgerr.OK {
+		t.Fatalf("Uproot Err = %d, want OK", result.Err)
+	}
+	if got := agg.Plots[0]; got.State != StateTilled || got.CropID != 0 {
+		t.Fatalf("uprooted plot = %#v, want clean tilled plot", got)
+	}
+	if agg.Exp != expBefore || agg.FarmSeq != seqBefore+1 {
+		t.Fatalf("uproot side effects exp=%d seq=%d, want exp=%d seq=%d", agg.Exp, agg.FarmSeq, expBefore, seqBefore+1)
+	}
+}
+
 func TestPlotActionPermissionMatrixMatchesDesign(t *testing.T) {
 	want := map[uint8]map[PlotActionKind]bool{
 		StateWasteland: {Till: true},

@@ -12,7 +12,7 @@ import { FarmScene } from './farm3d.js';
 import { UI, badgeHTML, fmtTime } from './ui.js';
 import { SFX } from './audio.js';
 import { enterOnline, farmNow, isOnline, leaveOnline, logout, session, setFarmView, setServerTime } from '../net/session.js';
-import { CMD_FERTILIZE, CMD_HARVEST, CMD_PLANT, CMD_STEAL } from '../net/client.js';
+import { CMD_CLEAR, CMD_FERTILIZE, CMD_HARVEST, CMD_PLANT, CMD_STEAL } from '../net/client.js';
 import { errText } from '../net/errors.js';
 import {
   compareUint64,
@@ -157,6 +157,7 @@ const TOOLS_HOME = [
   { id: 'fert', name: '施肥', icon: '🧪' },
   { id: 'weed', name: '除草', icon: '🌿' },
   { id: 'pest', name: '除虫', icon: '🐛' },
+  { id: 'remove', name: '铲除', icon: '🪏' },
 ];
 const TOOLS_VISIT = [
   { id: 'water', name: '浇水', icon: '💧' },
@@ -452,6 +453,10 @@ function playOnlineFx(tool, plotId) {
       sfx.pest();
       scene.burst(plotId, 0xffb74d, 10, true);
       break;
+    case 'remove':
+      sfx.remove();
+      scene.burst(plotId, 0x8d6e63, 14, true);
+      break;
     case 'fert':
       sfx.fertilize();
       scene.magicAnim(plotId);
@@ -498,8 +503,9 @@ async function onPlotClickOnline(plotId) {
   const cmd = plotCmdForTool(activeTool, plot.state);
   if (cmd == null) {
     if (activeTool === 'till') return fail('这块地不需要锄地');
+    if (activeTool === 'remove') return fail('这块地没有可铲除的作物');
     if (activeTool === 'steal') return fail('这块地没有可偷的成熟作物');
-    if (plot.state === PLOT.MATURE && ['water', 'weed', 'pest', 'fert'].includes(activeTool)) {
+    if (plot.state === PLOT.MATURE && ['water', 'weed', 'pest', 'fert', 'remove'].includes(activeTool)) {
       return fail('作物已成熟，本季照料已结算，请收获');
     }
     return showPlotTip(plotId);
@@ -515,6 +521,9 @@ async function onPlotClickOnline(plotId) {
   if (cmd === CMD_FERTILIZE) {
     arg = fertilizerKeyToId(selectedFert);
     if (!arg) return fail('请先选择化肥');
+  }
+  if (activeTool === 'remove' && cmd === CMD_CLEAR) {
+    arg = 1;
   }
 
   onlineBusy = true;
@@ -700,7 +709,7 @@ function showPlotTip(plotId) {
   const tips = {
     [PLOT.WASTELAND]: '选择 ⛏️ 锄地来翻整这块荒地',
     [PLOT.TILLED]: '选择 🌱 播种工具种下作物',
-    [PLOT.GROWING]: '作物生长中，记得浇水除草除虫',
+    [PLOT.GROWING]: '作物生长中，记得浇水除草除虫或铲除',
     [PLOT.MATURE]: farm.isMe ? '选择 🧺 收获工具收取果实' : '选择 🥷 偷菜工具摘取果实',
     [PLOT.RESIDUE]: '选择 ⛏️ 清理残株后重新播种',
     [PLOT.WITHERED]: '作物已枯萎，选择 ⛏️ 清理',

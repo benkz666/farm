@@ -44,6 +44,8 @@ export function plotCmdForTool(tool, plotState) {
       return plotState === PLOT.GROWING ? CMD_REMOVE_WEED : null
     case 'pest':
       return plotState === PLOT.GROWING ? CMD_REMOVE_PEST : null
+    case 'remove':
+      return plotState === PLOT.GROWING ? CMD_CLEAR : null
     case 'harvest':
       return plotState === PLOT.MATURE ? CMD_HARVEST : null
     case 'fert':

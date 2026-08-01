@@ -319,8 +319,7 @@ if [[ "$MODE" == "shards" ]]; then
   Gateway-1:  http://127.0.0.1:${GW1_PORT}/
   Farm-0:     http://127.0.0.1:${FARM0_PORT}/internal/v1/cmd
   Farm-1:     http://127.0.0.1:${FARM1_PORT}/internal/v1/cmd
-  日志:       ${LOG_DIR}/
-  停止:       ./scripts/stop.sh
+  模型工坊:   http://127.0.0.1:${VITE_PORT}/model-workshop.html
   4a smoke:   cd server && go run ./cmd/smoke shards
 
 也可整栈容器化：
@@ -335,10 +334,7 @@ else
   前端:  http://127.0.0.1:${VITE_PORT}/
   后端:  http://127.0.0.1:${HTTP_PORT}/
   时间档: ${ACTIVE_TIME_PROFILE}
-  日志:  ${LOG_DIR}/
-  停止:  ./scripts/stop.sh
-
-登录入口：http://127.0.0.1:${VITE_PORT}/login （右下角 Net 诊断仅 DEV 用）。
+  模型工坊: http://127.0.0.1:${VITE_PORT}/model-workshop.html
 
 EOF
 fi

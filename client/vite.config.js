@@ -13,7 +13,6 @@ export default defineConfig(() => {
         input: {
           app: resolve(import.meta.dirname, 'index.html'),
           modelWorkshop: resolve(import.meta.dirname, 'model-workshop.html'),
-          petPreview: resolve(import.meta.dirname, 'pet-preview.html'),
         },
       },
     },

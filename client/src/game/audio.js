@@ -46,6 +46,7 @@ export class SFX {
   water()    { this.noise(0.35, 0.12, 1400); this.tone(500, 0.3, 'sine', 0.05, 0, 220); }
   weed()     { this.noise(0.22, 0.14, 600); }
   pest()     { this.noise(0.15, 0.12, 900); this.tone(300, 0.1, 'square', 0.05, 0.05); }
+  remove()   { this.noise(0.2, 0.14, 260); this.tone(150, 0.12, 'sine', 0.08); }
   fertilize(){ this.tone(520, 0.1, 'sine', 0.1); this.tone(780, 0.14, 'sine', 0.1, 0.08); }
   mature()   { [523, 659, 784, 1047].forEach((f, i) => this.tone(f, 0.16, 'triangle', 0.1, i * 0.06)); }
   harvest()  { [523, 659, 784].forEach((f, i) => this.tone(f, 0.12, 'triangle', 0.12, i * 0.07)); }

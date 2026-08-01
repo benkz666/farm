@@ -382,7 +382,7 @@ message StealRsp {
 | 202 | `LeaveFarm` | — | 取消订阅 |
 | 204 | `SyncFarm` | — | 缺口补齐（2.1 节） |
 | 206 | `Till` | 主人 | 锄地（策划 8.1） |
-| 208 | `Clear` | 主人 | 清理（策划 8.2） |
+| 208 | `Clear` | 主人 | 清理（策划 8.2）；`arg=1` 时铲除生长中的作物 |
 | 210 | `Plant` | 主人 | 播种（策划 8.3） |
 | 212 | `Water` | 主人 / 好友 | 浇水（策划 8.4） |
 | 214 | `RemoveWeed` | 主人 / 好友 | 除草（策划 8.5） |
@@ -398,7 +398,7 @@ message StealRsp {
 message PlotActionReq {
   uint64 owner_uid  = 1;
   uint32 plot_index = 2;
-  uint32 arg        = 3;  // 播种时为 crop_id，施肥时为 fertilizer_id，其余为 0
+  uint32 arg        = 3;  // 播种为 crop_id、施肥为 fertilizer_id、铲除为 1，其余为 0
 }
 ```
 

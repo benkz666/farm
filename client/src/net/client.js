@@ -484,7 +484,7 @@ export class NetClient {
    * 地块动作（Till/Clear/Plant/…）。返回完整 Envelope；err≠0 由调用方处理。
    * @param {number} cmd CMD_TILL 等
    * @param {number} plotIndex
-   * @param {number} [arg=0] 播种时为 crop_id，施肥时为 fertilizer_id
+   * @param {number} [arg=0] 播种时为 crop_id，施肥时为 fertilizer_id，铲除时为 1
    * @param {number} [ownerUid=0]
    * @returns {Promise<Envelope>}
    */
