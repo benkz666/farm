@@ -102,7 +102,7 @@ func main() {
 
 	goPath := *outGo
 	if goPath == "" {
-		goPath = filepath.Join(*root, "server", "internal", "gameconf", "gen_crops.go")
+		goPath = filepath.Join(*root, "server", "platform", "gameconf", "gen_crops.go")
 	}
 	jsPath := *outJS
 	if jsPath == "" {

@@ -40,7 +40,7 @@
 题目要求「按 3000w DAU 做架构设计、容量估算、瓶颈分析和压测验证」，同时项目周期只有 3 周。这两者不冲突，但必须说清楚各自的落点：
 
 - **设计轨**：架构按 3000w DAU 展开，容量估算给出完整推导与机器清单，瓶颈按压测暴露顺序逐个分析
-- **实现轨**：单进程部署，跑通全部玩法，压测在单机上做，用实测拐点向集群外推
+- **实现轨**：Gateway、Auth、Farm、Social、Worker 五种服务独立部署；先以每种服务单实例跑通玩法，再分别寻找容量拐点
 
 让这两轨不脱节的关键在于：**从第一天起就按目标形态写接口，只是把实例数配成 1**。具体做法见 4.2 节。
 
@@ -50,11 +50,11 @@
 | --- | --- | --- |
 | 服务端语言 | Go 1.22+ | goroutine + channel 与 Actor 模型同构，mailbox 就是一个 channel；单机长连接能力强；`pprof` 和 `go test -bench` 让压测和瓶颈定位几乎零成本 |
 | 传输 | WebSocket（游戏流量） + HTTPS（注册登录） | 服务端要主动推送地块变更，必须长连接。农场是秒级更新的房间制玩法，不需要 UDP/KCP，见 2.3 节 |
-| 序列化 | Protobuf 定义 schema，传输层可切 JSON / binary | 开发期用 JSON 便于抓包调试，压测期切 binary。只维护一份 `.proto` |
+| 序列化 | 严格 JSON Envelope | 客户端协议和内部 RPC 都可直接抓包；UID、邮件 ID 等 64 位标识统一传十进制字符串 |
 | 热数据 | Redis 7 | Actor 的 backing store 与跨进程共享状态 |
 | 持久化 | MySQL 8 分库分表 | 游戏数据是强 schema 的，关系模型合适；分片方案见 5.7 节 |
-| 消息 | Kafka `[仅设计]` / 进程内 channel `[已实现]` | 领域事件的扇出。单进程阶段退化为 channel，接口一致 |
-| 客户端 | 原生 JS + three.js | 沿用已有的 [js/farm3d.js](../../js/farm3d.js)。3 周内换引擎不划算 |
+| 消息 | Kafka `[已实现]` | Gateway 与 Farm 的跨农场动作通过持久消息回环；内存实现只用于单元测试 |
+| 客户端 | Vue 3 + Three.js | Vue 管理页面与状态，Three.js 负责农场场景表现 |
 
 不选 Node.js 的理由：农场的核心是大量长驻内存的独立状态机，Go 的抢占式调度和多核并行让每个 Actor 天然是一个 goroutine，而单线程事件循环需要手工做时间片切分。不选 Java 的理由：3 周内自己写一套 Actor 框架，Go 的成本明显更低。
 
@@ -296,10 +296,10 @@ uid -> hash(uid) % 1024 -> 逻辑分片号 -> 查路由表 -> 物理实例
 ```mermaid
 graph TB
     subgraph client [客户端]
-        C["H5 Client<br/>原生 JS + three.js"]
+        C["H5 Client<br/>Vue 3 + Three.js"]
     end
 
-    subgraph edge [接入层 无状态]
+    subgraph edge [接入与安全层]
         CDN["CDN 静态资源"]
         GW["Gateway 集群<br/>连接 心跳 限流 验签 路由"]
         AUTH["Auth 服务<br/>注册 登录 签发 token"]
@@ -310,11 +310,9 @@ graph TB
         SOC["Social 服务<br/>好友权威表 分享凭证"]
     end
 
-    subgraph async [异步层]
+    subgraph async [异步与被动数据层]
         MQ[("Kafka 领域事件")]
-        TASK["Task 引擎"]
-        MAILSVC["Mail 服务"]
-        DELAY["延迟队列 成熟提醒"]
+        WORKER["Worker 服务<br/>任务 邮件 图鉴奖励"]
         DW["日志与风控"]
     end
 
@@ -324,20 +322,20 @@ graph TB
     end
 
     C -.首屏资源.-> CDN
-    C -->|HTTPS| AUTH
-    C -->|"WSS 全部游戏流量"| GW
+    C -->|"HTTPS / WSS"| GW
+    GW -->|"内部 JSON-RPC"| AUTH
     GW -->|内部 RPC| FS
-    GW --> SOC
+    GW -->|"内部 JSON-RPC"| SOC
+    GW -->|"内部 JSON-RPC"| WORKER
     FS -->|领域事件| MQ
-    MQ --> TASK
-    MQ --> MAILSVC
-    MQ --> DELAY
+    FS -->|"内部 JSON-RPC"| SOC
+    FS -->|"内部 JSON-RPC"| WORKER
     MQ --> DW
-    TASK -->|奖励邮件| MAILSVC
     FS <--> R
     FS -->|"write-behind"| DB
+    AUTH --> DB
     SOC --> DB
-    MAILSVC --> DB
+    WORKER --> DB
 ```
 
 各服务的职责边界：
@@ -348,46 +346,33 @@ graph TB
 | Auth | 否 | 注册、登录、签发 token | 登录洪峰的流量特征与游戏流量完全不同；且它是唯一需要处理密码的地方，隔离有安全价值 |
 | FarmServer | 是 | 用户 Actor，全部玩法逻辑 | 系统的核心。有状态，按逻辑分片路由 |
 | Social | 否 | 好友权威表读写、分享凭证签发与校验 | 好友关系的分片键不是 uid（见 D5），与 FarmServer 的分片规则不同，无法合并 |
-| Task | 否 | 订阅领域事件，推进任务进度 | 事件驱动，与玩法解耦；新增任务类型不改玩法代码 |
-| Mail | 否 | 邮件收发、附件领取 | 全服邮件的存储模型特殊（模板 + 游标），见 5.7 节 |
+| Worker | 否 | 任务进度、邮件、附件领取、图鉴里程碑奖励 | 三者都是离线可累积的被动数据，共享奖励幂等与通知链路；当前规模下合并可避免两个低负载服务的运维成本 |
 
-**Task 和 Mail 为什么不放进 Actor**：这看起来违反 D2「按数据所有权切分」。理由是任务进度和邮件都是**事件驱动的被动数据**——玩家很少主动查，但产生它们的事件量很大。放进 Actor 意味着每个领域事件都要唤醒目标 Actor，而目标 Actor 可能根本不在线。独立成服务后，事件可以在离线状态下积累。玩家的任务进度和未读邮件数会在 Actor 加载时一并拉入内存缓存。
+**Worker 为什么不放进 Actor**：任务进度和邮件都是**事件驱动的被动数据**。把它们放进 Actor 会为离线玩家唤醒 Farm Actor；独立后可在玩家离线时继续幂等累积。若后续任务与邮件的负载曲线明显分化，Worker 内部已经按接口区分两组用例，可以再拆成两个部署单元。
 
-### 4.2 3 周内的实现形态
+### 4.2 当前实现形态
 
-**同一份代码，两种部署。**
+后端是一个仓库、八个 Go 模块：协议模块、共享内核模块、五个服务模块以及工具模块。五种服务分别拥有独立 `main`、`go.mod`、监听地址、健康探针与容器构建目标。开发脚本也启动五个进程，不存在退回本地函数调用的 `all` 兼容分支。
 
 ```mermaid
 graph LR
-    subgraph mono ["单进程部署 [已实现]"]
-        direction TB
-        M["farm-server 单二进制"]
-        M --- MG["Gateway 模块"]
-        M --- MF["FarmServer 模块<br/>1024 逻辑分片 -> 1 实例"]
-        M --- MS["Social 模块"]
-        M --- MT["Task 模块"]
-        M --- MM["Mail 模块"]
-        MBUS["进程内 channel<br/>替代 Kafka"]
-        M --- MBUS
-    end
-    subgraph dist ["集群部署 [已预留]"]
-        direction TB
-        D1["Gateway x12"]
-        D2["FarmServer x16"]
-        D3["Social x4"]
-        D4["Kafka"]
-    end
-    mono -.改配置不改代码.-> dist
+    C["Browser"] --> GW["Gateway :9002"]
+    GW --> AUTH["Auth :9003"]
+    GW --> SOCIAL["Social :9004"]
+    GW --> WORKER["Worker :9005"]
+    GW --> FARM["Farm :9100"]
+    FARM --> SOCIAL
+    FARM --> WORKER
+    GW <--> KAFKA[("Kafka")]
+    FARM <--> KAFKA
 ```
 
-让这个「改配置不改代码」成立，靠四条纪律：
+当前实现遵守四条纪律：
 
-1. **所有跨服务调用走接口，不走直接函数调用**。单进程下接口的实现是本地调用，集群下是 gRPC。调用方看不出区别
-2. **路由表从第一天就存在**。单实例阶段路由表是 `[1024]int32{0,0,...,0}`，全部指向实例 0
-3. **事件总线从第一天就存在**。单进程下 `EventBus.Publish()` 往 channel 里丢，集群下往 Kafka 里丢
-4. **绝不在 Actor 内同步等待另一个 Actor**。这条是死锁防线，也是分布式化的前提。单进程下如果偷懒直接调用对方 Actor 的方法，代码在集群下会彻底不可用
-
-第 4 条最容易被违反，因为单进程下直接调用「能跑」。7.2 节的跨农场动作协议就是为了从设计上堵死这条捷径。
+1. **跨服务只走协议适配器**。Gateway 不直接处理密码，也不直接读写好友、任务和邮件表；Farm 的好友校验与奖励副作用同样走 Social/Worker 客户端。
+2. **路由表始终存在**。本地单 Farm 表把 1024 个逻辑分片映射到 `farm-0`；扩容时只调整物理实例映射。
+3. **跨农场动作始终经过 Kafka**。内存 EventBus 仅用于可重复的单元测试，不是部署模式。
+4. **Actor 内绝不同步等待另一个 Actor**。跨农场动作仍采用预占、主人裁决、异步结果回环，避免互相等待造成死锁。
 
 ### 4.3 Actor 生命周期
 

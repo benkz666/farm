@@ -80,6 +80,10 @@ let runtimeDisposed = false;
 /** 服务端下次自然日 00:00（Unix 毫秒） */
 let taskResetAt = 0;
 
+// FarmDelta 是实时主链路；好友镜像每 3 秒向权威端校准一次，兜底修复
+// 浏览器切后台、短暂断网或 Gateway 写失败造成的单次推送丢失。
+const FRIEND_FARM_CONSISTENCY_INTERVAL_MS = 3_000;
+
 /** @type {ReturnType<typeof createTaskResetScheduler>|null} */
 let taskResetScheduler = null;
 /** @type {ReturnType<typeof createTaskSession>|null} */
@@ -352,7 +356,11 @@ function bindOnlineClient(client) {
     clearTimeout,
     now: farmNow,
     getPlots: () => state.plots,
-    isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid,
+    isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid && !onlineBusy &&
+      (!isVisitingFriend() || document.visibilityState !== 'hidden'),
+    getConsistencyIntervalMs: () => isVisitingFriend()
+      ? FRIEND_FARM_CONSISTENCY_INTERVAL_MS
+      : 0,
     sync: async () => {
       await farmMirror?.syncNow?.();
     },
@@ -1554,6 +1562,15 @@ const lastMouse = [0, 0];
 const onGlobalPointerMove = (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; };
 addEventListener('pointermove', onGlobalPointerMove);
 
+// 后台标签页的 timer 可能被浏览器降频；重新可见或获得焦点时立即校准，
+// 保证玩家切回好友农场看到的是最新权威状态。
+const onFarmPageResume = () => {
+  if (document.visibilityState === 'hidden' || !isVisitingFriend()) return;
+  void farmAdvanceScheduler?.reconcileNow?.();
+};
+addEventListener('focus', onFarmPageResume);
+document.addEventListener('visibilitychange', onFarmPageResume);
+
 // ---------------- 启动 ----------------
 // 登录页 authFlow / DEV 诊断：暴露 online 切入与状态
 window.__farm = {
@@ -1587,6 +1604,8 @@ removePageUnload = bindPageUnload({
     farmAdvanceScheduler = null;
     stopTaskNotifySubscription?.();
     stopTaskNotifySubscription = null;
+    removeEventListener('focus', onFarmPageResume);
+    document.removeEventListener('visibilitychange', onFarmPageResume);
   },
 });
 
@@ -1621,6 +1640,8 @@ function disposeRuntimeForHMR() {
   removePageUnload?.();
   removePageUnload = null;
   removeEventListener('pointermove', onGlobalPointerMove);
+  removeEventListener('focus', onFarmPageResume);
+  document.removeEventListener('visibilitychange', onFarmPageResume);
   scene.dispose();
   // HMR 交接时故意不关闭 netClient：新模块会继续接管它。
   if (window.__farm?.__runtime === runtimeHandle) {

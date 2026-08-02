@@ -141,6 +141,10 @@ export function createFarmMirror({ state, session, syncFarm, onApplied = () => {
     async onDelta(delta) {
       if (disposed) return false
       if (!sameUid(delta?.owner_uid, session.viewingOwnerUid)) return false
+      const seq = wireUint64(delta?.farm_seq)
+      // Gateway 对局部失败批次会有限重试。相同或更旧的 Delta 已经体现在
+      // 当前镜像中，直接幂等忽略，避免一次重试额外触发 SyncFarm。
+      if (seq != null && (compareUint64(seq, session.lastFarmSeq) ?? 1) <= 0) return true
       if (syncing && sameUid(syncing.view.ownerUid, session.viewingOwnerUid)) {
         return requestSync(delta)
       }

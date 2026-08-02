@@ -58,3 +58,72 @@ test('调度器到成熟边界只触发一次权威同步，成熟后停止排�
   scheduler.dispose()
   assert.equal(timer, null)
 })
+
+test('好友农场即使没有生长边界也会周期校准，最近的生长边界优先', async () => {
+  let now = 20_000
+  let timer = null
+  let syncCalls = 0
+  const mature = growingPlot()
+  mature.state = PLOT.MATURE
+  const plots = [mature]
+  const scheduler = createFarmAdvanceScheduler({
+    now: () => now,
+    getPlots: () => plots,
+    isActive: () => true,
+    getConsistencyIntervalMs: () => 3_000,
+    setTimeout(fn, delay) {
+      timer = { fn, delay }
+      return 1
+    },
+    clearTimeout() {
+      timer = null
+    },
+    async sync() {
+      syncCalls++
+      now += 3_000
+    },
+  })
+
+  scheduler.schedule()
+  assert.equal(timer.delay, 3_000)
+  const runConsistencyCheck = timer.fn
+  timer = null
+  await runConsistencyCheck()
+  assert.equal(syncCalls, 1)
+  assert.equal(timer.delay, 3_000)
+
+  const growing = growingPlot()
+  growing.plantTime = now
+  growing.seasonMs = 10_000
+  growing.matureTime = now + 10_000
+  plots.splice(0, 1, growing)
+  scheduler.schedule()
+  assert.equal(timer.delay, 1_000, '风险窗口早于 3 秒校准周期时应优先同步')
+})
+
+test('页面恢复时可立即校准并重新建立周期排程', async () => {
+  let timer = null
+  let syncCalls = 0
+  const scheduler = createFarmAdvanceScheduler({
+    now: () => 10_000,
+    getPlots: () => [],
+    isActive: () => true,
+    getConsistencyIntervalMs: () => 3_000,
+    setTimeout(fn, delay) {
+      timer = { fn, delay }
+      return 1
+    },
+    clearTimeout() {
+      timer = null
+    },
+    async sync() {
+      syncCalls++
+    },
+  })
+
+  scheduler.schedule()
+  assert.equal(timer.delay, 3_000)
+  await scheduler.reconcileNow()
+  assert.equal(syncCalls, 1)
+  assert.equal(timer.delay, 3_000)
+})

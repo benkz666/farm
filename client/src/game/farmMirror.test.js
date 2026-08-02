@@ -203,6 +203,38 @@ test('FarmDelta 序列跨越 2^53 后仍按相邻 uint64 精确推进', async ()
   assert.equal(state.plots[0].state, 'growing')
 })
 
+test('Gateway 重试的重复或旧 Delta 在 2^53 后仍按序列幂等忽略', async () => {
+  const state = { plots: [{ state: 'mature' }] }
+  const session = {
+    viewingOwnerUid: '1785402171458126005',
+    relation: 'FRIEND',
+    lastFarmSeq: '9007199254740993',
+  }
+  let syncCalls = 0
+  const mirror = createFarmMirror({
+    state,
+    session,
+    syncFarm: async () => {
+      syncCalls++
+      throw new Error('重复 Delta 不应触发 SyncFarm')
+    },
+  })
+
+  assert.equal(await mirror.onDelta({
+    owner_uid: '1785402171458126005',
+    farm_seq: '9007199254740993',
+    plots: [{ index: 0, state: 2 }],
+  }), true)
+  assert.equal(await mirror.onDelta({
+    owner_uid: '1785402171458126005',
+    farm_seq: '9007199254740992',
+    plots: [{ index: 0, state: 2 }],
+  }), true)
+  assert.equal(syncCalls, 0)
+  assert.equal(state.plots[0].state, 'mature')
+  assert.equal(session.lastFarmSeq, '9007199254740993')
+})
+
 test('FarmDelta 不会把 2^53 后的两个相邻序列误判成同一个值', async () => {
   const state = { plots: [] }
   const session = {

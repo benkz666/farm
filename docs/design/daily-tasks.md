@@ -108,7 +108,7 @@
 
 ## 7. 调整数值或扩展任务
 
-任务定义集中在 [server/internal/store/task.go](../../server/internal/store/task.go)：
+任务定义集中在 [server/platform/store/task.go](../../server/platform/store/task.go)：
 
 - 固定任务：`fixedDailyTaskDefinitions`
 - 随机任务池：`randomDailyTaskPool`
@@ -117,7 +117,7 @@
 新增任务时应同时完成以下事项：
 
 1. 分配一个未使用且稳定的任务 ID，并加入固定列表或随机池。
-2. 在 Gateway 与 Farm RPC 的成功动作路径中写入对应的 `AdvanceTask` 调用，确保单机与分片模式一致。
+2. 在 Gateway 与 Farm RPC 的成功动作路径中写入对应的 `AdvanceTask` 调用，确保所有服务实例行为一致。
 3. 确认 `IsDailyTaskID` 能识别该 ID，以允许 `TaskNotify` 推送。
 4. 为抽取稳定性、进度推进、领奖幂等和前端映射补充测试。
 5. 同步更新本文档与 [协议文档](protocol.md)。
@@ -128,6 +128,6 @@
 - 每个服务进程只缓存当前自然日已经初始化的玩家。相同玩家的并发首次请求由一个初始化者执行数据库写入，其余请求等待同一结果；跨日自动清空缓存。
 - 旧 `daily_login` 兼容映射只随当天首次初始化执行，不在每次播种、浇水等动作中重复查询。
 - `AdvanceTask` 的原子更新没有改变行时，表示任务已完成，不再追加读取任务详情；只有实际推进后才读取并推送完整状态。
-- 分片模式下，`TaskNotify` 以 `uid + day_key + task_id` 为键在 75ms 窗口内保留最新状态。待发送键最多 4096 个，刷新工作协程最多 16 个；超过上限时丢弃新的提示并记录限频告警，不在玩法请求中同步执行 HTTP 扇出。
+- 多实例下，`TaskNotify` 以 `uid + day_key + task_id` 为键在 75ms 窗口内保留最新状态。待发送键最多 4096 个，刷新工作协程最多 16 个；超过上限时丢弃新的提示并记录限频告警，不在玩法请求中同步执行 HTTP 扇出。
 - Gateway 的每连接邮箱按 `day_key + task_id` 合并最新状态，因此客户端可能跳过中间进度，但不会把午夜前后的同 ID 任务互相覆盖；完整状态始终可通过 `TaskList` 恢复。
 - 客户端同一登录会话中的并发 `TaskList` 刷新复用一条在途请求。领奖后的刷新使用强制模式，避免复用领奖前的旧请求。

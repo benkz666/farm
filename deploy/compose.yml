@@ -1,8 +1,3 @@
-# 本地依赖默认始终启动：MySQL / Redis / Kafka。
-# 双分片（farm-0/1 + gateway-0/1）使用 profile=shards：
-#   docker compose -f deploy/compose.yml --profile shards up -d --build
-# 或宿主机进程编排：./scripts/run.sh shards
-
 services:
   mysql:
     image: mysql:8.4
@@ -51,89 +46,126 @@ services:
       timeout: 5s
       retries: 20
 
-  # ---- 期 4a 双分片（profile: shards）----
-  # 拓扑：逻辑片 0..511 → farm-0，512..1023 → farm-1；客户端可连任意 Gateway。
-  farm-0:
-    profiles: ["shards"]
+  migrate:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.migrate
+    depends_on:
+      mysql: {condition: service_healthy}
+    environment:
+      FARM_MYSQL_HOST: mysql
+      FARM_MYSQL_USER: farm
+      FARM_MYSQL_PASSWORD: farm
+      FARM_MYSQL_DATABASE: farm
+    restart: "no"
+
+  auth:
+    profiles: ["app"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-    environment: &farm-env
+      args: {SERVICE: auth}
+    depends_on: &storage-dependencies
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    environment: &common-environment
+      FARM_ENV: dev
       FARM_MYSQL_DSN: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
       FARM_REDIS_ADDR: redis:6379
-      FARM_TOKEN_SECRET: dev-only-change-me
-      FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_INTERNAL_TOKEN: dev-only-internal-token-change-me
-      FARM_ROUTE_TABLE: deploy/route-table.example.json
-      FARM_LOGICAL_SHARDS: "1024"
+    ports: ["9003:9003"]
+
+  social:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {SERVICE: social}
+    depends_on: *storage-dependencies
+    environment:
+      <<: *common-environment
+      FARM_SOCIAL_HTTP_ADDR: ":9004"
+    ports: ["9004:9004"]
+
+  worker:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {SERVICE: worker}
+    depends_on: *storage-dependencies
+    environment:
+      <<: *common-environment
+      FARM_WORKER_HTTP_ADDR: ":9005"
+    ports: ["9005:9005"]
+
+  farm:
+    profiles: ["app"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {SERVICE: farm}
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      social: {condition: service_started}
+      worker: {condition: service_started}
+    environment:
+      <<: *common-environment
+      FARM_FARM_HTTP_ADDR: ":9100"
+      FARM_FARM_INSTANCE_ID: farm-0
+      FARM_ROUTE_TABLE: deploy/route-table.local.json
+      FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway:9002"}'
+      FARM_SOCIAL_URL: http://social:9004
+      FARM_WORKER_URL: http://worker:9005
       FARM_BUS: kafka
       FARM_KAFKA_BROKERS: kafka:9092
+      FARM_HAZARD_SECRET: dev-only-hazard-secret
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
-      FARM_FARM_URLS: '{"farm-0":"http://farm-0:9100","farm-1":"http://farm-1:9101"}'
-      FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway-0:9200","gateway-1":"http://gateway-1:9201"}'
-      FARM_ROLE: farm
-      FARM_INSTANCE_ID: farm-0
-      FARM_HTTP_ADDR: ":9100"
+      FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9100:9100"]
 
-  farm-1:
-    profiles: ["shards"]
+  gateway:
+    profiles: ["app"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
+      args: {SERVICE: gateway}
     depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      auth: {condition: service_started}
+      social: {condition: service_started}
+      worker: {condition: service_started}
+      farm: {condition: service_started}
     environment:
-      <<: *farm-env
-      FARM_ROLE: farm
-      FARM_INSTANCE_ID: farm-1
-      FARM_HTTP_ADDR: ":9101"
-    ports: ["9101:9101"]
-
-  gateway-0:
-    profiles: ["shards"]
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.server
-    depends_on:
-      farm-0:
-        condition: service_started
-      farm-1:
-        condition: service_started
-    environment:
-      <<: *farm-env
-      FARM_ROLE: gateway
-      FARM_INSTANCE_ID: gateway-0
-      FARM_HTTP_ADDR: ":9200"
+      <<: *common-environment
+      FARM_GATEWAY_HTTP_ADDR: ":9002"
+      FARM_GATEWAY_INSTANCE_ID: gateway-0
+      FARM_ROUTE_TABLE: deploy/route-table.local.json
+      FARM_AUTH_URL: http://auth:9003
+      FARM_SOCIAL_URL: http://social:9004
+      FARM_WORKER_URL: http://worker:9005
+      FARM_FARM_URLS: '{"farm-0":"http://farm:9100"}'
+      FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway:9002"}'
+      FARM_BUS: kafka
+      FARM_KAFKA_BROKERS: kafka:9092
+      FARM_INVITE_SECRET: dev-only-invite-change-me
+      FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
-    ports: ["9200:9200"]
+    ports: ["9002:9002"]
 
-  gateway-1:
-    profiles: ["shards"]
+  web:
+    profiles: ["app"]
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.server
+      dockerfile: deploy/Dockerfile.client
     depends_on:
-      farm-0:
-        condition: service_started
-      farm-1:
-        condition: service_started
-    environment:
-      <<: *farm-env
-      FARM_ROLE: gateway
-      FARM_INSTANCE_ID: gateway-1
-      FARM_HTTP_ADDR: ":9201"
-      FARM_ALLOW_DEBUG_TIME: "1"
-    ports: ["9201:9201"]
+      gateway: {condition: service_started}
+    ports: ["9001:80"]

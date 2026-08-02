@@ -1,17 +1,28 @@
-# 期 4 双分片本地联调：构建单一 farm-server 二进制，由 compose 按角色启动。
+# 五个服务共用构建模板，但每次只产出 ARG SERVICE 指定的独立二进制。
 FROM golang:1.25-bookworm AS build
-WORKDIR /src
-COPY server/go.mod server/go.sum ./
-RUN go mod download
+ARG SERVICE
+WORKDIR /src/server
+# 依赖清单单独成层；业务源码变化时无需重新下载全部 Go 模块。
+COPY server/go.work server/go.work.sum ./
+COPY server/api/go.mod server/api/go.sum ./api/
+COPY server/platform/go.mod server/platform/go.sum ./platform/
+COPY server/services/auth/go.mod server/services/auth/go.sum ./services/auth/
+COPY server/services/farm/go.mod server/services/farm/go.sum ./services/farm/
+COPY server/services/gateway/go.mod server/services/gateway/go.sum ./services/gateway/
+COPY server/services/social/go.mod server/services/social/go.sum ./services/social/
+COPY server/services/worker/go.mod server/services/worker/go.sum ./services/worker/
+COPY server/tools/go.mod server/tools/go.sum ./tools/
+RUN go work sync && go mod download all
 COPY server/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/farm-server ./cmd/farm-server
+RUN test -n "$SERVICE" \
+  && CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/service "./services/${SERVICE}/cmd/${SERVICE}"
 
 FROM debian:bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /out/farm-server /app/farm-server
-COPY deploy/route-table.example.json /app/deploy/route-table.example.json
-EXPOSE 9100 9101 9200 9201
-ENTRYPOINT ["/app/farm-server"]
+COPY --from=build /out/service /app/service
+COPY deploy/route-table.local.json /app/deploy/route-table.local.json
+EXPOSE 9002 9003 9004 9005 9100
+ENTRYPOINT ["/app/service"]

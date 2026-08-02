@@ -1,0 +1,6 @@
+# 数据库迁移是一次性任务：每次 compose 启动都会检查版本表，已执行版本会自动跳过。
+FROM mysql:8.4
+COPY server/migrations /migrations
+COPY deploy/run-migrations.sh /usr/local/bin/run-migrations
+RUN chmod +x /usr/local/bin/run-migrations
+ENTRYPOINT ["/usr/local/bin/run-migrations"]
