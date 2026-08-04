@@ -49,6 +49,28 @@ test('GROWING 有效作物仍按 stageOf 计算阶段（不改变有效 crop 显
   assert.ok(info.stage >= 0 && info.stage < info.totalStages)
 })
 
+test('MATURE 作物使用独立成熟阶段并保留负面状态显示', () => {
+  const plot = makePlot(0)
+  plot.state = PLOT.MATURE
+  plot.cropId = 'bailuobo'
+  plot.plantTime = 1_000
+  plot.seasonMs = 10_000
+  plot.matureTime = 11_000
+  plot.waterUntil = 10_000
+  plot.weedSince = 9_000
+  plot.pestSince = 9_500
+
+  const info = computePlotInfo(plot, { unlocked: true, index: 0, now: 12_000 })
+  assert.equal(info.stage, info.totalStages)
+  assert.equal(info.dry, true)
+  assert.equal(info.weed, true)
+  assert.equal(info.pest, true)
+
+  plot.waterUntil = 12_000
+  const cared = computePlotInfo(plot, { unlocked: true, index: 0, now: 99_000 })
+  assert.equal(cared.dry, false, '成熟后补水不应随墙钟推进再次变干')
+})
+
 test('cropOf 对 crop_id=null 返回 undefined（确认根因入口）', () => {
   assert.equal(cropOf(makeWitheredPlot(null)), undefined)
 })
@@ -68,7 +90,7 @@ test('生长中健康度从服务端结算点继续按缺水、杂草和害虫�
   assert.equal(projectedHealthOf(plot, 11_000), 80)
 })
 
-test('成熟后健康度冻结，不再累计仍残留的不良状态', () => {
+test('成熟后保留负面状态但冻结健康度', () => {
   const plot = makePlot(0)
   plot.state = PLOT.MATURE
   plot.health = 68

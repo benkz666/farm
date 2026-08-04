@@ -26,6 +26,48 @@ export const plotPos = (id) => ({
   z: ((ROWS - 1) / 2 - Math.floor(id / COLS)) * GAP,   // 初始地块靠近相机，扩地向远处延伸
 });
 
+// 成熟提示采用围绕作物上浮的金色闪耀与星芒，不再用覆盖整块土地的高亮圆环。
+function createMatureEffect(plotIndex) {
+  const effect = new THREE.Group();
+  const motes = [];
+  const palette = [0xffc83d, 0xffe681, 0xfff2b2, 0xffd45c];
+  for (let i = 0; i < 5; i++) {
+    const mote = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.11 + (i % 3) * 0.02, 0),
+      new THREE.MeshBasicMaterial({
+        color: palette[i % palette.length],
+        transparent: true,
+        opacity: 0.94,
+        depthWrite: false,
+      }),
+    );
+    mote.scale.set(0.6, 1.35, 0.6);
+    mote.userData.phase = plotIndex * 0.71 + i * (Math.PI * 2 / 5);
+    mote.userData.radius = 0.7 + (i % 3) * 0.2;
+    mote.userData.height = 0.95 + (i % 4) * 0.3;
+    mote.userData.speed = 0.55 + (i % 3) * 0.1;
+    effect.add(mote);
+    motes.push(mote);
+  }
+  const flare = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.22, 0),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe797,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    }),
+  );
+  flare.scale.set(0.46, 1.9, 0.46);
+  flare.position.y = 1.55;
+  flare.userData.phase = plotIndex * 0.71;
+  effect.add(flare);
+  effect.userData.motes = motes;
+  effect.userData.flare = flare;
+  effect.visible = false;
+  return effect;
+}
+
 // 日夜关键色
 const SKY = [
   { t: 0.00, sky: 0x1b2a4a, sun: 0x93a8e8, sunI: 0.55, hemi: 0.5 },  // 午夜
@@ -414,16 +456,9 @@ export class FarmScene {
       g.add(ring);
       g.userData.ring = ring;
 
-      // 成熟光环
-      const halo = new THREE.Mesh(
-        new THREE.TorusGeometry(1.9, 0.07, 6, 32),
-        new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.85 })
-      );
-      halo.rotation.x = -Math.PI / 2;
-      halo.position.y = 0.27;
-      halo.visible = false;
-      g.add(halo);
-      g.userData.halo = halo;
+      const matureFx = createMatureEffect(i);
+      g.add(matureFx);
+      g.userData.matureFx = matureFx;
 
       // 内容容器（作物/杂草/害虫等）
       const content = new THREE.Group();
@@ -484,7 +519,7 @@ export class FarmScene {
       u.rim.material = mat(0x5f864f);
       u.furrows.visible = false;
       clearAndDispose(u.content, disposeOpts);
-      u.halo.visible = false;
+      u.matureFx.visible = false;
       return;
     }
     // 土壤颜色：荒地浅 / 已翻深 / 缺水更浅；未知状态不伪装成可操作土地。
@@ -505,7 +540,7 @@ export class FarmScene {
 
     // 内容重建
     clearAndDispose(u.content, disposeOpts);
-    u.halo.visible = false;
+    u.matureFx.visible = false;
     if (info.state === PLOT.GROWING || info.state === PLOT.MATURE) {
       const crop = createCropModel(info.cropDef, {
         stage: info.stage, totalStages: info.totalStages, mature: info.state === PLOT.MATURE,
@@ -516,7 +551,7 @@ export class FarmScene {
       if (info.weed) { const w2 = createWeedModel(); w2.position.set(-1.0, 0, -0.8); w2.scale.setScalar(0.7); u.content.add(w2); }
       if (info.pest) { const p = createPestModel(); p.position.y = 1.0; u.content.add(p); u.pestGroup = p; }
       else u.pestGroup = null;
-      if (info.state === PLOT.MATURE) u.halo.visible = true;
+      if (info.state === PLOT.MATURE) u.matureFx.visible = true;
     } else if (info.state === PLOT.WITHERED) {
       if (info.cropDef) {
         const dead = createCropModel(info.cropDef, { stage: 2, totalStages: 3, mature: true, withered: true });
@@ -687,12 +722,27 @@ export class FarmScene {
       if (this.dogGroup && this.dogBehavior) {
         this.dogBehavior.update(this.dogGroup, dt, t, this.dogGroup.userData.hungry);
       }
-      // 成熟光环呼吸 + 害虫环绕 + 作物摇摆
+      // 成熟花粉光点环绕 + 害虫环绕 + 作物摇摆
       for (const g of this.plotGroups) {
         const u = g.userData;
-        if (u.halo.visible) {
-          u.halo.scale.setScalar(1 + Math.sin(t * 3 + g.position.x) * 0.08);
-          u.halo.material.opacity = 0.65 + Math.sin(t * 3) * 0.2;
+        if (u.matureFx.visible) {
+          for (const mote of u.matureFx.userData.motes) {
+            const phase = mote.userData.phase + t * mote.userData.speed;
+            const breathe = 0.82 + Math.sin(t * 2.8 + mote.userData.phase) * 0.25;
+            mote.position.set(
+              Math.cos(phase) * mote.userData.radius,
+              mote.userData.height + Math.sin(t * 1.9 + mote.userData.phase) * 0.26,
+              Math.sin(phase) * mote.userData.radius,
+            );
+            mote.rotation.y = phase;
+            mote.scale.set(0.6 * breathe, 1.35 * breathe, 0.6 * breathe);
+            mote.material.opacity = 0.66 + breathe * 0.28;
+          }
+          const flare = u.matureFx.userData.flare;
+          const flarePulse = 0.8 + Math.sin(t * 3.2 + flare.userData.phase) * 0.25;
+          flare.rotation.y = t * 1.4 + flare.userData.phase;
+          flare.scale.set(0.46 * flarePulse, 1.9 * flarePulse, 0.46 * flarePulse);
+          flare.material.opacity = 0.68 + flarePulse * 0.22;
         }
         if (u.pestGroup) {
           u.pestGroup.children.forEach((bug, i) => {

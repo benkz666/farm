@@ -23,29 +23,6 @@ services:
       timeout: 3s
       retries: 20
 
-  kafka:
-    image: apache/kafka:3.9.0
-    ports: ["9094:9094"]
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:29093,PLAINTEXT_HOST://:9094
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   migrate:
     profiles: ["app"]
     build:
@@ -60,12 +37,12 @@ services:
       FARM_MYSQL_DATABASE: farm
     restart: "no"
 
-  auth:
+  social:
     profiles: ["app"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
-      args: {SERVICE: auth}
+      args: {PACKAGE: ./cmd/socialsvr}
     depends_on: &storage-dependencies
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -75,91 +52,62 @@ services:
       FARM_MYSQL_DSN: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
       FARM_REDIS_ADDR: redis:6379
       FARM_INTERNAL_TOKEN: dev-only-internal-token-change-me
-    ports: ["9003:9003"]
-
-  social:
-    profiles: ["app"]
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.server
-      args: {SERVICE: social}
-    depends_on: *storage-dependencies
-    environment:
-      <<: *common-environment
-      FARM_SOCIAL_HTTP_ADDR: ":9004"
-    ports: ["9004:9004"]
-
-  worker:
-    profiles: ["app"]
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.server
-      args: {SERVICE: worker}
-    depends_on: *storage-dependencies
-    environment:
-      <<: *common-environment
-      FARM_WORKER_HTTP_ADDR: ":9005"
-    ports: ["9005:9005"]
+      FARM_SOCIAL_ADMIN_ADDR: ":9304"
+    ports: ["9004:9004", "9204:9204", "9304:9304"]
 
   farm:
     profiles: ["app"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
-      args: {SERVICE: farm}
+      args: {PACKAGE: ./cmd/farmsvr}
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      kafka: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
-      worker: {condition: service_started}
     environment:
       <<: *common-environment
       FARM_FARM_HTTP_ADDR: ":9100"
       FARM_FARM_INSTANCE_ID: farm-0
       FARM_ROUTE_TABLE: deploy/route-table.local.json
-      FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway:9002"}'
-      FARM_SOCIAL_URL: http://social:9004
-      FARM_WORKER_URL: http://worker:9005
-      FARM_BUS: kafka
-      FARM_KAFKA_BROKERS: kafka:9092
+      FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-0":"gateway:9202"}'
+      FARM_SOCIAL_GRPC_TARGET: social:9204
+      FARM_FARM_GRPC_ADDR: ":9210"
+      FARM_FARM_ADMIN_ADDR: ":9310"
+      FARM_GATEWAY_GRPC_ADDR: ":9202"
+      FARM_SOCIAL_GRPC_ADDR: ":9204"
       FARM_HAZARD_SECRET: dev-only-hazard-secret
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
-    ports: ["9100:9100"]
+    ports: ["9100:9100", "9210:9210", "9310:9310"]
 
   gateway:
     profiles: ["app"]
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
-      args: {SERVICE: gateway}
+      args: {PACKAGE: ./cmd/gateway}
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      kafka: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
-      auth: {condition: service_started}
       social: {condition: service_started}
-      worker: {condition: service_started}
       farm: {condition: service_started}
     environment:
       <<: *common-environment
       FARM_GATEWAY_HTTP_ADDR: ":9002"
       FARM_GATEWAY_INSTANCE_ID: gateway-0
       FARM_ROUTE_TABLE: deploy/route-table.local.json
-      FARM_AUTH_URL: http://auth:9003
-      FARM_SOCIAL_URL: http://social:9004
-      FARM_WORKER_URL: http://worker:9005
-      FARM_FARM_URLS: '{"farm-0":"http://farm:9100"}'
-      FARM_GATEWAY_URLS: '{"gateway-0":"http://gateway:9002"}'
-      FARM_BUS: kafka
-      FARM_KAFKA_BROKERS: kafka:9092
+      FARM_SOCIAL_GRPC_TARGET: social:9204
+      FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-0":"gateway:9202"}'
+      FARM_GATEWAY_ADMIN_ADDR: ":9302"
       FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
-    ports: ["9002:9002"]
+    ports: ["9002:9002", "9202:9202", "9302:9302"]
 
   web:
     profiles: ["app"]

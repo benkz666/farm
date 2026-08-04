@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "gen/farm/v1;farmv1";
+
+// ConnRef identifies a WebSocket connection on a specific Gateway instance.
+message ConnRef {
+  uint64 conn_id = 1;
+  string gateway_id = 2;
+}
+
+// Empty is used for RPCs with no request or response payload.
+message Empty {}
+
+// BusinessError carries a protocol error code in the farm command response path.
+// Social RPCs map store/protocol errors to gRPC status instead.
+message BusinessError {
+  // Protocol error code aligned with docs/design/protocol.md §4.
+  int32 code = 1;
+}

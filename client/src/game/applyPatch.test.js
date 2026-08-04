@@ -96,6 +96,31 @@ test('FRIEND 农场快照只投影地块，不覆盖访客自己的金币/经验
   assert.equal(state.plots[0].state, PLOT.TILLED)
 })
 
+test('FRIEND 农场快照和增量只同步看门狗的公开状态', () => {
+  const state = defaultState()
+
+  applyPatch(
+    state,
+    {
+      snapshot: {
+        owner_uid: 99,
+        unlocked_plots: 6,
+        plots: [],
+        guard_dog: { active_dog: 2, bowl_empty_at: 12_345 },
+      },
+    },
+    { farmViewOnly: true },
+  )
+  assert.deepEqual(state.visitingGuardDog, { dogType: 2, bowlEmptyAt: 12_345 })
+
+  applyFarmDelta(state, {
+    owner_uid: 99,
+    farm_seq: 8,
+    guard_dog: { active_dog: 0, bowl_empty_at: 0 },
+  })
+  assert.equal(state.visitingGuardDog, null)
+})
+
 test('SELF 农场快照仍权威覆盖金币', () => {
   const state = defaultState()
   state.gold = 1

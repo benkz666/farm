@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "gen/farm/v1;farmv1";
+
+import "farm/internal/v1/common.proto";
+
+// CrossFarmService routes owner adjudication and visitor settlement across Farm
+// instances. Gateway may call Apply directly; owner outbox may call Deliver.
+service CrossFarmService {
+  rpc ApplyCrossAction(ApplyCrossActionRequest) returns (ApplyCrossActionResponse);
+  rpc DeliverCrossResult(DeliverCrossResultRequest) returns (DeliverCrossResultResponse);
+  // Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
+  rpc AcknowledgeCrossResult(AcknowledgeCrossResultRequest) returns (Empty);
+}
+
+enum CrossActionKind {
+  CROSS_ACTION_KIND_UNSPECIFIED = 0;
+  CROSS_ACTION_KIND_WATER = 1;
+  CROSS_ACTION_KIND_REMOVE_WEED = 2;
+  CROSS_ACTION_KIND_REMOVE_PEST = 3;
+  CROSS_ACTION_KIND_STEAL = 4;
+}
+
+message CrossAction {
+  uint64 req_id = 1;
+  CrossActionKind kind = 2;
+  uint64 visitor_uid = 3;
+  uint64 owner_uid = 4;
+  uint32 plot_index = 5;
+  uint32 crop_id = 6;
+  int64 compensation = 7;
+}
+
+message CrossResult {
+  uint64 req_id = 1;
+  uint64 visitor_uid = 2;
+  uint64 owner_uid = 3;
+  int32 code = 4;
+  uint32 crop_id = 5;
+  uint32 amount = 6;
+  int64 compensation = 7;
+  uint32 dog_type = 8;
+}
+
+message VisitorReward {
+  uint64 req_id = 1;
+  uint32 exp_gained = 2;
+  int64 coin_gained = 3;
+  uint32 crop_id = 4;
+  uint32 amount = 5;
+  int64 compensation = 6;
+  uint32 dog_type = 7;
+}
+
+message ApplyCrossActionRequest {
+  CrossAction action = 1;
+}
+
+message ApplyCrossActionResponse {
+  CrossResult result = 1;
+}
+
+message DeliverCrossResultRequest {
+  CrossResult result = 1;
+}
+
+message DeliverCrossResultResponse {
+  VisitorReward reward = 1;
+  // JSON-encoded farm.PlayerDelta when settlement changed visitor state.
+  bytes player_delta_json = 2;
+  // Protocol-level settlement code; 0 means success.
+  int32 err = 3;
+}
+
+message AcknowledgeCrossResultRequest {
+  uint64 owner_uid = 1;
+  uint64 visitor_uid = 2;
+  uint64 req_id = 3;
+}

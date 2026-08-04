@@ -136,22 +136,71 @@ export class UI {
     this.lastHUDSignature = null;
   }
 
-  showSubBar(items, activeId, onPick) {
+  showSubBar(items, activeId, onPick, options = {}) {
     const bar = $('#sub-bar');
-    if (!items) { bar.classList.add('hidden'); bar.innerHTML = ''; return; }
+    if (!items) {
+      bar.classList.add('hidden');
+      bar.classList.remove('compact');
+      bar.innerHTML = '';
+      return;
+    }
+    const previousList = bar.querySelector('.sub-list');
+    const previousScrollLeft = previousList?.scrollLeft || 0;
     bar.classList.remove('hidden');
-    bar.innerHTML = '';
+    bar.classList.toggle('compact', options.compact === true);
+    bar.innerHTML = '<div class="sub-list"></div>';
+    const list = bar.querySelector('.sub-list');
+    let pointerStartX = null;
+    let suppressClick = false;
+    list.addEventListener('pointerdown', (event) => {
+      pointerStartX = event.clientX;
+      suppressClick = false;
+    });
+    list.addEventListener('pointermove', (event) => {
+      if (pointerStartX != null && Math.abs(event.clientX - pointerStartX) > 8) {
+        suppressClick = true;
+      }
+    });
+    list.addEventListener('pointercancel', () => {
+      pointerStartX = null;
+      suppressClick = false;
+    });
+    list.addEventListener('click', (event) => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClick = false;
+      pointerStartX = null;
+    }, true);
     if (!items.length) {
-      bar.innerHTML = `<div style="padding:4px 12px;font-size:13px;color:var(--ink-soft);font-weight:700;">暂无可用道具，请先去商店购买</div>`;
+      list.innerHTML = `
+        <div class="sub-empty">
+          <span class="sub-empty-icon" aria-hidden="true">🧺</span>
+          <span>暂无可用种子，请先去商店补充</span>
+        </div>
+      `;
       return;
     }
     for (const it of items) {
-      const el = document.createElement('div');
-      el.className = 'sub-item' + (it.id === activeId ? ' active' : '') + (it.count <= 0 ? ' disabled' : '');
-      el.innerHTML = `${it.badge || `<span style="font-size:22px">${it.icon || ''}</span>`}<div><div style="font-weight:800;font-size:13px">${it.name}</div><div class="cnt">×${it.count}</div></div>`;
-      if (it.count > 0) el.onclick = () => onPick(it.id);
-      bar.appendChild(el);
+      const count = Number(it.count) || 0;
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'sub-item' + (it.id === activeId ? ' active' : '') + (count <= 0 ? ' disabled' : '');
+      el.disabled = count <= 0;
+      el.setAttribute('aria-pressed', String(it.id === activeId));
+      el.setAttribute('aria-label', `${it.name}，库存 ${exactIntegerText(count)}`);
+      el.innerHTML = `
+        <span class="sub-item-art">${it.badge || `<span class="sub-item-icon" aria-hidden="true">${it.icon || '🌱'}</span>`}</span>
+        <span class="sub-item-copy">
+          <strong>${it.name}</strong>
+          <span class="cnt">库存 ×${exactIntegerText(count)}</span>
+        </span>
+        ${it.id === activeId ? '<span class="sub-item-check" aria-hidden="true">✓</span>' : ''}
+      `;
+      if (count > 0) el.onclick = () => onPick(it.id);
+      list.appendChild(el);
     }
+    list.scrollLeft = previousScrollLeft;
   }
 
   // ---------------- 提示 ----------------
@@ -636,7 +685,7 @@ export class UI {
 
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
-    for (const grams of [10, 50, 120]) {
+    for (const grams of [10, 50, 100, 200]) {
       const btn = document.createElement('button');
       btn.className = 'act-btn';
       btn.textContent = `喂 ${grams}g`;

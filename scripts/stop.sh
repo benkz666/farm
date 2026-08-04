@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 停止 scripts/run.sh 启动的五个后端服务与 Vite；默认保留基础设施容器。
+# 停止 scripts/run.sh 启动的三个 Go 热重载器与 Vite；默认保留基础设施容器。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -19,14 +19,17 @@ stop_pid_file() {
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
     info "停止 ${label} (pid ${pid})"
     kill "$pid" 2>/dev/null || true
-    sleep 0.5
+    for _ in {1..20}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.2
+    done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
   fi
   rm -f "$pid_file"
 }
 
 stop_pid_file "$RUN_DIR/vite.pid" "Vite"
-for service in gateway farm worker social auth; do
+for service in gateway farm social; do
   stop_pid_file "$RUN_DIR/${service}.pid" "$service"
 done
 
@@ -35,4 +38,4 @@ if [[ "${1:-}" == "--compose" ]] || [[ "${1:-}" == "-c" ]]; then
   docker compose -f "$ROOT/deploy/compose.yml" --profile app down
 fi
 
-info "已关闭；如需同时关闭 MySQL/Redis/Kafka，请使用 ./scripts/stop.sh --compose"
+info "已关闭；如需同时关闭 MySQL/Redis，请使用 ./scripts/stop.sh --compose"

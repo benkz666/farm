@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "gen/farm/v1;farmv1";
+
+import "farm/internal/v1/common.proto";
+
+// DebugService fans dev-only time controls across Farm and Gateway peers.
+service DebugService {
+  rpc Advance(AdvanceRequest) returns (AdvanceResponse);
+  rpc SetTimeProfile(SetTimeProfileRequest) returns (SetTimeProfileResponse);
+}
+
+message AdvanceRequest {
+  int64 ms = 1;
+}
+
+message AdvanceResponse {
+  int64 server_time = 1;
+}
+
+message SetTimeProfileRequest {
+  string time_profile = 1;
+}
+
+message SetTimeProfileResponse {
+  string time_profile = 1;
+}

@@ -225,6 +225,15 @@ function applyFullSnapshot(state, snap, opts = {}) {
     if (snap.warehouse) {
       state.warehouse = warehouseFromServer(snap.warehouse)
     }
+  } else {
+    const guardDog = snap.guard_dog
+    const dogType = Math.max(0, Math.floor(Number(guardDog?.active_dog) || 0))
+    state.visitingGuardDog = dogType > 0
+      ? {
+          dogType,
+          bowlEmptyAt: Math.max(0, Number(guardDog?.bowl_empty_at) || 0),
+        }
+      : null
   }
 
   if (typeof snap.unlocked_plots === 'number') state.unlockedPlots = snap.unlocked_plots
@@ -289,8 +298,17 @@ function applyActionPatch(state, patch) {
  * @returns {object} state
  */
 export function applyFarmDelta(state, delta) {
-  if (!state || !Array.isArray(delta?.plots)) return state
-  applyFullSnapshot(state, { plots: delta.plots })
+  if (!state || !delta || typeof delta !== 'object') return state
+  if (Array.isArray(delta.plots)) applyFullSnapshot(state, { plots: delta.plots })
+  if (Object.hasOwn(delta, 'guard_dog')) {
+    const dogType = Math.max(0, Math.floor(Number(delta.guard_dog?.active_dog) || 0))
+    state.visitingGuardDog = dogType > 0
+      ? {
+          dogType,
+          bowlEmptyAt: Math.max(0, Number(delta.guard_dog?.bowl_empty_at) || 0),
+        }
+      : null
+  }
   return state
 }
 
@@ -329,7 +347,7 @@ export function applyPatch(state, source, opts = {}) {
     applyActionPatch(state, source.patch)
     return state
   }
-  if (Array.isArray(source.plots)) {
+  if (Array.isArray(source.plots) || Object.hasOwn(source, 'guard_dog')) {
     applyFarmDelta(state, source)
     return state
   }

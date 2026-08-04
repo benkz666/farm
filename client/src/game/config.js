@@ -60,7 +60,7 @@ export const PEST_CHANCE = 0.10;            // 单窗口生虫概率
 // ---- 偷菜与守卫（18.4）----
 export const STEAL_CAP_RATIO = 0.40;        // 被偷上限 = 实际产量 40%
 export const STEAL_MIN = 1, STEAL_MAX = 10; // 单次偷取 1-10 随机
-export const DOG_BOWL_CAP = 120;            // 狗盆容量 g
+export const DOG_BOWL_CAP = 200;            // 狗盆容量 g
 export const DOG_FOOD_PRICE = 1;            // 狗粮 1 金币/g
 export const CATCH_PENALTY_MULT = 10;       // 被抓赔付 = 果实单价 × 10
 export const DOG_MAX_LEVEL = 5;

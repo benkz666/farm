@@ -13,6 +13,7 @@ export const cropOf = (plot) => CROP_MAP[plot.cropId];
 export function stageOf(plot, now) {
   const crop = cropOf(plot);
   const total = stageCount(crop);
+  if (plot.state === PLOT.MATURE) return { stage: total, total };
   const progress = Math.max(0, Math.min(0.9999, (now - plot.plantTime) / plot.seasonMs));
   return { stage: Math.floor(progress * total), total };
 }
@@ -77,9 +78,10 @@ export function computePlotInfo(plot, { unlocked, index, now }) {
     info.cropDef = crop;
     info.stage = stage;
     info.totalStages = total;
-    info.dry = plot.state === PLOT.GROWING && now > plot.waterUntil;
-    info.weed = !!plot.weedSince && plot.state === PLOT.GROWING;
-    info.pest = !!plot.pestSince && plot.state === PLOT.GROWING;
+    const moistureAt = plot.state === PLOT.MATURE ? plot.matureTime : now;
+    info.dry = moistureAt > plot.waterUntil;
+    info.weed = !!plot.weedSince;
+    info.pest = !!plot.pestSince;
   } else if (plot.state === PLOT.WITHERED) {
     // 服务端使地块枯萎时会清空 crop_id（crop_id=0 → applyPatch 映射为 null）。
     // 此时无作物定义：不调用 stageOf（会因 stageCount(undefined) 崩溃），

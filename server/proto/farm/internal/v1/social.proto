@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "gen/farm/v1;farmv1";
+
+import "farm/internal/v1/common.proto";
+
+// SocialService is the typed friendship boundary between Gateway/Farm and Social.
+service SocialService {
+  rpc AreFriends(AreFriendsRequest) returns (AreFriendsResponse);
+  rpc AddFriends(PairRequest) returns (Empty);
+  rpc RemoveFriends(PairRequest) returns (Empty);
+  rpc ListFriends(UidRequest) returns (ListFriendsResponse);
+  rpc CountFriends(UidRequest) returns (CountFriendsResponse);
+  rpc FindUser(FindUserRequest) returns (Friend);
+  rpc CreateFriendRequest(PairRequest) returns (Empty);
+  rpc ListIncomingFriendRequests(UidRequest) returns (ListFriendRequestsResponse);
+  rpc AcceptFriendRequest(PairRequest) returns (Empty);
+  rpc RejectFriendRequest(PairRequest) returns (Empty);
+
+  // Reserved for future cache invalidation; not implemented in P3.
+  rpc WatchFriendInvalidations(UidRequest) returns (stream FriendInvalidation);
+}
+
+message PairRequest {
+  uint64 uid = 1;
+  uint64 peer_uid = 2;
+}
+
+message UidRequest {
+  uint64 uid = 1;
+}
+
+message AreFriendsRequest {
+  uint64 uid = 1;
+  uint64 peer_uid = 2;
+}
+
+message AreFriendsResponse {
+  bool value = 1;
+}
+
+message Friend {
+  uint64 uid = 1;
+  string nickname = 2;
+}
+
+message ListFriendsResponse {
+  repeated Friend friends = 1;
+}
+
+message CountFriendsResponse {
+  int32 count = 1;
+}
+
+message FindUserRequest {
+  string username = 1;
+}
+
+message FriendRequest {
+  uint64 from_uid = 1;
+  string nickname = 2;
+  int64 created_at = 3;
+}
+
+message ListFriendRequestsResponse {
+  repeated FriendRequest requests = 1;
+}
+
+message FriendInvalidation {
+  uint64 uid = 1;
+  uint64 peer_uid = 2;
+}

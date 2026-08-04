@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 本地一键启动：基础设施 → 数据库迁移 → 五个独立后端服务 → Vite。
+# 本地开发一键启动：基础设施 → 迁移 → 三个 Go 热重载服务 → Vite HMR。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -7,7 +7,7 @@ cd "$ROOT"
 
 if [[ $# -ne 0 ]]; then
   printf 'usage: %s\n' "$0" >&2
-  printf '当前只保留五服务模式，不再接受 all/shards 参数。\n' >&2
+  printf '当前只保留三服务模式，不再接受 all/shards 参数。\n' >&2
   exit 2
 fi
 
@@ -17,10 +17,11 @@ mkdir -p "$LOG_DIR"
 
 VITE_PORT=9001
 GATEWAY_PORT=9002
-AUTH_PORT=9003
 SOCIAL_PORT=9004
-WORKER_PORT=9005
 FARM_PORT=9100
+GATEWAY_GRPC_PORT=9202
+SOCIAL_GRPC_PORT=9204
+FARM_GRPC_PORT=9210
 
 MYSQL_HOST="${FARM_MYSQL_HOST:-127.0.0.1}"
 MYSQL_USER="${FARM_MYSQL_USER:-farm}"
@@ -151,25 +152,37 @@ ensure_dependencies() {
   else
     info "前端依赖已就绪"
   fi
-  info "同步 Go 工作区依赖"
-  (cd server && go work sync)
+  info "同步 Go 模块依赖"
+  (cd server && go mod download)
 }
 
 start_service() {
   local service="$1"
-  local package="./services/${service}/cmd/${service}"
+  local pkg=""
+  case "$service" in
+    gateway) pkg="./cmd/gateway" ;;
+    farm) pkg="./cmd/farmsvr" ;;
+    social) pkg="./cmd/socialsvr" ;;
+    *) die "unknown service: ${service}" ;;
+  esac
   local log_file="$LOG_DIR/${service}.log"
   local pid_file="$RUN_DIR/${service}.pid"
   info "启动 ${service}"
+  : >"$log_file"
   (
     load_env
-    cd "$ROOT/server"
-    exec go run "$package"
-  ) >"$log_file" 2>&1 &
-  echo $! >"$pid_file"
+    exec python3 "$ROOT/scripts/spawn-detached.py" \
+      --cwd "$ROOT" \
+      --log-file "$log_file" \
+      --pid-file "$pid_file" \
+      -- python3 "$ROOT/scripts/watch-go.py" \
+        --root "$ROOT/server" \
+        --package "$pkg" \
+        --label "$service"
+  ) >/dev/null
 }
 
-for command in docker go node npm curl lsof find sort; do
+for command in docker go node npm python3 curl lsof find sort; do
   need_cmd "$command"
 done
 
@@ -179,18 +192,23 @@ if [[ ! -f .env ]]; then
 fi
 load_env
 
-for service in gateway auth social worker farm; do
+# compose 应用容器会占用同一组端口。开发模式只保留 MySQL/Redis，
+# 后端与前端均直接从工作区启动，代码保存后无需重新 build/deploy。
+info "停止可能占用开发端口的 compose 应用容器"
+docker compose -f deploy/compose.yml --profile app stop web gateway farm social >/dev/null 2>&1 || true
+
+for service in gateway social farm; do
   stop_pid_file "$RUN_DIR/${service}.pid" "$service"
 done
 stop_pid_file "$RUN_DIR/vite.pid" "Vite"
-for port in "$VITE_PORT" "$GATEWAY_PORT" "$AUTH_PORT" "$SOCIAL_PORT" "$WORKER_PORT" "$FARM_PORT"; do
+for port in "$VITE_PORT" "$GATEWAY_PORT" "$GATEWAY_GRPC_PORT" "$SOCIAL_PORT" "$SOCIAL_GRPC_PORT" "$FARM_PORT" "$FARM_GRPC_PORT"; do
   kill_port "$port"
 done
 
 ensure_dependencies
 
-info "启动 MySQL + Redis + Kafka"
-docker compose -f deploy/compose.yml up -d mysql redis kafka
+info "启动 MySQL + Redis"
+docker compose -f deploy/compose.yml up -d mysql redis
 info "等待 MySQL healthy"
 for attempt in $(seq 1 60); do
   mysql_admin ping --silent >/dev/null 2>&1 && break
@@ -200,37 +218,38 @@ done
 run_migrations
 
 # 下游服务先就绪，Gateway 最后接收外部流量。
-start_service auth
 start_service social
-start_service worker
-wait_http "http://127.0.0.1:${AUTH_PORT}/internal/v1/rpc" "401" "auth" POST
-wait_http "http://127.0.0.1:${SOCIAL_PORT}/internal/v1/rpc" "401" "social" POST
-wait_http "http://127.0.0.1:${WORKER_PORT}/internal/v1/rpc" "401" "worker" POST
+wait_http "http://127.0.0.1:9304/readyz" "200" "social"
 
 start_service farm
-wait_http "http://127.0.0.1:${FARM_PORT}/internal/v1/cmd" "401" "farm" POST
+wait_http "http://127.0.0.1:9310/readyz" "200" "farm"
 start_service gateway
 wait_http "http://127.0.0.1:${GATEWAY_PORT}/api/login" "400" "gateway" POST
 
 info "启动 Vite"
+: >"$LOG_DIR/vite.log"
 (
-  cd "$ROOT/client"
   export FARM_GATEWAY_URL="http://127.0.0.1:${GATEWAY_PORT}"
-  exec npm run dev -- --host 0.0.0.0 --port "$VITE_PORT" --strictPort
-) >"$LOG_DIR/vite.log" 2>&1 &
-echo $! >"$RUN_DIR/vite.pid"
+  exec python3 "$ROOT/scripts/spawn-detached.py" \
+    --cwd "$ROOT/client" \
+    --log-file "$LOG_DIR/vite.log" \
+    --pid-file "$RUN_DIR/vite.pid" \
+    -- npm run dev -- --host 0.0.0.0 --port "$VITE_PORT" --strictPort
+) >/dev/null
 wait_http "http://127.0.0.1:${VITE_PORT}/" "200" "vite"
 
 cat <<EOF
 
-启动完成（五服务模式）。
+启动完成（源码热重载开发模式）。
 
   前端:    http://127.0.0.1:${VITE_PORT}/
   Gateway: http://127.0.0.1:${GATEWAY_PORT}/
-  Auth:    http://127.0.0.1:${AUTH_PORT}/internal/v1/rpc
-  Social:  http://127.0.0.1:${SOCIAL_PORT}/internal/v1/rpc
-  Worker:  http://127.0.0.1:${WORKER_PORT}/internal/v1/rpc
-  Farm:    http://127.0.0.1:${FARM_PORT}/internal/v1/cmd
+  Social:  gRPC 127.0.0.1:${SOCIAL_GRPC_PORT}
+  Farm:    gRPC 127.0.0.1:${FARM_GRPC_PORT}
 
 日志目录: ${LOG_DIR}
+
+保存 client/src 下的文件会由 Vite HMR 立即更新；
+保存 server 下的 Go 文件会自动重新编译并重启三个后端服务。
+无需重新执行 docker compose build/up。
 EOF

@@ -27,7 +27,7 @@ export function makePlot(id) {
     stolenTotal: 0,       // 本轮成熟被偷总量
     stolenBy: [],         // 本轮已偷过的访客 id
     stealRound: 0,        // 成熟轮次
-    finalYield: 0,        // 服务端固化产量（成熟后）
+    finalYield: 0,        // 服务端在成熟瞬间固化的权威产量
   };
 }
 
@@ -51,6 +51,7 @@ export function defaultState() {
     dogBowl: 0,
     dogBowlEmptyAt: 0,
     dogMsPerGram: 0,
+    visitingGuardDog: null, // 好友农场公开状态：{ dogType, bowlEmptyAt }，不覆盖自己的宠物数据
     codex: [],            // 已解锁作物 id
     codexProgress: {},    // crop id -> { harvestCount, tier, nextTarget }
     mails: [],

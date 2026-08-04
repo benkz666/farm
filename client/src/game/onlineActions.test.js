@@ -23,8 +23,15 @@ test('偷菜只在成熟地块映射 Steal 命令', () => {
   assert.equal(plotCmdForTool('pest', PLOT.GROWING), CMD_REMOVE_PEST)
   assert.equal(plotCmdForTool('remove', PLOT.GROWING), CMD_CLEAR)
   assert.equal(plotCmdForTool('harvest', PLOT.MATURE), CMD_HARVEST)
-  assert.equal(plotCmdForTool('water', PLOT.MATURE), null)
-  assert.equal(plotCmdForTool('weed', PLOT.MATURE), null)
-  assert.equal(plotCmdForTool('pest', PLOT.MATURE), null)
+  assert.equal(plotCmdForTool('water', PLOT.MATURE), CMD_WATER)
+  assert.equal(plotCmdForTool('weed', PLOT.MATURE), CMD_REMOVE_WEED)
+  assert.equal(plotCmdForTool('pest', PLOT.MATURE), CMD_REMOVE_PEST)
   assert.equal(plotCmdForTool('remove', PLOT.MATURE), null)
+  assert.equal(plotCmdForTool('remove', PLOT.WITHERED), CMD_CLEAR)
+})
+
+test('铲除工具可以移除生长中的植物和枯萎植物', () => {
+  assert.equal(plotCmdForTool('remove', PLOT.GROWING), CMD_CLEAR)
+  assert.equal(plotCmdForTool('remove', PLOT.WITHERED), CMD_CLEAR)
+  assert.equal(plotCmdForTool('remove', PLOT.TILLED), null)
 })

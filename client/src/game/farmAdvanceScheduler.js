@@ -9,7 +9,7 @@ const RISK_WINDOWS = Math.round(1 / RISK_WINDOW);
 /**
  * 返回当前农场下一次需要服务端裁决的时刻。
  * 普通作物只需要在生长风险窗口或成熟点同步；
- * 成熟后永久保持可收获状态，不再安排时间边界。
+ * 成熟后健康度和产量冻结，不再安排时间边界。
  */
 export function nextFarmSyncAt(plots, now) {
   let next = Number.POSITIVE_INFINITY;

@@ -274,7 +274,34 @@ function refreshPlotPresentation() {
 
 // ---------------- 农事反馈 ----------------
 function fail(msg) { sfx.error(); ui.toast(msg, 'err'); }
+function warn(msg) { ui.toast(msg, 'warn'); }
 function ok(msg, type = 'ok') { ui.toast(msg, type); }
+
+// 服务端返回的业务拒绝是可预期的用户提示，不应伪装成系统异常。
+// 连接、超时、版本切换和未知错误仍保持红色，便于区分真正需要排查的问题。
+function isExpectedServerCode(code) {
+  const value = Number(code);
+  return (
+    (value >= 1201 && value <= 1605) ||
+    value === 1002 ||
+    value === 1003 ||
+    value === 1005 ||
+    value === 1101 ||
+    value === 1103 ||
+    value === 1104
+  );
+}
+
+function serverNotice(code, prefix = '') {
+  const message = `${prefix}${errText(code) || `操作失败（${code}）`}`;
+  if (isExpectedServerCode(code)) return warn(message);
+  return fail(message);
+}
+
+function serverNoticeText(code, message) {
+  if (isExpectedServerCode(code)) return warn(message);
+  return fail(message);
+}
 
 // ---------------- online 入口（登录页 authFlow / DEV 诊断） ----------------
 function reconnectRestoreDeps(client) {
@@ -356,7 +383,10 @@ function bindOnlineClient(client) {
     clearTimeout,
     now: farmNow,
     getPlots: () => state.plots,
-    isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid && !onlineBusy &&
+    // FarmMirror 以 ClientSeq 独立关联响应，农事同步可以和普通操作并发。
+    // 不能受 onlineBusy 阻断：进入农场/地块操作应用快照时 onlineBusy 仍为 true，
+    // 若此时丢掉成熟边界 timer，主人视图会停在旧阶段而访客进入时已看到新状态。
+    isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid &&
       (!isVisitingFriend() || document.visibilityState !== 'hidden'),
     getConsistencyIntervalMs: () => isVisitingFriend()
       ? FRIEND_FARM_CONSISTENCY_INTERVAL_MS
@@ -418,7 +448,7 @@ async function enterFarm(ownerUid, nickname = '') {
   try {
     const response = await netClient.enterFarm(ownerUid);
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return;
     }
     const snapshot = response.payload?.snapshot || {};
@@ -505,16 +535,16 @@ async function onPlotClickOnline(plotId) {
 
   if (!activeTool) return showPlotTip(plotId);
   if (isVisitingFriend() && !isVisitTool(activeTool)) {
-    return fail('好友农场仅可浇水、除草、除虫或偷菜');
+    return warn('好友农场仅可浇水、除草、除虫或偷菜');
   }
 
   const cmd = plotCmdForTool(activeTool, plot.state);
   if (cmd == null) {
-    if (activeTool === 'till') return fail('这块地不需要锄地');
-    if (activeTool === 'remove') return fail('这块地没有可铲除的作物');
-    if (activeTool === 'steal') return fail('这块地没有可偷的成熟作物');
-    if (plot.state === PLOT.MATURE && ['water', 'weed', 'pest', 'fert', 'remove'].includes(activeTool)) {
-      return fail('作物已成熟，本季照料已结算，请收获');
+    if (activeTool === 'till') return warn('这块地不需要锄地');
+    if (activeTool === 'remove') return warn('这块地没有可铲除的作物');
+    if (activeTool === 'steal') return warn('这块地没有可偷的成熟作物');
+    if (plot.state === PLOT.MATURE && ['fert', 'remove'].includes(activeTool)) {
+      return ui.toast('作物已成熟，不能再施肥或铲除；请收获或继续处理负面状态', 'info');
     }
     return showPlotTip(plotId);
   }
@@ -524,14 +554,18 @@ async function onPlotClickOnline(plotId) {
   let arg = 0;
   if (cmd === CMD_PLANT) {
     arg = cropKeyToId(selectedSeed);
-    if (!arg) return fail('请先选择种子');
+    if (!arg) return warn('请先选择种子');
   }
   if (cmd === CMD_FERTILIZE) {
     arg = fertilizerKeyToId(selectedFert);
-    if (!arg) return fail('请先选择化肥');
+    if (!arg) return warn('请先选择化肥');
   }
   if (activeTool === 'remove' && cmd === CMD_CLEAR) {
     arg = 1;
+    const message = plot.state === PLOT.WITHERED
+      ? '确定清理这株枯萎植物吗？清理后土地会变为已翻耕状态。'
+      : '确定铲除正在生长的植物吗？本季作物和投入不会返还。';
+    if (!confirm(message)) return;
   }
 
   onlineBusy = true;
@@ -549,7 +583,7 @@ async function onPlotClickOnline(plotId) {
       // 被狗拦截：有副作用（赔付），展示赔付金额；金币由 PlayerDelta 刷新
       const compensation = Number(rsp.payload?.compensation) || 0;
       sfx.dog();
-      fail(compensation > 0
+      warn(compensation > 0
         ? `被看家狗抓住了，赔付 💰${compensation}`
         : errText(rsp.err));
       ui.updateHUD(state);
@@ -562,7 +596,7 @@ async function onPlotClickOnline(plotId) {
         refreshPlotPresentation();
         refreshSubBar();
       }
-      fail(errText(rsp.err));
+      serverNotice(rsp.err);
       return;
     }
     applyResponsePatch(rsp.payload);
@@ -593,12 +627,12 @@ async function onPlotClickOnline(plotId) {
 async function onlineBuySeed(id) {
   if (onlineBusy || !netClient || isVisitingFriend()) return;
   const itemId = cropKeyToId(id);
-  if (!itemId) return fail('商品不存在');
+  if (!itemId) return warn('商品不存在');
   onlineBusy = true;
   try {
     const rsp = await netClient.buy(itemId, 1);
     if (rsp.err !== 0) {
-      fail(errText(rsp.err));
+      serverNotice(rsp.err);
       return;
     }
     applyResponsePatch(rsp.payload);
@@ -616,12 +650,12 @@ async function onlineBuySeed(id) {
 async function onlineBuyFertilizer(id) {
   if (onlineBusy || !netClient || isVisitingFriend()) return;
   const fertilizer = FERTILIZERS.find(item => item.id === id);
-  if (!fertilizer?.shopItemId) return fail('商品不存在');
+  if (!fertilizer?.shopItemId) return warn('商品不存在');
   onlineBusy = true;
   try {
     const rsp = await netClient.buy(fertilizer.shopItemId, 1);
     if (rsp.err !== 0) {
-      fail(errText(rsp.err));
+      serverNotice(rsp.err);
       return;
     }
     applyResponsePatch(rsp.payload);
@@ -637,9 +671,10 @@ async function onlineBuyFertilizer(id) {
 }
 
 async function onlineSell(id, n) {
-  if (onlineBusy || !netClient || isVisitingFriend()) return;
+  // 出售的是当前玩家自己的仓库，与正在查看的农场无关；拜访好友时也允许出售。
+  if (onlineBusy || !netClient) return;
   const itemId = cropKeyToId(id);
-  if (!itemId) return fail('该物品不可出售');
+  if (!itemId) return warn('该物品不可出售');
   const have = state.warehouse[id] || 0;
   const count = Math.min(n, have);
   if (count <= 0) return;
@@ -647,7 +682,7 @@ async function onlineSell(id, n) {
   try {
     const rsp = await netClient.sell(itemId, count);
     if (rsp.err !== 0) {
-      fail(errText(rsp.err));
+      serverNotice(rsp.err);
       return;
     }
     applyResponsePatch(rsp.payload);
@@ -663,18 +698,20 @@ async function onlineSell(id, n) {
 }
 
 async function onlineSellAll() {
-  if (onlineBusy || !netClient || isVisitingFriend()) return;
+  if (onlineBusy || !netClient) return;
   const entries = Object.entries(state.warehouse).filter(([, n]) => n > 0);
   if (!entries.length) return;
   onlineBusy = true;
   try {
     let sold = 0;
     let lastErrMsg = null;
+    let lastErrCode = null;
     for (const [id, n] of entries) {
       const itemId = cropKeyToId(id);
       if (!itemId) continue;
       const rsp = await netClient.sell(itemId, n);
       if (rsp.err !== 0) {
+        lastErrCode = rsp.err;
         lastErrMsg = errText(rsp.err);
         break;
       }
@@ -684,13 +721,13 @@ async function onlineSellAll() {
     if (sold > 0) {
       sfx.gold();
       if (lastErrMsg) {
-        ui.toast(`部分出售成功（${sold} 项），其余失败：${lastErrMsg}`, 'err');
+        serverNoticeText(lastErrCode, `部分出售成功（${sold} 项），其余失败：${lastErrMsg}`);
       } else {
         ui.toast('出售完成', 'gold');
       }
       ui.updateHUD(state);
     } else if (lastErrMsg) {
-      fail(lastErrMsg);
+      serverNoticeText(lastErrCode, lastErrMsg);
     }
   } catch (e) {
     fail(e instanceof Error ? e.message : String(e));
@@ -703,7 +740,7 @@ async function onlineSellAll() {
 function onPlotClick(plotId) {
   // 期 3：仅 online 意图；未登录不可种收（路由已挡 /farm，此处再兜底）
   if (!isOnline() || !netClient) {
-    fail('请先登录后再操作');
+    warn('请先登录后再操作');
     return;
   }
   void onPlotClickOnline(plotId);
@@ -718,7 +755,9 @@ function showPlotTip(plotId) {
     [PLOT.WASTELAND]: '选择 ⛏️ 锄地来翻整这块荒地',
     [PLOT.TILLED]: '选择 🌱 播种工具种下作物',
     [PLOT.GROWING]: '作物生长中，记得浇水除草除虫或铲除',
-    [PLOT.MATURE]: farm.isMe ? '选择 🧺 收获工具收取果实' : '选择 🥷 偷菜工具摘取果实',
+    [PLOT.MATURE]: farm.isMe
+      ? '作物已成熟；可收获，也要继续处理缺水、杂草和害虫'
+      : '作物已成熟；可偷菜，也可帮助好友继续照料',
     [PLOT.RESIDUE]: '选择 ⛏️ 清理残株后重新播种',
     [PLOT.WITHERED]: '作物已枯萎，选择 ⛏️ 清理',
     [PLOT.UNKNOWN]: '地块状态无法识别，请刷新游戏',
@@ -753,23 +792,25 @@ function tooltipHTML(plotId) {
       const c = cropOf(plot);
       const { stage, total } = stageOf(plot, now);
       const h = Math.round(projectedHealthOf(plot, now));
-      const dry = now > plot.waterUntil;
       const mature = plot.state === PLOT.MATURE;
+      const dry = (mature ? plot.matureTime : now) > plot.waterUntil;
       const yieldEst = mature ? plot.finalYield : actualYield(c, h);
       const cap = Math.floor(yieldEst * STEAL_CAP_RATIO);
+      const remaining = plot.matureTime - now;
       const phaseValue = mature
         ? '✨ 已成熟 · 可收获'
-        : `${stageName(c, stage)} · ⏳ ${fmtTime(plot.matureTime - now)}`;
+        : remaining <= 0
+          ? '⏳ 正在确认成熟'
+          : `${stageName(c, stage)} · ⏳ ${fmtTime(remaining)}`;
       let rows = `<div class="row"><span>第 ${plot.season + 1}/${c.seasons} 季</span><b class="${mature ? 'mature-value' : ''}">${phaseValue}</b></div>`;
       rows += `<div class="row"><span>${mature ? '成熟健康度' : '当前健康度'}</span><b>${h}</b></div><div class="bar"><i style="width:${h}%"></i></div>`;
       rows += `<div class="row"><span>${mature ? '最终产量' : '预计产量'}</span><b>${yieldEst}${plot.stolenTotal ? `（被偷 ${plot.stolenTotal}）` : ''}</b></div>`;
       let tags = '';
-      if (!mature) {
-        if (dry) tags += `<span class="tag dry">💧 缺水</span>`;
-        if (plot.weedSince) tags += `<span class="tag weed">🌿 杂草</span>`;
-        if (plot.pestSince) tags += `<span class="tag pest">🐛 害虫</span>`;
-      } else {
-        tags += `<span class="tag mature">🧺 本季照料已结算</span>`;
+      if (dry) tags += `<span class="tag dry">💧 缺水</span>`;
+      if (plot.weedSince) tags += `<span class="tag weed">🌿 杂草</span>`;
+      if (plot.pestSince) tags += `<span class="tag pest">🐛 害虫</span>`;
+      if (mature) {
+        tags += `<span class="tag mature">🧺 健康和产量已冻结</span>`;
         tags += `<span class="tag steal">🥷 可偷 ${Math.max(0, cap - plot.stolenTotal)}</span>`;
       }
       return `<h4><span>${c.name}</span><span class="stage">${c.hidden ? '✨' : ''}</span></h4>${rows}${tags ? `<div class="tags">${tags}</div>` : ''}`;
@@ -873,7 +914,7 @@ async function refreshTasks({ renderOpenTasks = true, force = false } = {}) {
   const result = taskRefreshResultFromOutcome(outcome);
 
   if (result.status === 'failure') {
-    if (result.err != null) fail(errText(result.err));
+    if (result.err != null) serverNotice(result.err);
     else if (result.error) fail(result.error instanceof Error ? result.error.message : String(result.error));
   }
 
@@ -888,7 +929,7 @@ async function refreshMails() {
   try {
     const response = await netClient.mailList();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     state.mails = mapServerMails(response.payload?.mails);
@@ -905,7 +946,7 @@ async function refreshCodex() {
   try {
     const response = await netClient.codexList();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     state.codex = [];
@@ -926,7 +967,7 @@ async function markAllMailsRead() {
   try {
     const response = await netClient.mailReadAll();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     state.mails.forEach((mail) => { mail.read = true; });
@@ -949,7 +990,7 @@ async function clearAllMails() {
   try {
     const response = await netClient.mailDeleteAll();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     const affected = Math.max(0, Number(response.payload?.affected) || 0);
@@ -974,7 +1015,7 @@ async function refreshFriends() {
   try {
     const response = await netClient.friendList();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     state.friends = Array.isArray(response.payload?.friends) ? response.payload.friends : [];
@@ -989,8 +1030,12 @@ async function generateShareLink() {
   if (!netClient) return '';
   try {
     const response = await netClient.genShareLink();
-    if (response.err !== 0 || !response.payload?.path) {
-      fail(errText(response.err));
+    if (response.err !== 0) {
+      serverNotice(response.err);
+      return '';
+    }
+    if (!response.payload?.path) {
+      fail('服务器返回的分享链接无效');
       return '';
     }
     return new URL(response.payload.path, location.origin).href;
@@ -1016,7 +1061,7 @@ async function refreshFriendRequests() {
   try {
     const response = await netClient.listFriendRequests();
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return [];
     }
     const requests = Array.isArray(response.payload?.requests) ? response.payload.requests : [];
@@ -1035,7 +1080,7 @@ async function searchNeighbors(value) {
   const selfUid = session.uid ?? netClient.uid;
   const input = value.trim();
   if (!input) {
-    fail('请输入用户名');
+    warn('请输入用户名');
     return { ok: false, users: [] };
   }
   const token = inviteTokenFromInput(input);
@@ -1043,7 +1088,7 @@ async function searchNeighbors(value) {
     try {
       const response = await netClient.acceptInvite(token);
       if (response.err !== 0) {
-        fail(errText(response.err));
+        serverNotice(response.err);
         return { ok: false, users: [] };
       }
       await refreshFriends();
@@ -1072,7 +1117,7 @@ async function searchNeighbors(value) {
     if (search.err !== 0) {
       // 未找到：交给结果区空态，不弹 toast
       if (search.err === 1413) return { ok: true, users: [] };
-      fail(errText(search.err));
+      serverNotice(search.err);
       return { ok: false, users: [] };
     }
     // 兼容旧 Rsp { uid, nickname } 与新 Rsp { users: [...] }
@@ -1091,13 +1136,13 @@ async function searchNeighbors(value) {
 async function requestFriend(peerUid) {
   if (!netClient) return false;
   if (sameUid(peerUid, session.uid ?? netClient.uid)) {
-    fail('不能添加自己为好友');
+    warn('不能添加自己为好友');
     return false;
   }
   try {
     const response = await netClient.requestFriend(peerUid);
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     await refreshFriends();
@@ -1114,7 +1159,7 @@ async function acceptFriendRequest(fromUid) {
   try {
     const response = await netClient.acceptFriendRequest(fromUid);
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     await Promise.all([refreshFriends(), refreshFriendRequests(), refreshMails()]);
@@ -1131,7 +1176,7 @@ async function rejectFriendRequest(fromUid) {
   try {
     const response = await netClient.rejectFriendRequest(fromUid);
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     await Promise.all([refreshFriendRequests(), refreshMails()]);
@@ -1155,7 +1200,7 @@ async function removeFriend(peerUid) {
   try {
     const response = await netClient.removeFriend(peerUid);
     if (response.err !== 0) {
-      fail(errText(response.err));
+      serverNotice(response.err);
       return false;
     }
     await refreshFriends();
@@ -1179,7 +1224,12 @@ function refreshSubBar() {
       .map(f => ({ id: f.id, name: f.name, icon: f.icon, count: state.inventory.fertilizers[f.id] || 0 }))
       .filter(i => i.count > 0);
     if (!items.find(i => i.id === selectedFert)) selectedFert = items[0]?.id || null;
-    ui.showSubBar(items, selectedFert, (id) => { selectedFert = id; refreshSubBar(); sfx.click(); });
+    ui.showSubBar(
+      items,
+      selectedFert,
+      (id) => { selectedFert = id; refreshSubBar(); sfx.click(); },
+      { compact: true },
+    );
   } else {
     ui.showSubBar(null);
   }
@@ -1199,7 +1249,7 @@ const ui = new UI({
   onPanel(panel) {
     sfx.click();
     if (panel === 'shop' && isVisitingFriend()) {
-      return fail('好友农场无法使用商店');
+      return warn('好友农场无法使用商店');
     }
     switch (panel) {
       case 'shop': ui.renderShop(state); break;
@@ -1236,27 +1286,27 @@ const ui = new UI({
   },
 
   async onBuySeed(id) {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (!isOnline()) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('好友农场无法购买');
     return onlineBuySeed(id);
   },
 
   async onBuyFert(id) {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (!isOnline()) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('好友农场无法购买');
     return onlineBuyFertilizer(id);
   },
 
   async onBuyFood(g) {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (!isOnline()) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('好友农场无法购买');
     if (onlineBusy || !netClient) return;
     const grams = g < 0 ? Math.max(1, DOG_BOWL_CAP - Math.floor(state.dogBowl)) : g;
     if (grams <= 0) return ok('狗盆已满');
     onlineBusy = true;
     try {
       const rsp = await netClient.buy(DOG_FOOD_SHOP_ITEM_ID, grams);
-      if (rsp.err !== 0) return fail(errText(rsp.err));
+      if (rsp.err !== 0) return serverNotice(rsp.err);
       applyResponsePatch(rsp.payload);
       sfx.gold();
       ui.toast(`购买狗粮 ${grams}g`, 'ok');
@@ -1269,19 +1319,19 @@ const ui = new UI({
   },
 
   async onBuyDog(id) {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法购买');
+    if (!isOnline()) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('好友农场无法购买');
     if (onlineBusy || !netClient) return;
     const dog = DOGS.find((d) => d.id === id);
-    if (!dog?.shopItemId || !dog.dogType) return fail('该狗种暂未上架');
+    if (!dog?.shopItemId || !dog.dogType) return warn('该狗种暂未上架');
     onlineBusy = true;
     try {
       const buy = await netClient.buy(dog.shopItemId, 1);
-      if (buy.err !== 0) return fail(errText(buy.err));
+      if (buy.err !== 0) return serverNotice(buy.err);
       applyResponsePatch(buy.payload);
       const act = await netClient.petActivate(dog.dogType);
       if (act.err !== 0) {
-        fail(errText(act.err));
+        serverNotice(act.err);
         await refreshPetStatus();
         return;
       }
@@ -1297,24 +1347,22 @@ const ui = new UI({
   },
 
   async onSell(id, n) {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法出售');
+    if (!isOnline()) return warn('请先登录后再操作');
     return onlineSell(id, n);
   },
 
   async onSellAll() {
-    if (!isOnline()) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('好友农场无法出售');
+    if (!isOnline()) return warn('请先登录后再操作');
     return onlineSellAll();
   },
 
   async onClaimMail(id) {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (!isOnline() || !netClient) return warn('请先登录后再操作');
     if (onlineBusy) return;
     onlineBusy = true;
     try {
       const rsp = await netClient.mailClaim(id);
-      if (rsp.err !== 0) return fail(errText(rsp.err));
+      if (rsp.err !== 0) return serverNotice(rsp.err);
       const reward = applyMailClaimReceipt(state, id, rsp.payload);
       sfx.gold();
       ui.toast(
@@ -1331,7 +1379,7 @@ const ui = new UI({
   },
 
   async onClearMails() {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (!isOnline() || !netClient) return warn('请先登录后再操作');
     if (onlineBusy) return false;
     onlineBusy = true;
     try {
@@ -1342,12 +1390,12 @@ const ui = new UI({
   },
 
   async onClaimTask(taskId) {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
+    if (!isOnline() || !netClient) return warn('请先登录后再操作');
     if (onlineBusy) return;
     onlineBusy = true;
     try {
       const rsp = await netClient.taskClaim(taskId);
-      if (rsp.err !== 0) return fail(errText(rsp.err));
+      if (rsp.err !== 0) return serverNotice(rsp.err);
       const rewardCoin = Number(rsp.payload?.coin) || 0;
       ui.toast(rewardCoin > 0 ? `任务奖励已到账 💰${rewardCoin}` : '任务奖励已到账', 'gold');
       await refreshTasks({ force: true });
@@ -1359,14 +1407,14 @@ const ui = new UI({
   },
 
   async onFeedPet(grams) {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('只能在自己的农场喂狗');
+    if (!isOnline() || !netClient) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('只能在自己的农场喂狗');
     if (onlineBusy) return;
     onlineBusy = true;
     try {
       const beforeBowl = Number(state.dogBowl) || 0;
       const rsp = await netClient.petFeed(grams);
-      if (rsp.err !== 0) return fail(errText(rsp.err));
+      if (rsp.err !== 0) return serverNotice(rsp.err);
       applyAuthoritativePetStatus(rsp.payload);
       const afterBowl = Number(rsp.payload?.bowl_grams) || 0;
       const fed = Math.max(0, afterBowl - beforeBowl);
@@ -1383,15 +1431,15 @@ const ui = new UI({
   },
 
   async onActivatePet(dogKey) {
-    if (!isOnline() || !netClient) return fail('请先登录后再操作');
-    if (isVisitingFriend()) return fail('只能在自己的农场启用狗');
+    if (!isOnline() || !netClient) return warn('请先登录后再操作');
+    if (isVisitingFriend()) return warn('只能在自己的农场启用狗');
     const dog = DOGS.find((d) => d.id === dogKey);
-    if (!dog?.dogType) return fail('该狗种暂未开放');
+    if (!dog?.dogType) return warn('该狗种暂未开放');
     if (onlineBusy) return;
     onlineBusy = true;
     try {
       const rsp = await netClient.petActivate(dog.dogType);
-      if (rsp.err !== 0) return fail(errText(rsp.err));
+      if (rsp.err !== 0) return serverNotice(rsp.err);
       applyAuthoritativePetStatus(rsp.payload);
       sfx.dog();
       ui.toast(`已启用 ${dog.name}`, 'ok');
@@ -1449,16 +1497,16 @@ const ui = new UI({
   },
 
   onExpand() {
-    return fail('线上暂不支持');
+    return warn('线上暂不支持');
   },
 
   async onSetTimeScale(profile) {
     if (!isOnline() || !netClient) {
-      fail('请先登录后再操作');
+      warn('请先登录后再操作');
       return false;
     }
     if (!state.timeScaleMutable) {
-      fail('当前环境禁止在线修改时间档');
+      warn('当前环境禁止在线修改时间档');
       return false;
     }
     if (onlineBusy) return false;
@@ -1466,7 +1514,7 @@ const ui = new UI({
     try {
       const rsp = await netClient.setTimeProfile(profile);
       if (rsp.err !== 0) {
-        fail(errText(rsp.err));
+        serverNotice(rsp.err);
         return false;
       }
       applyPatch(state, rsp.payload || {});
@@ -1526,11 +1574,11 @@ function tick() {
     const previous = state.dogBowl;
     state.dogBowl = Math.max(0, Math.floor((state.dogBowlEmptyAt - now) / state.dogMsPerGram));
     if (state.dogBowl !== previous) ui.updateHUD(state);
-    if (previous > 0 && state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
+    if (previous > 0 && state.dogBowl <= 0) warn('🐶 狗粮吃完了，看家狗罢工了！');
   } else if (!isOnline() && state.dog && state.dogBowl > 0) {
     const dogDef = DOGS.find(d => d.id === state.dog.id);
     state.dogBowl = Math.max(0, state.dogBowl - (dogDef.consumption / hourMs()) * dt);
-    if (state.dogBowl <= 0) ui.toast('🐶 狗粮吃完了，看家狗罢工了！', 'err');
+    if (state.dogBowl <= 0) warn('🐶 狗粮吃完了，看家狗罢工了！');
   }
 
   // 日夜循环：跟全局逻辑日相位，各客户端同刻同天空
@@ -1539,11 +1587,14 @@ function tick() {
   const icon = CLOCK_ICONS.find(([t]) => phase < t)?.[1] || '☀️';
   ui.setClock(icon);
 
-  // 狗模型（仅自己农场显示）
-  if (!isVisitingFriend()) {
-    scene.setDog(state.dog ? DOGS.find(d => d.id === state.dog.id) : null, state.dog ? state.dogBowl <= 0 : false);
+  // 狗模型：好友农场只同步启用品种与狗盆到期时间；路线、位置和动作由各客户端本地生成。
+  if (isVisitingFriend()) {
+    const guardDog = state.visitingGuardDog;
+    const dogDef = guardDog ? DOGS.find((dog) => dog.dogType === guardDog.dogType) : null;
+    const hungry = !guardDog || guardDog.bowlEmptyAt <= now;
+    scene.setDog(dogDef || null, hungry);
   } else {
-    scene.setDog(null, false);
+    scene.setDog(state.dog ? DOGS.find(d => d.id === state.dog.id) : null, state.dog ? state.dogBowl <= 0 : false);
   }
 
   syncAllPlots();

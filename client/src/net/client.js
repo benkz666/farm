@@ -22,6 +22,11 @@ export const CMD_PLAYER_DELTA = 9002
 export const CMD_MAIL_NOTIFY = 9004
 export const CMD_SESSION_KICK = 9006
 export const CMD_TASK_NOTIFY = 9008
+/** 一次 WebSocket 帧内携带多条 push Envelope；client_seq 恒为 0。 */
+export const CMD_PUSH_BATCH = 9010
+
+/** PushBatch 内层 Envelope 数量上限（与服务端一致）。 */
+export const MAX_PUSH_BATCH_ENVELOPES = 64
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -865,14 +870,11 @@ export class NetClient {
     }
     if (!envelope || typeof envelope.client_seq !== 'number') return
     if (envelope.client_seq === 0) {
-      if (envelope.cmd === CMD_SESSION_KICK) {
-        const reason = Number(envelope.payload?.reason) || 1105
-        this._stopReconnectWithFailure({ ...envelope, err: reason })
+      if (envelope.cmd === CMD_PUSH_BATCH) {
+        this._dispatchPushBatch(envelope)
         return
       }
-      for (const handler of this._pushHandlers.get(envelope.cmd) || []) {
-        handler(envelope)
-      }
+      this._dispatchPush(envelope)
       return
     }
     const pending = this._pending.get(envelope.client_seq)
@@ -880,6 +882,56 @@ export class NetClient {
     if (pending.cmd !== envelope.cmd) return
     this._pending.delete(envelope.client_seq)
     pending.resolve(envelope)
+  }
+
+  /**
+   * @param {Envelope} batch
+   */
+  _dispatchPushBatch(batch) {
+    const envelopes = batch?.payload?.envelopes
+    if (
+      !Array.isArray(envelopes) ||
+      envelopes.length === 0 ||
+      envelopes.length > MAX_PUSH_BATCH_ENVELOPES
+    ) {
+      this._failProtocol('net: invalid push batch')
+      return
+    }
+    for (const inner of envelopes) {
+      if (!inner || typeof inner !== 'object' || typeof inner.client_seq !== 'number') {
+        this._failProtocol('net: invalid push batch envelope')
+        return
+      }
+      if (inner.cmd === CMD_PUSH_BATCH) {
+        this._failProtocol('net: nested push batch')
+        return
+      }
+      if (inner.client_seq !== 0) {
+        this._failProtocol('net: push batch contains response')
+        return
+      }
+      this._dispatchPush(inner)
+    }
+  }
+
+  /**
+   * @param {Envelope} envelope
+   */
+  _dispatchPush(envelope) {
+    if (envelope.cmd === CMD_SESSION_KICK) {
+      const reason = Number(envelope.payload?.reason) || 1105
+      this._stopReconnectWithFailure({ ...envelope, err: reason })
+      return
+    }
+    for (const handler of this._pushHandlers.get(envelope.cmd) || []) {
+      handler(envelope)
+    }
+  }
+
+  /** @param {string} message */
+  _failProtocol(message) {
+    this._failAllPending(new Error(message))
+    this._detachSocket()
   }
 
   /** @param {Error} err */

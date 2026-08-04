@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 
 import { FarmScene } from './farm3d.js'
+import { CROP_MAP } from './config.js'
 import { mat, isSharedMaterial } from './crops.js'
 import { PLOT } from './state.js'
 
@@ -196,7 +197,7 @@ test('地块使用半埋式低矮倒角菜畦，不回退为高方块或纯平�
   const scene = new FarmScene(container, env)
 
   scene.plotGroups.forEach((group) => {
-    const { base, rim, furrows, content, ring, halo } = group.userData
+    const { base, rim, furrows, content, ring, matureFx } = group.userData
     assert.equal(base.geometry.type, 'PlaneGeometry')
     assert.equal(rim.geometry.type, 'BoxGeometry')
     rim.geometry.computeBoundingBox()
@@ -208,7 +209,10 @@ test('地块使用半埋式低矮倒角菜畦，不回退为高方块或纯平�
     assert.equal(base.position.y, 0.18)
     assert.equal(content.position.y, 0.19)
     assert.equal(ring.position.y, 0.29)
-    assert.equal(halo.position.y, 0.27)
+    assert.equal(matureFx.visible, false)
+    assert.equal(matureFx.children.length, 6)
+    assert.ok(matureFx.children.every((mote) => mote.geometry.type === 'OctahedronGeometry'))
+    assert.ok(matureFx.userData.flare, '成熟特效应有中心星芒')
     furrows.children.forEach((furrow) => {
       assert.equal(furrow.geometry.type, 'BoxGeometry')
       furrow.geometry.computeBoundingBox()
@@ -218,6 +222,30 @@ test('地块使用半埋式低矮倒角菜畦，不回退为高方块或纯平�
     })
   })
 
+  scene.dispose()
+})
+
+test('成熟状态显示花粉光点，离开成熟状态后隐藏', () => {
+  const { container, env } = makeHarness()
+  const scene = new FarmScene(container, env)
+  const group = scene.plotGroups[0]
+  const info = {
+    unlocked: true,
+    lockText: '',
+    state: PLOT.MATURE,
+    cropDef: CROP_MAP.bailuobo,
+    stage: 3,
+    totalStages: 3,
+    dry: false,
+    weed: false,
+    pest: false,
+  }
+
+  scene.updatePlot(group, info)
+  assert.equal(group.userData.matureFx.visible, true)
+
+  scene.updatePlot(group, { ...info, state: PLOT.GROWING, stage: 2 })
+  assert.equal(group.userData.matureFx.visible, false)
   scene.dispose()
 })
 

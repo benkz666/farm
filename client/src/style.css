@@ -186,23 +186,73 @@ body {
 
 /* 种子/化肥选择条 */
 #sub-bar {
-  display: flex; gap: 8px; max-width: 72vw;
-  background: rgba(255, 253, 247, 0.94); backdrop-filter: blur(16px);
-  border: 1px solid var(--panel-border); border-radius: 20px;
-  padding: 9px 12px; box-shadow: var(--shadow);
-  overflow-x: auto; animation: slideUp 0.25s ease;
+  width: min(760px, calc(100vw - 24px)); max-width: calc(100vw - 24px);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(246, 196, 83, 0.22), transparent 30%),
+    linear-gradient(135deg, rgba(255, 253, 247, 0.97), rgba(232, 244, 225, 0.95));
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.82); border-radius: 23px;
+  padding: 11px 13px 12px; box-shadow: 0 10px 30px rgba(62, 50, 41, 0.2);
+  animation: slideUp 0.25s ease;
 }
+#sub-bar.compact { width: fit-content; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } }
-.sub-item {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  border: 2px solid rgba(62, 50, 41, 0.1); border-radius: 14px;
-  padding: 6px 12px 6px 6px; background: #fff;
-  cursor: pointer; transition: all 0.15s;
+.sub-list {
+  display: flex; gap: 9px; overflow-x: auto; padding: 2px 2px 3px;
+  touch-action: pan-x; overscroll-behavior-x: contain;
+  scrollbar-width: thin; scrollbar-color: rgba(76, 143, 74, .34) transparent;
 }
-.sub-item:hover { border-color: var(--green); }
-.sub-item.active { border-color: var(--gold); background: #fff8e1; }
-.sub-item.disabled { opacity: 0.45; cursor: not-allowed; }
-.sub-item .cnt { font-size: 12px; font-weight: 800; color: var(--ink-soft); }
+.sub-list::-webkit-scrollbar { height: 5px; }
+.sub-list::-webkit-scrollbar-track { background: transparent; }
+.sub-list::-webkit-scrollbar-thumb { background: rgba(76, 143, 74, .34); border-radius: 99px; }
+.sub-item {
+  position: relative; display: flex; align-items: center; gap: 9px; flex-shrink: 0;
+  min-width: 150px; min-height: 66px; padding: 8px 12px 8px 8px;
+  border: 1px solid rgba(115, 88, 53, .15); border-radius: 17px;
+  background: linear-gradient(145deg, rgba(255,255,255,.96), rgba(250,247,237,.96));
+  color: var(--ink); font: inherit; text-align: left; cursor: pointer;
+  box-shadow: 0 3px 9px rgba(62, 50, 41, .1);
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.sub-item:hover:not(:disabled) { transform: translateY(-2px); border-color: rgba(76, 175, 80, .6); box-shadow: 0 6px 13px rgba(62, 50, 41, .14); }
+.sub-item:focus-visible { outline: 3px solid rgba(76, 175, 80, .35); outline-offset: 2px; }
+.sub-item.active {
+  border-color: var(--gold-dark); background: linear-gradient(145deg, #fffbed, #fff1bd);
+  box-shadow: 0 5px 14px rgba(224, 169, 46, .24), inset 0 1px 0 rgba(255,255,255,.9);
+}
+.sub-item.active::before {
+  content: ''; position: absolute; left: 0; top: 13px; bottom: 13px; width: 4px;
+  border-radius: 0 6px 6px 0; background: linear-gradient(#f6c453, #e0a92e);
+}
+.sub-item.disabled { filter: grayscale(.45); opacity: .48; cursor: not-allowed; }
+.sub-item-art {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex-shrink: 0; border-radius: 14px;
+  background: rgba(255, 255, 255, .74);
+}
+.sub-item .crop-badge.sm { width: 42px; height: 42px; border-radius: 14px; }
+.sub-item-icon { font-size: 27px; line-height: 1; filter: drop-shadow(0 2px 2px rgba(0,0,0,.12)); }
+.sub-item-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sub-item-copy strong { overflow: hidden; font-size: 13px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.sub-item .cnt { color: var(--ink-soft); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.sub-item-check {
+  position: absolute; top: 6px; right: 8px; display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%; background: var(--gold-dark); color: #fff;
+  font-size: 11px; font-weight: 900; box-shadow: 0 2px 5px rgba(224, 169, 46, .3);
+}
+.sub-empty {
+  display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 8px;
+  color: var(--ink-soft); font-size: 12px; font-weight: 800;
+}
+.sub-empty-icon { font-size: 22px; }
+@media (max-width: 760px) {
+  #sub-bar { width: calc(100vw - 16px); max-width: calc(100vw - 16px); padding-inline: 10px; }
+  .sub-item { min-width: 138px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #sub-bar, .sub-item { animation: none; transition: none; }
+  .sub-item:hover:not(:disabled) { transform: none; }
+}
 
 /* 作物徽章 */
 .crop-badge {
@@ -249,6 +299,7 @@ body {
 .toast.ok { background: linear-gradient(135deg, #67d15c, #3d8b40); }
 .toast.err { background: linear-gradient(135deg, #ff7b6b, #e04536); }
 .toast.info { background: linear-gradient(135deg, #5db4e0, #3478c9); }
+.toast.warn { background: linear-gradient(135deg, #ffe08a, #e2a928); color: #5d4308; }
 .toast.gold { background: linear-gradient(135deg, #f6c453, #e0a92e); color: #5d4308; }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-14px) scale(0.9); } }
 @keyframes toastOut { to { opacity: 0; transform: translateY(-10px) scale(0.92); } }

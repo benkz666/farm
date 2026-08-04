@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "gen/farm/v1;farmv1";
+
+import "farm/internal/v1/common.proto";
+
+// FarmCommandService routes owner-authoritative gameplay commands to the
+// Farm instance that owns FarmUID. Complex client-visible payloads remain
+// JSON inside payload_json for legacy command payloads; cross-farm settlement
+// uses the separate typed CrossFarmService contract.
+service FarmCommandService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+}
+
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  OPERATION_ENTER_FARM = 1;
+  OPERATION_PLOT_ACTION = 2;
+  OPERATION_SHOP = 3;
+  OPERATION_SYNC_FARM = 4;
+  OPERATION_PET = 5;
+  OPERATION_CROSS_RESERVE = 6;
+  OPERATION_CROSS_SETTLE = 7;
+  OPERATION_TASK_LIST = 8;
+  OPERATION_TASK_CLAIM = 9;
+  OPERATION_ADVANCE_TASK = 10;
+  OPERATION_DAILY_LOGIN_CLAIM = 11;
+  OPERATION_MAIL_LIST = 12;
+  OPERATION_MAIL_READ = 13;
+  OPERATION_MAIL_DELETE = 14;
+  OPERATION_MAIL_CLAIM = 15;
+  OPERATION_CODEX_LIST = 16;
+}
+
+message ExecuteRequest {
+  Operation operation = 1;
+  uint64 farm_uid = 2;
+  ConnRef originator = 3;
+  // Opaque JSON payload for the selected operation.
+  bytes payload_json = 4;
+}
+
+message ExecuteResponse {
+  // Protocol-level error code; 0 means success.
+  int32 err = 1;
+  // Opaque JSON response for the selected operation.
+  bytes payload_json = 2;
+}
