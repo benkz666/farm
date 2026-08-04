@@ -53,17 +53,6 @@ func NewOutboxDispatcher(outboxStore store.OutboxStore, client *GRPCClient, now 
 	return d
 }
 
-// Wakeup nudges the dispatcher to poll immediately.
-func (d *OutboxDispatcher) Wakeup() {
-	if d == nil {
-		return
-	}
-	select {
-	case d.wakeup <- struct{}{}:
-	default:
-	}
-}
-
 // Shutdown stops the dispatcher gracefully.
 func (d *OutboxDispatcher) Shutdown(ctx context.Context) error {
 	if d == nil {

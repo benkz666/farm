@@ -156,23 +156,6 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		response.Err = result.Err
-		if result.Err == errcode.OK && actionPayload.Patch.Codex != nil && g.codexRewards != nil {
-			rewards, rewardErr := g.codexRewards.IssueCodexRewards(context.Background(), connection.uid, *actionPayload.Patch.Codex)
-			if rewardErr != nil {
-				telemetry.L().Error("gateway issue codex rewards failed",
-					"component", "gateway",
-					"op", "issue_codex_rewards",
-					"uid", connection.uid,
-					"crop_id", actionPayload.Patch.Codex.CropID,
-					"err", rewardErr.Error(),
-				)
-			} else {
-				actionPayload.CodexRewards = rewards
-				if len(rewards) > 0 {
-					g.pushMailNotify(connection.uid, "codex_reward")
-				}
-			}
-		}
 		if result.Err == errcode.OK {
 			response.Payload = marshalPayload(actionPayload)
 		}

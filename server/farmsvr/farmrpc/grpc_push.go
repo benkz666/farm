@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"farm/server/domain/farm"
@@ -232,32 +231,4 @@ func taskToProto(task store.Task) *farmv1.Task {
 		RewardCoin: task.RewardCoin,
 		Claimed:    task.Claimed,
 	}
-}
-
-func taskFromProto(task *farmv1.Task) store.Task {
-	if task == nil {
-		return store.Task{}
-	}
-	return store.Task{
-		ID:         task.Id,
-		DayKey:     task.DayKey,
-		Kind:       task.Kind,
-		Title:      task.Title,
-		Progress:   task.Progress,
-		Target:     task.Target,
-		RewardCoin: task.RewardCoin,
-		Claimed:    task.Claimed,
-	}
-}
-
-// gatewayPushBundle groups the five Gateway push clients behind one target map.
-type gatewayPushBundle struct {
-	once   sync.Once
-	client *GatewayPushClient
-}
-
-func (bundle *gatewayPushBundle) init(pool *grpcx.Pool, targets map[string]string) {
-	bundle.once.Do(func() {
-		bundle.client = NewGatewayPushClient(pool, targets)
-	})
 }

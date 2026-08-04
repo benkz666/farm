@@ -113,28 +113,6 @@ func loadCodexFromMySQL(ctx context.Context, db *sql.DB, uid uint64, legacyBitma
 	return counts, nil
 }
 
-func saveCodexTx(ctx context.Context, tx *sql.Tx, agg *farm.Aggregate, now int64) error {
-	for cropID, count := range agg.CodexHarvests {
-		if count == 0 {
-			continue
-		}
-		if _, ok := gameconfig.CropByID(cropID); !ok {
-			return fmt.Errorf("store: invalid codex crop ID %d", cropID)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO player_codex (uid, crop_id, harvest_count, updated_at)
-			VALUES (?, ?, ?, ?)
-			ON DUPLICATE KEY UPDATE
-				harvest_count = GREATEST(harvest_count, VALUES(harvest_count)),
-				updated_at = VALUES(updated_at)`,
-			agg.UID, cropID, count, now,
-		); err != nil {
-			return fmt.Errorf("store: upsert player_codex crop %d: %w", cropID, err)
-		}
-	}
-	return nil
-}
-
 func encodeCodexBitmap(counts map[uint16]uint32) []byte {
 	bitmap := make([]byte, 8)
 	for cropID, count := range counts {

@@ -7,6 +7,8 @@ services:
       MYSQL_USER: farm
       MYSQL_PASSWORD: farm
     ports: ["3306:3306"]
+    volumes:
+      - farm_mysql_data:/var/lib/mysql
     command: ["--character-set-server=utf8mb4"]
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ufarm", "-pfarm"]
@@ -16,7 +18,10 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports: ["6379:6379"]
+    volumes:
+      - farm_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -117,3 +122,9 @@ services:
     depends_on:
       gateway: {condition: service_started}
     ports: ["9001:80"]
+
+volumes:
+  farm_mysql_data:
+    name: farm_mysql_data
+  farm_redis_data:
+    name: farm_redis_data
