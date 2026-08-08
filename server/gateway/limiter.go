@@ -1,9 +1,6 @@
 package gateway
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
 const (
 	connectionBurst               = 20
@@ -13,7 +10,6 @@ const (
 
 // connectionLimiter enforces the protocol's per-connection token bucket.
 type connectionLimiter struct {
-	mu                    sync.Mutex
 	tokens                float64
 	last                  time.Time
 	consecutiveRejections int
@@ -27,9 +23,9 @@ func newConnectionLimiter() *connectionLimiter {
 }
 
 func (l *connectionLimiter) Allow() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
+	// Only the connection's WebSocket read goroutine calls the limiter. Keeping
+	// a mutex here added two atomic operations to every command without adding
+	// safety; asynchronous writers never inspect this state.
 	now := time.Now()
 	l.tokens = min(float64(connectionBurst), l.tokens+now.Sub(l.last).Seconds()*connectionRate)
 	l.last = now
@@ -45,7 +41,5 @@ func (l *connectionLimiter) Allow() bool {
 // ShouldDisconnect reports whether a client exceeded the allowed consecutive
 // rate-limit violations and should be considered an automated caller.
 func (l *connectionLimiter) ShouldDisconnect() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	return l.consecutiveRejections >= consecutiveRateLimitThreshold
 }

@@ -21,6 +21,7 @@ export default defineConfig(() => {
       strictPort: true,
       proxy: {
         '/api': gateway,
+        '/docs': gateway,
         '/ws': { target: websocketGateway, ws: true },
       },
     },

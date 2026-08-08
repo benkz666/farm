@@ -3,13 +3,86 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
+// ListMailsEncoded returns the cached JSON array used by the Farm hot path.
+// The encoded view shares the mailbox generation barrier with ListMails, so a
+// committed write cannot leave a stale pre-encoded response behind.
+func (s *Store) ListMailsEncoded(ctx context.Context, uid uint64) ([]byte, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if encoded, ok := s.mailbox.encoded.get(uid, time.Now()); ok {
+			return append([]byte(nil), encoded...), nil
+		}
+		generation := s.mailboxGeneration(uid)
+		mails, err := s.ListMails(ctx, uid)
+		if err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(mails)
+		if err != nil {
+			return nil, fmt.Errorf("store: encode mail list: %w", err)
+		}
+		state := &s.mailbox.state[mailboxStateIndex(uid)]
+		state.mu.Lock()
+		if state.version == generation {
+			s.mailbox.encoded.put(uid, append([]byte(nil), encoded...), time.Now())
+			state.mu.Unlock()
+			return encoded, nil
+		}
+		state.mu.Unlock()
+	}
+	// A mailbox receiving sustained writes is still readable. Bypass the
+	// encoded cache after bounded retries instead of surfacing an internal
+	// invalidation sentinel to the client.
+	mails, err := s.ListMails(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(mails)
+	if err != nil {
+		return nil, fmt.Errorf("store: encode mail list: %w", err)
+	}
+	return encoded, nil
+}
+
 // ListMails 返回玩家的个人邮件，附件与已读状态分别由 Claimed / Read 明示。
 func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		if mails, ok := s.mailbox.local.get(uid, time.Now()); ok {
+			return cloneMails(mails), nil
+		}
+		mails, err := s.coalesceMailbox(ctx, uid, func() ([]Mail, error) {
+			if cached, ok := s.mailbox.local.get(uid, time.Now()); ok {
+				return cached, nil
+			}
+			cached, hit, version, cacheErr := s.loadMailboxCache(ctx, uid)
+			if hit {
+				return cached, nil
+			}
+			mails, err := s.listMailsFromMySQL(ctx, uid)
+			if err != nil {
+				return nil, err
+			}
+			// Redis is an acceleration layer. A cache read/write failure must not
+			// turn an authoritative MySQL success into a MailList failure.
+			if cacheErr == nil {
+				_ = s.writeMailboxCache(ctx, uid, version, mails)
+			}
+			return mails, nil
+		})
+		if errors.Is(err, errMailboxInvalidated) {
+			continue
+		}
+		return cloneMails(mails), err
+	}
+	return s.listMailsFromMySQL(ctx, uid)
+}
+
+func (s *Store) listMailsFromMySQL(ctx context.Context, uid uint64) ([]Mail, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, title, attachment_coin, claimed_at IS NOT NULL, read_at IS NOT NULL, created_at
 		FROM mail
@@ -31,7 +104,7 @@ func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate mails: %w", err)
 	}
-	return mails, nil
+	return cloneMails(mails), nil
 }
 
 // MarkMailsRead 持久化玩家的阅读进度。mailID=0 时批量处理当前收件箱；
@@ -59,6 +132,9 @@ func (s *Store) MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (i
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("store: count marked mails: %w", err)
+	}
+	if affected > 0 {
+		s.invalidateMailboxAfterCommit(uid)
 	}
 	return affected, nil
 }
@@ -91,6 +167,9 @@ func (s *Store) DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int
 	affected, err := result.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("store: count deleted mails: %w", err)
+	}
+	if affected > 0 {
+		s.invalidateMailboxAfterCommit(uid)
 	}
 	return affected, nil
 }
@@ -135,6 +214,7 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	if err := tx.Commit(); err != nil {
 		return Mail{}, fmt.Errorf("store: commit claim mail: %w", err)
 	}
+	s.invalidateMailboxAfterCommit(uid)
 	// ClaimMail 由 Gateway/FarmRPC 放在 uid 权威 Actor 的串行段内调用，并同步
 	// 更新在线聚合；删除缓存同时保护离线调用者不会加载旧金币快照。
 	_ = s.DeleteFarmCache(ctx, uid)
@@ -150,6 +230,8 @@ func (s *Store) ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (
 }
 
 func createMailTx(ctx context.Context, tx *sql.Tx, uid uint64, title string, attachmentCoin, now int64) (Mail, error) {
+	// 调用方必须只在事务提交成功后调用 invalidateMailboxAfterCommit(uid)。
+	// 事务内提前失效会让并发 MailList 回源并缓存尚未提交的旧邮箱。
 	result, err := tx.ExecContext(ctx, `
 		INSERT INTO mail (uid, title, attachment_coin, created_at)
 		VALUES (?, ?, ?, ?)`, uid, title, attachmentCoin, now)

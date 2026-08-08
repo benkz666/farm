@@ -101,6 +101,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			response.Err = remote.Err
 			if remote.Err == errcode.OK {
 				response.Payload = remote.Payload
+				connection.advanceRoomWatermark(connection.uid, remote.FarmSeq)
 			}
 			return response
 		}
@@ -158,6 +159,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		response.Err = result.Err
 		if result.Err == errcode.OK {
 			response.Payload = marshalPayload(actionPayload)
+			connection.advanceRoomWatermark(connection.uid, uint64(actionPayload.FarmSeq))
 		}
 		if delta != nil {
 			g.rooms.BroadcastExcept(*delta, connection.id)
@@ -206,6 +208,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			response.Err = remote.Err
 			if remote.Err == errcode.OK {
 				response.Payload = remote.Payload
+				connection.advanceRoomWatermark(connection.uid, remote.FarmSeq)
 			}
 			return response
 		}
@@ -216,6 +219,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 
 		var result farm.ActionResult
 		var delta *farm.FarmDelta
+		var farmSeq uint64
 		if err := g.runtime.Do(connection.uid, func(farmActor *room.FarmActor) error {
 			if farmActor == nil || farmActor.Aggregate == nil {
 				return errors.New("gateway: actor aggregate is nil")
@@ -240,6 +244,7 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 					FarmSeq: clientjson.Uint64(farmActor.Aggregate.FarmSeq),
 					Patch:   farmActor.Aggregate.PatchFromAction(result),
 				})
+				farmSeq = farmActor.Aggregate.FarmSeq
 			}
 			if farmActor.Aggregate.FarmSeq != beforeFarmSeq {
 				emitted := farm.FarmDelta{
@@ -257,6 +262,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		response.Err = result.Err
+		if result.Err == errcode.OK {
+			connection.advanceRoomWatermark(connection.uid, farmSeq)
+		}
 		if delta != nil {
 			g.rooms.BroadcastExcept(*delta, connection.id)
 		}

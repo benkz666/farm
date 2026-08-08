@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 )
 
 // Metrics holds process metrics registered on an injectable registry.
@@ -20,9 +21,21 @@ type Metrics struct {
 	HTTPRequests *prometheus.CounterVec
 	HTTPDuration *prometheus.HistogramVec
 
-	WSConnections prometheus.Gauge
-	WSRequests    *prometheus.CounterVec
-	WSDuration    *prometheus.HistogramVec
+	WSConnections         prometheus.Gauge
+	WSRequests            *prometheus.CounterVec
+	WSDuration            *prometheus.HistogramVec
+	WSDisconnects         *prometheus.CounterVec
+	WSHandshakeErrors     *prometheus.CounterVec
+	WSSessionReplacements prometheus.Counter
+	WSWriteQueueDepth     prometheus.Histogram
+	WSWriteQueueFull      prometheus.Counter
+	WSWriteFailures       *prometheus.CounterVec
+	// Hot successful commands use pre-bound metric children. This avoids two
+	// label string formats plus two MetricVec hash/lock lookups per request.
+	// The maps are immutable after construction and therefore safe for
+	// concurrent lock-free reads.
+	wsOKRequests map[uint32]prometheus.Counter
+	wsDurations  map[uint32]prometheus.Observer
 
 	ActorResident     prometheus.Gauge
 	ActorMailboxDepth prometheus.Histogram
@@ -71,6 +84,38 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Help:    "WebSocket command handling latency",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"cmd"})
+	m.WSDisconnects = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_ws_disconnects_total",
+		Help: "Closed WebSocket connections classified by bounded server-side reason",
+	}, []string{"reason"})
+	m.WSHandshakeErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_ws_handshake_errors_total",
+		Help: "Rejected WebSocket handshakes classified by protocol error code",
+	}, []string{"code"})
+	m.WSSessionReplacements = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_ws_session_replacements_total",
+		Help: "Established WebSocket sessions closed because a newer session replaced them",
+	})
+	m.WSWriteQueueDepth = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "farm_ws_write_queue_depth",
+		Help:    "Pending response plus push records observed after enqueue",
+		Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64, 68},
+	})
+	m.WSWriteQueueFull = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_ws_write_queue_full_total",
+		Help: "Push records rejected because a connection write queue was full",
+	})
+	m.WSWriteFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_ws_write_failures_total",
+		Help: "WebSocket physical write failures classified by response or push path",
+	}, []string{"path"})
+	m.wsOKRequests = make(map[uint32]prometheus.Counter, len(knownWSCommands))
+	m.wsDurations = make(map[uint32]prometheus.Observer, len(knownWSCommands))
+	for _, cmd := range knownWSCommands {
+		label := strconv.FormatUint(uint64(cmd), 10)
+		m.wsOKRequests[cmd] = m.WSRequests.WithLabelValues(label, "0")
+		m.wsDurations[cmd] = m.WSDuration.WithLabelValues(label)
+	}
 
 	m.ActorResident = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "farm_actor_resident",
@@ -137,8 +182,12 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 	})
 
 	reg.MustRegister(
+		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		collectors.NewGoCollector(),
 		m.HTTPRequests, m.HTTPDuration,
 		m.WSConnections, m.WSRequests, m.WSDuration,
+		m.WSDisconnects, m.WSHandshakeErrors, m.WSSessionReplacements,
+		m.WSWriteQueueDepth, m.WSWriteQueueFull, m.WSWriteFailures,
 		m.ActorResident, m.ActorMailboxDepth, m.ActorDoBusy,
 		m.ActorLoadDuration, m.ActorLoadErrors,
 		m.ActorSaveDuration, m.ActorSaveErrors,
@@ -230,10 +279,72 @@ func (m *Metrics) ObserveWSRequest(cmd, code uint32, d time.Duration) {
 	if m == nil {
 		return
 	}
+	if code == 0 {
+		if counter, ok := m.wsOKRequests[cmd]; ok {
+			counter.Inc()
+			m.wsDurations[cmd].Observe(d.Seconds())
+			return
+		}
+	}
 	cmdLabel := strconv.FormatUint(uint64(cmd), 10)
 	codeLabel := strconv.FormatUint(uint64(code), 10)
 	m.WSRequests.WithLabelValues(cmdLabel, codeLabel).Inc()
 	m.WSDuration.WithLabelValues(cmdLabel).Observe(d.Seconds())
+}
+
+// ObserveWSDisconnect records exactly one bounded reason per accepted socket.
+func (m *Metrics) ObserveWSDisconnect(reason string) {
+	if m == nil {
+		return
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	m.WSDisconnects.WithLabelValues(reason).Inc()
+}
+
+func (m *Metrics) ObserveWSHandshakeError(code uint32) {
+	if m == nil || code == 0 {
+		return
+	}
+	m.WSHandshakeErrors.WithLabelValues(strconv.FormatUint(uint64(code), 10)).Inc()
+}
+
+func (m *Metrics) ObserveWSSessionReplacement() {
+	if m != nil {
+		m.WSSessionReplacements.Inc()
+	}
+}
+
+func (m *Metrics) ObserveWSWriteQueueDepth(depth int) {
+	if m != nil && depth >= 0 {
+		m.WSWriteQueueDepth.Observe(float64(depth))
+	}
+}
+
+func (m *Metrics) ObserveWSWriteQueueFull() {
+	if m != nil {
+		m.WSWriteQueueFull.Inc()
+	}
+}
+
+func (m *Metrics) ObserveWSWriteFailure(path string) {
+	if m == nil {
+		return
+	}
+	if path != "push" {
+		path = "response"
+	}
+	m.WSWriteFailures.WithLabelValues(path).Inc()
+}
+
+var knownWSCommands = [...]uint32{
+	100, 102,
+	200, 202, 204, 206, 208, 210, 212, 214, 216, 218, 220, 222,
+	302, 304,
+	400, 402, 404, 406, 408, 410, 412, 414, 416, 418,
+	500, 502, 504,
+	600, 602, 604, 606, 608, 610, 612, 614, 616,
 }
 
 // ObserveMailboxDepth records a mailbox depth sample.

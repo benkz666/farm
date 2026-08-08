@@ -63,6 +63,12 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 
 	m.WSConnections.Inc()
 	m.ObserveWSRequest(200, 0, 12*time.Millisecond)
+	m.ObserveWSDisconnect("client_normal")
+	m.ObserveWSHandshakeError(1101)
+	m.ObserveWSSessionReplacement()
+	m.ObserveWSWriteQueueDepth(3)
+	m.ObserveWSWriteQueueFull()
+	m.ObserveWSWriteFailure("push")
 	m.ActorResident.Set(3)
 	m.ObserveMailboxDepth(2)
 	m.ActorDoBusy.Inc()
@@ -73,8 +79,16 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 
 	body := gatherText(t, reg)
 	for _, name := range []string{
+		"process_cpu_seconds_total",
+		"go_memstats_alloc_bytes_total",
 		"farm_ws_connections",
 		"farm_ws_requests_total",
+		"farm_ws_disconnects_total",
+		"farm_ws_handshake_errors_total",
+		"farm_ws_session_replacements_total",
+		"farm_ws_write_queue_depth",
+		"farm_ws_write_queue_full_total",
+		"farm_ws_write_failures_total",
 		"farm_actor_resident",
 		"farm_actor_mailbox_depth",
 		"farm_actor_do_busy_total",

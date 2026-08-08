@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package farm.public.v3;
+
+option go_package = "gen/farm/public/v3;publicv3";
+
+// WireBatch is one WebSocket binary message. Low-frequency commands use the
+// JSON compatibility arm while the bandwidth/CPU-critical Farm read path is
+// represented by typed messages.
+message WireBatch {
+  repeated WireEnvelope envelopes = 1;
+}
+
+message WireEnvelope {
+  uint32 cmd = 1;
+  uint32 client_seq = 2;
+  int32 err = 3;
+  oneof payload {
+    bytes json_payload = 10;
+    EnterFarmRequest enter_farm_request = 11;
+    SyncFarmRequest sync_farm_request = 12;
+    EnterFarmResponse enter_farm_response = 13;
+    SyncFarmResponse sync_farm_response = 14;
+    FarmDelta farm_delta = 15;
+  }
+}
+
+message EnterFarmRequest {
+  uint64 owner_uid = 1;
+}
+
+message SyncFarmRequest {
+  uint64 owner_uid = 1;
+  uint64 from_seq = 2;
+}
+
+message EnterFarmResponse {
+  FarmSnapshot snapshot = 1;
+  uint64 farm_seq = 2;
+  int64 server_time = 3;
+  string time_profile = 4;
+  bool time_profile_mutable = 5;
+  string relation = 6;
+}
+
+message SyncFarmResponse {
+  repeated FarmDelta deltas = 1;
+  FarmSnapshot snapshot = 2;
+  uint64 farm_seq = 3;
+  int64 server_time = 4;
+  string time_profile = 5;
+  bool time_profile_mutable = 6;
+}
+
+message FarmSnapshot {
+  uint64 owner_uid = 1;
+  string nickname = 2;
+  uint32 level = 3;
+  uint32 exp = 4;
+  int64 coin = 5;
+  uint32 unlocked_plots = 6;
+  repeated PlotSnapshot plots = 7;
+  map<string, uint32> bag = 8;
+  map<string, uint32> warehouse = 9;
+  GuardDog guard_dog = 10;
+}
+
+message PlotSnapshot {
+  uint32 index = 1;
+  uint32 state = 2;
+  uint32 crop_id = 3;
+  uint32 season_index = 4;
+  uint32 season_total = 5;
+  int64 season_start_at = 6;
+  int64 mature_at = 7;
+  int64 season_duration = 8;
+  uint32 final_yield = 9;
+  int64 last_settle_at = 10;
+  int64 last_water_at = 11;
+  int64 weed_since = 12;
+  int64 pest_since = 13;
+  uint32 health = 14;
+  uint32 stolen_count = 15;
+  uint32 fert_mask = 16;
+}
+
+message GuardDog {
+  uint32 active_dog = 1;
+  int64 bowl_empty_at = 2;
+}
+
+message FarmDelta {
+  uint64 owner_uid = 1;
+  uint64 farm_seq = 2;
+  repeated PlotSnapshot plots = 3;
+  GuardDog guard_dog = 4;
+  uint64 actor_uid = 5;
+  uint32 action = 6;
+}

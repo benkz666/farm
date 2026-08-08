@@ -53,13 +53,14 @@ func (fn DeltaPublisherFunc) Publish(ctx context.Context, delta farm.FarmDelta, 
 
 // Owner consumes CrossAction requests for farms owned by this process.
 type Owner struct {
-	runtime Runtime
-	friends FriendChecker
-	now     func() int64
-	deltas  DeltaPublisher
-	players PlayerDeltaPublisher
-	owns    func(uint64) bool
-	hints   StealHintWriter
+	runtime         Runtime
+	friends         FriendChecker
+	now             func() int64
+	deltas          DeltaPublisher
+	players         PlayerDeltaPublisher
+	owns            func(uint64) bool
+	hints           StealHintWriter
+	scheduleAdvance func(uid uint64, due int64)
 
 	stealRoll     func(CrossAction) uint16
 	interceptRoll func(CrossAction) uint8
@@ -102,6 +103,14 @@ func (o *Owner) SetStealHintWriter(hints StealHintWriter) {
 func (o *Owner) SetPlayerDeltaPublisher(publisher PlayerDeltaPublisher) {
 	if o != nil {
 		o.players = publisher
+	}
+}
+
+// SetAdvanceScheduler refreshes the owner's next gameplay boundary after a
+// cross-farm write. The callback is intentionally transport-neutral.
+func (o *Owner) SetAdvanceScheduler(schedule func(uint64, int64)) {
+	if o != nil {
+		o.scheduleAdvance = schedule
 	}
 }
 
@@ -186,10 +195,14 @@ func (o *Owner) validate(ctx context.Context, action CrossAction) (CrossResult, 
 
 func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 	var outcome ownerOutcome
+	var nextAdvance int64
 	err := o.runtime.Do(action.OwnerUID, func(owner *room.FarmActor) error {
 		if owner == nil || owner.Aggregate == nil {
 			return errors.New("cross: owner actor aggregate is nil")
 		}
+		defer func() {
+			nextAdvance = owner.Aggregate.NextAdvanceAt(o.now())
+		}()
 		if cached, ok := owner.CachedResult(action.ReqID); ok {
 			if previous, typed := cached.(CrossResult); typed {
 				outcome.result = previous
@@ -242,12 +255,21 @@ func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 		if eventErr != nil {
 			return eventErr
 		}
-		owner.RecordOutbox(event)
-		owner.RequireFlush()
+		if int(action.PlotIndex) < len(owner.Aggregate.Plots) {
+			owner.RequireCrossOwnerFlush(action.PlotIndex, event)
+		} else {
+			// An invalid client plot still needs a durable receipt/outbox, but
+			// there is no safe single plot row for the reduced commit.
+			owner.RecordOutbox(event)
+			owner.RequireFlush()
+		}
 		return nil
 	})
 	if err != nil {
 		return ownerOutcome{}, err
+	}
+	if o.scheduleAdvance != nil {
+		o.scheduleAdvance(action.OwnerUID, nextAdvance)
 	}
 	return outcome, nil
 }

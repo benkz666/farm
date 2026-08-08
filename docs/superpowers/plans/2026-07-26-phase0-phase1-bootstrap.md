@@ -6,7 +6,7 @@
 
 **Architecture:** 单二进制 `farm-server` 内嵌 Gateway/Auth/Actor/Farm；存储经 `FarmStore`/`SessionStore` 接口访问 MySQL（权威）与 Redis（session + 农场热缓存）；客户端 `client/` 为 Vite+Vue3，three.js 场景与本地权威玩法暂留，`src/net/` 仅联调。
 
-**Tech Stack:** Go 1.22+、MySQL 8、Redis 7、Docker Compose、Vite、Vue 3、three.js、JSON Envelope（`farm.v1.json`）
+**Tech Stack:** Go 1.22+、MySQL 8、Redis 7、Docker Compose、Vite、Vue 3、three.js、二进制批 Envelope（`farm.v2.bin`）
 
 ## Global Constraints
 
@@ -490,7 +490,7 @@ git commit -am "feat: 实现 EnterFarm 所需的 FarmSnapshot"
 **Interfaces:**
 - Envelope JSON：`{"cmd":n,"client_seq":n,"err":n,"payload":{}}`
 - `POST /api/register|login` → `{uid,token,ws_url}`；错误 `{err:code}`
-- WS：`/ws`；子协议 `farm.v1.json`；Handshake 校验 token+config_ver；Ping→Pong；EnterFarm 调 Actor
+- WS：`/ws`；子协议 `farm.v2.bin`；Handshake 校验 token+config_ver；Ping→Pong；EnterFarm 调 Actor
 - 限流：每连接 20 容量 / 10 rps → `1003`
 
 - [x] **Step 1: Envelope 编解码单测**

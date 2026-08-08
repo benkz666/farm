@@ -18,6 +18,7 @@ import (
 	"farm/server/farmsvr/room"
 	"farm/server/gateway/presence"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
@@ -45,6 +46,7 @@ type Gateway struct {
 	farmRPC                   farmrpc.Client
 	routes                    *sharding.RouteTable
 	friends                   store.FriendStore
+	friendPayloads            *friendPayloadCache
 	inviteSecret              []byte
 	now                       func() int64
 	timeProfiles              *gameconfig.TimeProfileSwitch
@@ -57,9 +59,11 @@ type Gateway struct {
 	connectionMu              sync.Mutex
 	connections               sync.Map
 	allowDebug                bool
+	disableWSRateLimit        bool
 	crossClient               CrossFarmClient
 	crossEnabled              bool
 	crossPending              sync.Map
+	crossSlots                chan struct{}
 	nextCrossReqID            atomic.Uint64
 	stealHints                store.StealHintStore
 	taskMail                  store.TaskMailStore
@@ -70,6 +74,7 @@ type Gateway struct {
 	afterConnectionRegistered func(*wsConnection) // test seam for pre-ready pushes
 	debugFanout               *DebugFanout
 	metrics                   *telemetry.Metrics
+	apiDocs                   http.Handler
 }
 
 // Option configures optional Gateway boundaries.
@@ -177,15 +182,47 @@ func WithMetrics(m *telemetry.Metrics) Option {
 	}
 }
 
+// WithWSRateLimitDisabled bypasses the per-connection token bucket. It exists
+// only for isolated capacity tests; production callers should keep the default
+// limiter enabled.
+func WithWSRateLimitDisabled() Option {
+	return func(gateway *Gateway) {
+		gateway.disableWSRateLimit = true
+	}
+}
+
+// WithCrossInFlightLimit bounds the number of cross-farm sagas retained by a
+// Gateway. Each saga owns a timer, pending response and multiple durable Farm
+// operations; bounding them prevents an overload burst from becoming an OOM.
+// A non-positive limit disables the guard.
+func WithCrossInFlightLimit(limit int) Option {
+	return func(gateway *Gateway) {
+		if limit <= 0 {
+			gateway.crossSlots = nil
+			return
+		}
+		gateway.crossSlots = make(chan struct{}, limit)
+	}
+}
+
+// WithAPIDocs mounts an already environment-gated, offline documentation handler.
+func WithAPIDocs(handler http.Handler) Option {
+	return func(gateway *Gateway) {
+		gateway.apiDocs = handler
+	}
+}
+
 // New constructs the transport gateway from its application boundaries.
 func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, options ...Option) *Gateway {
 	gateway := &Gateway{
-		auth:         auth,
-		sessions:     sessions,
-		runtime:      runtime,
-		rooms:        NewRoomHub(),
-		now:          func() int64 { return time.Now().UnixMilli() },
-		timeProfiles: gameconfig.NewTimeProfileSwitch(gameconfig.TimeProfileDemo),
+		auth:           auth,
+		sessions:       sessions,
+		runtime:        runtime,
+		rooms:          NewRoomHub(),
+		now:            func() int64 { return time.Now().UnixMilli() },
+		timeProfiles:   gameconfig.NewTimeProfileSwitch(gameconfig.TimeProfileDemo),
+		friendPayloads: &friendPayloadCache{},
+		crossSlots:     make(chan struct{}, 1024),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -265,6 +302,16 @@ func (g *Gateway) Handler() http.Handler {
 	if g.allowDebug {
 		mux.HandleFunc("/api/debug/advance", g.debugAdvance)
 	}
+	if g.apiDocs != nil {
+		mux.Handle("/docs/", g.apiDocs)
+		mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+		})
+	}
 	return mux
 }
 
@@ -280,7 +327,25 @@ func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrp
 	if command.Originator.ConnID != 0 && command.Originator.GatewayID == "" {
 		command.Originator.GatewayID = g.gatewayID
 	}
-	return g.farmRPC.Execute(ctx, farmID, command)
+	response, err := g.farmRPC.Execute(ctx, farmID, command)
+	if err != nil {
+		return farmrpc.CommandResponse{}, err
+	}
+	if response.Err == errcode.OK && len(response.Payload) > 0 {
+		if err := clientwire.ValidatePayloadObject(response.Payload); err != nil {
+			return farmrpc.CommandResponse{}, fmt.Errorf("gateway: invalid Farm RPC response: %w", err)
+		}
+	}
+	if response.Err == errcode.OK && command.PreferPrepared {
+		if len(response.PreparedPayload) > 0 &&
+			response.PreparedField != clientwire.PreparedEnterFarmResponse && response.PreparedField != clientwire.PreparedSyncFarmResponse {
+			return farmrpc.CommandResponse{}, errors.New("gateway: invalid prepared Farm RPC response")
+		}
+		if len(response.PreparedPayload) == 0 && len(response.Payload) == 0 {
+			return farmrpc.CommandResponse{}, errors.New("gateway: empty Farm RPC response")
+		}
+	}
+	return response, nil
 }
 
 func (g *Gateway) connectionRef(connection *wsConnection) presence.ConnRef {
@@ -393,21 +458,12 @@ func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnec
 	if g == nil || connection == nil || !connection.authed || connection.uid == 0 || connection.id == 0 {
 		return false
 	}
+	value, ok := g.connections.Load(connection.id)
+	if !ok || value != connection {
+		return false
+	}
 	if g.connRegistry == nil {
-		value, ok := g.connections.Load(connection.id)
-		if ok {
-			return value == connection
-		}
-		replaced := false
-		g.connections.Range(func(_, value any) bool {
-			current, valid := value.(*wsConnection)
-			if valid && current != nil && current.uid == connection.uid {
-				replaced = true
-				return false
-			}
-			return true
-		})
-		return !replaced
+		return true
 	}
 	if g.gatewayID == "" {
 		return false
@@ -442,6 +498,63 @@ func (g *Gateway) renewConnectionLease(ctx context.Context, connection *wsConnec
 		)
 	}
 	return true
+}
+
+// validateAuthenticatedConnection keeps the hot request path local while
+// periodically revalidating the session and distributed ownership in Redis.
+// Concurrent request/Pong callbacks share one atomic deadline, so only one of
+// them performs the refresh for a given interval.
+func (g *Gateway) validateAuthenticatedConnection(ctx context.Context, connection *wsConnection) bool {
+	if g == nil || connection == nil || !connection.authed || connection.uid == 0 || connection.id == 0 {
+		return false
+	}
+	value, ok := g.connections.Load(connection.id)
+	if !ok || value != connection {
+		return false
+	}
+	if !connection.claimAuthValidation(time.Now()) {
+		return true
+	}
+	sessionUID, err := g.sessions.Get(ctx, connection.token)
+	if err != nil || sessionUID != connection.uid {
+		return false
+	}
+	return g.renewConnectionLease(ctx, connection)
+}
+
+func (connection *wsConnection) scheduleNextAuthValidation(now time.Time) {
+	if connection == nil {
+		return
+	}
+	// Connections often arrive in a short burst after deployment or a load-test
+	// ramp. Spread their first Redis validation across one full interval to avoid
+	// a synchronized renewal spike. The latest refresh remains comfortably
+	// inside presence.DefaultLeaseTTL (2 minutes).
+	jitterSlots := uint64(wsAuthValidationInterval / time.Millisecond)
+	var jitter time.Duration
+	if jitterSlots > 0 {
+		// Knuth's multiplicative hash spreads consecutive connection IDs.
+		jitter = time.Duration((connection.id*2_654_435_761)%jitterSlots) * time.Millisecond
+	}
+	connection.nextAuthValidationAt.Store(now.Add(wsAuthValidationInterval + jitter).UnixNano())
+}
+
+func (connection *wsConnection) claimAuthValidation(now time.Time) bool {
+	if connection == nil {
+		return false
+	}
+	for {
+		next := connection.nextAuthValidationAt.Load()
+		if next > now.UnixNano() {
+			return false
+		}
+		if connection.nextAuthValidationAt.CompareAndSwap(
+			next,
+			now.Add(wsAuthValidationInterval).UnixNano(),
+		) {
+			return true
+		}
+	}
 }
 
 type debugAdvanceRequest struct {

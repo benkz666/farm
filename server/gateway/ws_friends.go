@@ -105,7 +105,7 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 				HasStealable: hints[friend.UID],
 			})
 		}
-		response.Payload = marshalPayload(friendListResponse{Friends: list})
+		response.Payload = g.friendPayloads.friendList(connection.uid, list)
 		return response
 
 	case CommandSearchUser:
@@ -123,11 +123,9 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			response.Err = errcode.Internal
 			return response
 		}
-		response.Payload = marshalPayload(searchUserResponse{
-			Users: []searchUserResponseItem{{
-				UID:      clientjson.UID(user.UID),
-				Nickname: user.Nickname,
-			}},
+		response.Payload = g.friendPayloads.search(payload.Username, searchUserResponseItem{
+			UID:      clientjson.UID(user.UID),
+			Nickname: user.Nickname,
 		})
 		return response
 

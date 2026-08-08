@@ -77,14 +77,14 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	endpoint.Scheme = "ws"
 	endpoint.Path = "/ws"
 	conn, response, err := websocket.DefaultDialer.Dial(endpoint.String(), http.Header{
-		"Sec-WebSocket-Protocol": []string{JSONSubprotocol},
+		"Sec-WebSocket-Protocol": []string{BinarySubprotocol},
 	})
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != JSONSubprotocol {
-		t.Fatalf("subprotocol = %q, want %q", got, JSONSubprotocol)
+	if got := response.Header.Get("Sec-WebSocket-Protocol"); got != BinarySubprotocol {
+		t.Fatalf("subprotocol = %q, want %q", got, BinarySubprotocol)
 	}
 
 	writeEnvelope(t, conn, Envelope{
@@ -142,6 +142,41 @@ func TestWebSocketHandshakePingAndEnterOwnFarm(t *testing.T) {
 	})
 	if got := readEnvelope(t, conn); got.Err != errcode.NotFriend {
 		t.Fatalf("foreign EnterFarm error = %d, want %d", got.Err, errcode.NotFriend)
+	}
+}
+
+func TestWebSocketBinaryBatchProcessesHandshakeThenPingInOrder(t *testing.T) {
+	t.Parallel()
+
+	connection := openWebSocket(t, New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
+	).Handler())
+	frame, err := EncodeBinaryBatch([]Envelope{
+		{Cmd: CommandHandshake, ClientSeq: 1, Payload: json.RawMessage(`{"token":"token-42","client_config_ver":1}`)},
+		{Cmd: CommandPing, ClientSeq: 2, Payload: json.RawMessage(`{"client_time":123}`)},
+	})
+	if err != nil {
+		t.Fatalf("encode request batch: %v", err)
+	}
+	if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+		t.Fatalf("write request batch: %v", err)
+	}
+	messageType, data, err := connection.ReadMessage()
+	if err != nil {
+		t.Fatalf("read response batch: %v", err)
+	}
+	responses, err := DecodeBinaryBatch(data)
+	if err != nil {
+		t.Fatalf("decode response batch: %v", err)
+	}
+	if messageType != websocket.BinaryMessage || len(responses) != 2 {
+		t.Fatalf("messageType=%d responses=%#v", messageType, responses)
+	}
+	if responses[0].Cmd != CommandHandshake || responses[0].ClientSeq != 1 || responses[0].Err != errcode.OK ||
+		responses[1].Cmd != CommandPing || responses[1].ClientSeq != 2 || responses[1].Err != errcode.OK {
+		t.Fatalf("responses=%#v", responses)
 	}
 }
 
@@ -1240,12 +1275,16 @@ func TestWebSocketRateLimitResponsePreservesRequestHeader(t *testing.T) {
 	if got := readEnvelope(t, conn); got.Err != errcode.OK {
 		t.Fatalf("handshake response = %#v", got)
 	}
+	requests := make([]Envelope, 0, connectionBurst-1)
 	for clientSeq := uint32(2); clientSeq <= connectionBurst; clientSeq++ {
-		writeEnvelope(t, conn, Envelope{
+		requests = append(requests, Envelope{
 			Cmd:       CommandPing,
 			ClientSeq: clientSeq,
 			Payload:   json.RawMessage(`{"client_time":0}`),
 		})
+	}
+	writeEnvelopes(t, conn, requests)
+	for range requests {
 		if got := readEnvelope(t, conn); got.Err != errcode.OK {
 			t.Fatalf("Ping response = %#v", got)
 		}
@@ -1259,6 +1298,28 @@ func TestWebSocketRateLimitResponsePreservesRequestHeader(t *testing.T) {
 	got := readEnvelope(t, conn)
 	if got.Cmd != CommandPing || got.ClientSeq != connectionBurst+1 || got.Err != errcode.RateLimited {
 		t.Fatalf("rate limit response = %#v", got)
+	}
+}
+
+func TestWebSocketRateLimitCanBeDisabledForCapacityTest(t *testing.T) {
+	t.Parallel()
+
+	conn := openWebSocket(t, New(
+		authStub{},
+		sessionStub{uid: 42},
+		runtimeStub{},
+		WithWSRateLimitDisabled(),
+	).Handler())
+	handshakeWebSocket(t, conn, "token-42")
+	for clientSeq := uint32(2); clientSeq <= connectionBurst+5; clientSeq++ {
+		writeEnvelope(t, conn, Envelope{
+			Cmd:       CommandPing,
+			ClientSeq: clientSeq,
+			Payload:   json.RawMessage(`{"client_time":0}`),
+		})
+		if got := readEnvelope(t, conn); got.Cmd != CommandPing || got.ClientSeq != clientSeq || got.Err != errcode.OK {
+			t.Fatalf("Ping %d response = %#v", clientSeq, got)
+		}
 	}
 }
 
@@ -1336,12 +1397,16 @@ func TestSearchUserIsLimitedByConnectionLimiter(t *testing.T) {
 
 	conn := openWebSocket(t, New(authStub{}, sessionStub{uid: 42}, runtimeStub{}).Handler())
 	handshakeWebSocket(t, conn, "token-42")
+	requests := make([]Envelope, 0, connectionBurst-1)
 	for clientSeq := uint32(2); clientSeq <= connectionBurst; clientSeq++ {
-		writeEnvelope(t, conn, Envelope{
+		requests = append(requests, Envelope{
 			Cmd:       CommandPing,
 			ClientSeq: clientSeq,
 			Payload:   json.RawMessage(`{"client_time":0}`),
 		})
+	}
+	writeEnvelopes(t, conn, requests)
+	for range requests {
 		if got := readEnvelope(t, conn); got.Err != errcode.OK {
 			t.Fatalf("Ping response = %#v", got)
 		}
@@ -1804,7 +1869,7 @@ func TestVisitorCanSellOwnFruitWhileVisiting(t *testing.T) {
 	connection := &wsConnection{uid: visitorUID, roomUID: 42}
 
 	response := gateway.handlePlotOrShop(connection, Envelope{
-		Cmd: CommandSell,
+		Cmd:     CommandSell,
 		Payload: marshalPayload(shopRequest{ItemID: 1, Quantity: 2}),
 	})
 	if response.Err != errcode.OK {
@@ -2301,7 +2366,7 @@ func openWebSocketAt(t *testing.T, serverURL string) *websocket.Conn {
 	endpoint.Scheme = "ws"
 	endpoint.Path = "/ws"
 	conn, _, err := websocket.DefaultDialer.Dial(endpoint.String(), http.Header{
-		"Sec-WebSocket-Protocol": []string{JSONSubprotocol},
+		"Sec-WebSocket-Protocol": []string{BinarySubprotocol},
 	})
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
@@ -2312,11 +2377,16 @@ func openWebSocketAt(t *testing.T, serverURL string) *websocket.Conn {
 
 func writeEnvelope(t *testing.T, conn *websocket.Conn, envelope Envelope) {
 	t.Helper()
-	data, err := EncodeEnvelope(envelope)
+	writeEnvelopes(t, conn, []Envelope{envelope})
+}
+
+func writeEnvelopes(t *testing.T, conn *websocket.Conn, envelopes []Envelope) {
+	t.Helper()
+	data, err := EncodeBinaryBatch(envelopes)
 	if err != nil {
-		t.Fatalf("EncodeEnvelope: %v", err)
+		t.Fatalf("EncodeBinaryBatch: %v", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		t.Fatalf("write websocket message: %v", err)
 	}
 }
@@ -2336,55 +2406,27 @@ func readEnvelope(t *testing.T, conn *websocket.Conn) Envelope {
 		}
 		readEnvelopePending.Delete(conn)
 	}
-	_, data, err := conn.ReadMessage()
+	messageType, data, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read websocket message: %v", err)
 	}
-	envelope, err := DecodeEnvelope(data)
+	if messageType != websocket.BinaryMessage {
+		t.Fatalf("websocket message type = %d, want binary", messageType)
+	}
+	envelopes, err := DecodeBinaryBatch(data)
 	if err != nil {
-		t.Fatalf("DecodeEnvelope: %v", err)
+		t.Fatalf("DecodeBinaryBatch: %v", err)
 	}
-	if envelope.Cmd != CommandPushBatch {
-		return envelope
+	if len(envelopes) == 0 {
+		t.Fatal("empty binary batch")
 	}
-	expanded, err := expandPushBatchEnvelope(envelope)
-	if err != nil {
-		t.Fatalf("expand PushBatch: %v", err)
+	if len(envelopes) > 1 {
+		readEnvelopePending.Store(conn, envelopes[1:])
 	}
-	if len(expanded) == 0 {
-		t.Fatal("PushBatch contained no envelopes")
-	}
-	if len(expanded) > 1 {
-		readEnvelopePending.Store(conn, expanded[1:])
-	}
-	return expanded[0]
+	return envelopes[0]
 }
 
 var readEnvelopePending sync.Map // *websocket.Conn -> []Envelope
-
-func expandPushBatchEnvelope(batch Envelope) ([]Envelope, error) {
-	var payload struct {
-		Envelopes []json.RawMessage `json:"envelopes"`
-	}
-	if err := json.Unmarshal(batch.Payload, &payload); err != nil {
-		return nil, err
-	}
-	if len(payload.Envelopes) == 0 || len(payload.Envelopes) > clientwire.MaxPushBatchEnvelopes {
-		return nil, fmt.Errorf("invalid PushBatch size %d", len(payload.Envelopes))
-	}
-	out := make([]Envelope, 0, len(payload.Envelopes))
-	for i, raw := range payload.Envelopes {
-		inner, err := DecodeEnvelope(raw)
-		if err != nil {
-			return nil, fmt.Errorf("item %d: %w", i, err)
-		}
-		if inner.Cmd == CommandPushBatch {
-			return nil, fmt.Errorf("item %d: nested PushBatch", i)
-		}
-		out = append(out, inner)
-	}
-	return out, nil
-}
 
 func handshakeWebSocket(t *testing.T, conn *websocket.Conn, token string) {
 	t.Helper()

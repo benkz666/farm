@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: farm-route-table
+  namespace: farm
+  labels:
+    app.kubernetes.io/name: farm
+    farm.example.com/route-profile: dual
+data:
+  route-table.json: |
+    {
+      "logical_shards": 1024,
+      "routes": [
+        {"shard_start": 0, "shard_end": 511, "farm_id": "farm-0"},
+        {"shard_start": 512, "shard_end": 1023, "farm_id": "farm-1"}
+      ]
+    }

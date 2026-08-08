@@ -1,0 +1,160 @@
+openapi: 3.1.0
+info:
+  title: 经典农场 HTTP API
+  version: 1.0.0
+  description: |
+    浏览器对外 HTTP 契约。游戏内操作使用 WebSocket，见 AsyncAPI 文档。
+servers:
+  - url: /
+    description: 当前开发环境
+tags:
+  - name: Auth
+  - name: Invite
+  - name: Debug
+paths:
+  /api/register:
+    post:
+      operationId: register
+      tags: [Auth]
+      summary: 注册账号并签发会话
+      x-performance-tier: ladder
+      x-performance-scenario: register
+      x-performance-reason: 密码哈希和 MySQL 写入
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthRequest'}
+            example: {username: alice, password: secret12}
+      responses:
+        '200': {$ref: '#/components/responses/AuthSuccess'}
+        '400': {$ref: '#/components/responses/APIError'}
+        '405': {$ref: '#/components/responses/APIError'}
+        '500': {$ref: '#/components/responses/APIError'}
+  /api/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: 登录并签发会话
+      x-performance-tier: ladder
+      x-performance-scenario: login
+      x-performance-reason: 密码哈希和 Redis 会话写入
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthRequest'}
+            example: {username: alice, password: secret12}
+      responses:
+        '200': {$ref: '#/components/responses/AuthSuccess'}
+        '400': {$ref: '#/components/responses/APIError'}
+        '405': {$ref: '#/components/responses/APIError'}
+        '500': {$ref: '#/components/responses/APIError'}
+  /i/{token}:
+    get:
+      operationId: inviteLanding
+      tags: [Invite]
+      summary: 分享链接落地或已登录直接加好友
+      security:
+        - bearerAuth: []
+        - {}
+      x-performance-tier: baseline
+      x-performance-scenario: invite_landing
+      x-performance-reason: 低频社交接口
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: 已登录，返回接受结果
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InviteResponse'}
+        '302':
+          description: 未登录，重定向前端登录页
+        '400': {$ref: '#/components/responses/APIError'}
+        '405': {$ref: '#/components/responses/APIError'}
+  /api/debug/advance:
+    post:
+      operationId: debugAdvance
+      tags: [Debug]
+      summary: 推进开发环境逻辑时钟
+      description: 仅在 FARM_ALLOW_DEBUG_TIME=1 时存在。
+      x-performance-tier: functional-only
+      x-performance-scenario: debug_advance
+      x-performance-reason: 调试接口，不用于容量规划
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [seconds]
+              properties:
+                seconds: {type: integer, minimum: 1}
+      responses:
+        '200':
+          description: 推进成功
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [now]
+                properties:
+                  now: {type: integer, format: int64}
+        '400': {$ref: '#/components/responses/APIError'}
+        '404': {description: 调试时钟未启用}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    DecimalUint64:
+      type: string
+      pattern: '^[0-9]+$'
+      description: 64 位无符号整数的十进制字符串，不得转为 JavaScript Number。
+      examples: ['18446744073709551615']
+    AuthRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username: {type: string, minLength: 1, maxLength: 32}
+        password: {type: string, minLength: 1}
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      required: [uid, token, ws_url]
+      properties:
+        uid: {$ref: '#/components/schemas/DecimalUint64'}
+        token: {type: string}
+        ws_url: {type: string, format: uri}
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [err]
+      properties:
+        err: {type: integer, format: int32}
+    InviteResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, err]
+      properties:
+        ok: {type: boolean}
+        err: {type: integer, format: int32}
+  responses:
+    AuthSuccess:
+      description: 认证成功
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AuthResponse'}
+    APIError:
+      description: API 错误
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ErrorResponse'}

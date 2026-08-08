@@ -40,6 +40,9 @@ while IFS= read -r migration; do
     VALUES ('${version}', CAST(UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3)) * 1000 AS UNSIGNED));
   "
   ((applied += 1))
-done < <(find /migrations -type f -name '*.sql' | sort -t/ -k3,3)
+# Migrations are split by domain directories, so sorting the full path would
+# run auth/006 before farm/001 on a fresh database. Sort by the globally unique
+# versioned basename instead.
+done < <(find /migrations -type f -name '*.sql' -printf '%f\t%p\n' | sort -k1,1 | cut -f2-)
 
 printf '数据库迁移完成：新应用 %d 个，已跳过 %d 个\n' "$applied" "$skipped"

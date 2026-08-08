@@ -101,6 +101,10 @@ func (g *Gateway) applyFarmDeltaBatch(connIDs []uint64, envelope []byte) error {
 	if err != nil || delta.OwnerUID == 0 {
 		return errApplyBadRequest
 	}
+	record, err := clientwire.EncodeFarmDeltaRecord(delta)
+	if err != nil {
+		return errApplyBadRequest
+	}
 	seen := make(map[uint64]struct{}, len(connIDs))
 	var firstWriteErr error
 	for _, connID := range connIDs {
@@ -119,7 +123,7 @@ func (g *Gateway) applyFarmDeltaBatch(connIDs []uint64, envelope []byte) error {
 		if !wsConn.subscribedTo(delta.OwnerUID) {
 			continue
 		}
-		if err := wsConn.pushFarmDelta(delta.OwnerUID, delta, envelope); err != nil {
+		if err := wsConn.pushFarmDelta(delta.OwnerUID, delta, record); err != nil {
 			if firstWriteErr == nil {
 				firstWriteErr = err
 			}

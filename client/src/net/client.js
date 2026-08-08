@@ -1,6 +1,12 @@
 /** 期 1/2 联调：HTTP auth + WS Envelope。不写入本地 game/state（由 applyPatch 负责）。 */
 
 import { parseJSONSafe, wireUid, wireUint64 } from './jsonSafe.js'
+import {
+  decodeBinaryBatch,
+  encodeBinaryBatch,
+  MAX_BINARY_BATCH_ENVELOPES,
+  WS_BINARY_SUBPROTOCOL,
+} from './binaryWire.js'
 
 export const CMD_HANDSHAKE = 100
 export const CMD_PING = 102
@@ -23,10 +29,6 @@ export const CMD_MAIL_NOTIFY = 9004
 export const CMD_SESSION_KICK = 9006
 export const CMD_TASK_NOTIFY = 9008
 /** 一次 WebSocket 帧内携带多条 push Envelope；client_seq 恒为 0。 */
-export const CMD_PUSH_BATCH = 9010
-
-/** PushBatch 内层 Envelope 数量上限（与服务端一致）。 */
-export const MAX_PUSH_BATCH_ENVELOPES = 64
 
 /** 地块动作（protocol 5.3）。 */
 export const CMD_TILL = 206
@@ -59,7 +61,7 @@ export const CMD_CODEX_LIST = 612
 export const CMD_CLAIM_DAILY_LOGIN = 614
 export const CMD_SET_TIME_PROFILE = 616
 
-export const WS_SUBPROTOCOL = 'farm.v1.json'
+export const WS_SUBPROTOCOL = WS_BINARY_SUBPROTOCOL
 export const CLIENT_CONFIG_VER = 1
 
 /** 默认请求超时（毫秒）。 */
@@ -86,6 +88,7 @@ const ERR_NOT_FRIEND = 1401
  *   requestTimeoutMs?: number,
  *   reconnectBaseMs?: number,
  *   reconnectMaxMs?: number,
+ *   queueMicrotask?: (fn: () => void) => void,
  *   getResumeContext?: () => ResumeContext,
  * }} NetClientOptions
  */
@@ -117,6 +120,7 @@ export class NetClient {
     this._setTimeout = options.setTimeout ?? ((fn, ms) => globalThis.setTimeout(fn, ms))
     this._clearTimeout = options.clearTimeout ?? ((id) => globalThis.clearTimeout(id))
     this._random = options.random ?? Math.random.bind(Math)
+    this._queueMicrotask = options.queueMicrotask ?? globalThis.queueMicrotask.bind(globalThis)
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.reconnectBaseMs = options.reconnectBaseMs ?? DEFAULT_RECONNECT_BASE_MS
     this.reconnectMaxMs = options.reconnectMaxMs ?? DEFAULT_RECONNECT_MAX_MS
@@ -140,6 +144,8 @@ export class NetClient {
     this._openingWs = null
     /** 致命恢复失败后的终止态；显式 connect 可清除。 */
     this._fatalStopped = false
+    this._sendQueue = []
+    this._sendScheduled = false
   }
 
   /**
@@ -564,12 +570,42 @@ export class NetClient {
       }, this.requestTimeoutMs)
       this._pending.set(client_seq, entry)
       try {
-        ws.send(JSON.stringify(envelope))
+        this._sendQueue.push({ ws, envelope })
+        this._scheduleSendFlush()
       } catch (err) {
         this._pending.delete(client_seq)
         entry.reject(err instanceof Error ? err : new Error(String(err)))
       }
     })
+  }
+
+  _scheduleSendFlush() {
+    if (this._sendScheduled) return
+    this._sendScheduled = true
+    this._queueMicrotask(() => {
+      this._sendScheduled = false
+      this._flushSendQueue()
+    })
+  }
+
+  _flushSendQueue() {
+    const queued = this._sendQueue
+    this._sendQueue = []
+    for (let start = 0; start < queued.length; start += MAX_BINARY_BATCH_ENVELOPES) {
+      const chunk = queued.slice(start, start + MAX_BINARY_BATCH_ENVELOPES)
+      const ws = chunk[0]?.ws
+      if (!ws || ws !== this._ws || ws.readyState !== this._WebSocket.OPEN) continue
+      try {
+        ws.send(encodeBinaryBatch(chunk.map((item) => item.envelope)))
+      } catch (error) {
+        for (const item of chunk) {
+          const pending = this._pending.get(item.envelope.client_seq)
+          if (!pending) continue
+          this._pending.delete(item.envelope.client_seq)
+          pending.reject(error instanceof Error ? error : new Error(String(error)))
+        }
+      }
+    }
   }
 
   /**
@@ -627,6 +663,7 @@ export class NetClient {
         return
       }
       this._openingWs = ws
+      ws.binaryType = 'arraybuffer'
 
       ws.onopen = () => {
         if (settled) return
@@ -862,55 +899,28 @@ export class NetClient {
     const event = maybeEvent === undefined ? wsOrEvent : maybeEvent
     const ws = maybeEvent === undefined ? this._ws : wsOrEvent
     if (ws != null && this._ws != null && this._ws !== ws) return
-    let envelope
+    if (typeof Blob !== 'undefined' && event.data instanceof Blob) {
+      void event.data.arrayBuffer().then((data) => this._onMessage(ws, { data })).catch(() => {})
+      return
+    }
+    let envelopes
     try {
-      envelope = parseJSONSafe(typeof event.data === 'string' ? event.data : String(event.data))
+      if (typeof event.data === 'string') throw new Error('net: text frame is not supported')
+      envelopes = decodeBinaryBatch(event.data)
     } catch {
+      this._failProtocol('net: invalid binary frame')
       return
     }
-    if (!envelope || typeof envelope.client_seq !== 'number') return
-    if (envelope.client_seq === 0) {
-      if (envelope.cmd === CMD_PUSH_BATCH) {
-        this._dispatchPushBatch(envelope)
-        return
+    for (const envelope of envelopes) {
+      if (!envelope || typeof envelope.client_seq !== 'number') continue
+      if (envelope.client_seq === 0) {
+        this._dispatchPush(envelope)
+        continue
       }
-      this._dispatchPush(envelope)
-      return
-    }
-    const pending = this._pending.get(envelope.client_seq)
-    if (!pending) return
-    if (pending.cmd !== envelope.cmd) return
-    this._pending.delete(envelope.client_seq)
-    pending.resolve(envelope)
-  }
-
-  /**
-   * @param {Envelope} batch
-   */
-  _dispatchPushBatch(batch) {
-    const envelopes = batch?.payload?.envelopes
-    if (
-      !Array.isArray(envelopes) ||
-      envelopes.length === 0 ||
-      envelopes.length > MAX_PUSH_BATCH_ENVELOPES
-    ) {
-      this._failProtocol('net: invalid push batch')
-      return
-    }
-    for (const inner of envelopes) {
-      if (!inner || typeof inner !== 'object' || typeof inner.client_seq !== 'number') {
-        this._failProtocol('net: invalid push batch envelope')
-        return
-      }
-      if (inner.cmd === CMD_PUSH_BATCH) {
-        this._failProtocol('net: nested push batch')
-        return
-      }
-      if (inner.client_seq !== 0) {
-        this._failProtocol('net: push batch contains response')
-        return
-      }
-      this._dispatchPush(inner)
+      const pending = this._pending.get(envelope.client_seq)
+      if (!pending || pending.cmd !== envelope.cmd) continue
+      this._pending.delete(envelope.client_seq)
+      pending.resolve(envelope)
     }
   }
 

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 const (
@@ -21,16 +22,20 @@ const (
 
 // Pool reuses one *grpc.ClientConn per target address.
 type Pool struct {
-	token string
-	mu    sync.Mutex
-	conns map[string]*grpc.ClientConn
+	authValue    string
+	authMetadata metadata.MD
+	mu           sync.Mutex
+	conns        map[string]*grpc.ClientConn
 }
 
 // NewPool constructs a connection pool that injects the internal bearer token.
 func NewPool(token string) *Pool {
+	token = strings.TrimSpace(token)
+	authValue := "Bearer " + token
 	return &Pool{
-		token: strings.TrimSpace(token),
-		conns: make(map[string]*grpc.ClientConn),
+		authValue:    authValue,
+		authMetadata: metadata.Pairs(authorizationMetadataKey, authValue),
+		conns:        make(map[string]*grpc.ClientConn),
 	}
 }
 
@@ -54,6 +59,10 @@ func (pool *Pool) Conn(ctx context.Context, target string) (*grpc.ClientConn, er
 		dialCtx,
 		target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		// The transport owns one reusable write buffer per shared ClientConn.
+		// Without this option gRPC allocates a fresh write buffer for each flush,
+		// which is costly for Gateway's high-rate unary Farm RPC traffic.
+		grpc.WithSharedWriteBuffer(true),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                30 * time.Second,
 			Timeout:             10 * time.Second,
@@ -72,11 +81,11 @@ func (pool *Pool) Conn(ctx context.Context, target string) (*grpc.ClientConn, er
 			opts ...grpc.CallOption,
 		) error {
 			if _, hasDeadline := ctx.Deadline(); hasDeadline {
-				return invoker(WithBearerToken(ctx, pool.token), method, req, reply, cc, opts...)
+				return invoker(pool.withBearerToken(ctx), method, req, reply, cc, opts...)
 			}
 			callCtx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
 			defer cancel()
-			return invoker(WithBearerToken(callCtx, pool.token), method, req, reply, cc, opts...)
+			return invoker(pool.withBearerToken(callCtx), method, req, reply, cc, opts...)
 		}),
 		grpc.WithStreamInterceptor(func(
 			ctx context.Context,
@@ -86,7 +95,7 @@ func (pool *Pool) Conn(ctx context.Context, target string) (*grpc.ClientConn, er
 			streamer grpc.Streamer,
 			opts ...grpc.CallOption,
 		) (grpc.ClientStream, error) {
-			return streamer(WithBearerToken(ctx, pool.token), desc, cc, method, opts...)
+			return streamer(pool.withBearerToken(ctx), desc, cc, method, opts...)
 		}),
 	)
 	if err != nil {
@@ -94,6 +103,15 @@ func (pool *Pool) Conn(ctx context.Context, target string) (*grpc.ClientConn, er
 	}
 	pool.conns[target] = conn
 	return conn, nil
+}
+
+// withBearerToken reuses immutable metadata on the common internal-RPC path.
+// If a caller already supplied outgoing metadata, preserve it and append auth.
+func (pool *Pool) withBearerToken(ctx context.Context) context.Context {
+	if existing, ok := metadata.FromOutgoingContext(ctx); ok && len(existing) > 0 {
+		return metadata.AppendToOutgoingContext(ctx, authorizationMetadataKey, pool.authValue)
+	}
+	return metadata.NewOutgoingContext(ctx, pool.authMetadata)
 }
 
 // Close closes every pooled connection.

@@ -451,11 +451,11 @@ func visitorExchange(v *smokePlayer, cmd uint32, payload map[string]any) (gatewa
 		Payload:   mustJSON(payload),
 	}
 	v.seq++
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, err
 	}
-	if err := v.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := v.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, err
 	}
 	if err := v.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -467,15 +467,17 @@ func visitorExchange(v *smokePlayer, cmd uint32, payload map[string]any) (gatewa
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		env, err := gateway.DecodeEnvelope(frame)
+		envelopes, err := gateway.DecodeBinaryBatch(frame)
 		if err != nil {
 			return gateway.Envelope{}, err
 		}
-		if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
-			return env, nil
+		for _, env := range envelopes {
+			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
+				return env, nil
+			}
 		}
 	}
 	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
@@ -705,11 +707,11 @@ func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (gate
 			Payload:   mustJSON(payload),
 		}
 		owner.seq++
-		data, err := gateway.EncodeEnvelope(request)
+		data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 		}
-		if err := owner.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		if err := owner.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 			return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 		}
 		if err := owner.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -722,16 +724,21 @@ func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (gate
 				_ = owner.conn.SetReadDeadline(time.Time{})
 				return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 			}
-			if messageType != websocket.TextMessage {
+			if messageType != websocket.BinaryMessage {
 				continue
 			}
-			env, err := gateway.DecodeEnvelope(frame)
+			envelopes, err := gateway.DecodeBinaryBatch(frame)
 			if err != nil {
 				_ = owner.conn.SetReadDeadline(time.Time{})
 				return gateway.Envelope{}, err
 			}
-			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
-				matched = &env
+			for _, env := range envelopes {
+				if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
+					matched = &env
+					break
+				}
+			}
+			if matched != nil {
 				break
 			}
 			// 忽略 FarmDelta 等服务端推送。
@@ -756,11 +763,11 @@ func exchangeStealEnvelope(conn *websocket.Conn, seq *uint32, ownerUID uint64, p
 		Payload:   mustJSON(map[string]any{"owner_uid": ownerUID, "plot_index": plotIndex, "crop_id": cropID}),
 	}
 	*seq++
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -772,15 +779,17 @@ func exchangeStealEnvelope(conn *websocket.Conn, seq *uint32, ownerUID uint64, p
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		env, err := gateway.DecodeEnvelope(frame)
+		envelopes, err := gateway.DecodeBinaryBatch(frame)
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
-		if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
-			return env, nil
+		for _, env := range envelopes {
+			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
+				return env, nil
+			}
 		}
 	}
 	return gateway.Envelope{}, fmt.Errorf("no matching Steal response seq=%d", request.ClientSeq)

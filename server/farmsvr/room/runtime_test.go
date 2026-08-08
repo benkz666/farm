@@ -64,6 +64,22 @@ func TestRuntimeSerializesConcurrentCallsForSameUID(t *testing.T) {
 	}
 }
 
+func TestRuntimeRejectsColdLoadAtResidentCapacity(t *testing.T) {
+	store := newMemoryFarmStore(farm.NewAggregate(42, "alice"))
+	runtime := NewRuntime(store, time.Hour)
+	runtime.SetMaxResident(1)
+
+	if err := runtime.Do(42, func(*FarmActor) error { return nil }); err != nil {
+		t.Fatalf("first Runtime.Do: %v", err)
+	}
+	if err := runtime.Do(43, func(*FarmActor) error { return nil }); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("second UID error = %v, want ErrCapacity", err)
+	}
+	if err := runtime.Do(42, func(*FarmActor) error { return nil }); err != nil {
+		t.Fatalf("resident UID was rejected: %v", err)
+	}
+}
+
 func TestRuntimeFlushesAndUnloadsIdleActor(t *testing.T) {
 	store := newMemoryFarmStore(farm.NewAggregate(7, "bob"))
 	runtime := NewRuntime(store, 10*time.Millisecond)

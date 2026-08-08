@@ -35,6 +35,28 @@ type crossPending struct {
 	timer      *time.Timer
 }
 
+func (g *Gateway) acquireCrossSlot() bool {
+	if g == nil || g.crossSlots == nil {
+		return true
+	}
+	select {
+	case g.crossSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *Gateway) releaseCrossSlot() {
+	if g == nil || g.crossSlots == nil {
+		return
+	}
+	select {
+	case <-g.crossSlots:
+	default:
+	}
+}
+
 type stealRequest struct {
 	OwnerUID  clientjson.UID `json:"owner_uid"`
 	PlotIndex uint32         `json:"plot_index"`
@@ -164,7 +186,14 @@ func (g *Gateway) dispatchCrossAction(
 	action crossfarm.CrossAction,
 	dayID uint32,
 ) Envelope {
+	if !g.acquireCrossSlot() {
+		return Envelope{
+			Cmd: request.Cmd, ClientSeq: request.ClientSeq,
+			Err: errcode.RateLimited, Payload: emptyPayload,
+		}
+	}
 	if code := g.reserveCrossVisitor(action, dayID); code != errcode.OK {
+		g.releaseCrossSlot()
 		return Envelope{
 			Cmd:       request.Cmd,
 			ClientSeq: request.ClientSeq,
@@ -179,10 +208,10 @@ func (g *Gateway) dispatchCrossAction(
 		clientSeq:  request.ClientSeq,
 		steal:      action.Kind == crossfarm.Steal,
 	}
-	g.crossPending.Store(action.ReqID, pending)
 	pending.timer = time.AfterFunc(crossfarm.PendingTimeout, func() {
 		g.timeoutCrossAction(action.ReqID)
 	})
+	g.crossPending.Store(action.ReqID, pending)
 
 	go g.applyCrossActionAsync(action)
 	return Envelope{}
@@ -240,6 +269,7 @@ func (g *Gateway) timeoutCrossAction(reqID uint64) {
 		return
 	}
 	pending := raw.(*crossPending)
+	g.releaseCrossSlot()
 	if pending.connection == nil {
 		return
 	}
@@ -255,6 +285,7 @@ func (g *Gateway) finishCrossResult(result crossfarm.CrossResult) {
 	var pending *crossPending
 	if raw, ok := g.crossPending.LoadAndDelete(result.ReqID); ok {
 		pending = raw.(*crossPending)
+		g.releaseCrossSlot()
 		if pending.timer != nil {
 			pending.timer.Stop()
 		}

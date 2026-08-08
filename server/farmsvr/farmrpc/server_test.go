@@ -86,6 +86,29 @@ func TestHandlerReadsHotSwitchedTimeProfile(t *testing.T) {
 	}
 }
 
+func TestMarshalSnapshotResponsePreservesUint64Strings(t *testing.T) {
+	snapshot, err := json.Marshal(farm.FarmSnapshotJSON{
+		OwnerUID: 9_007_199_254_740_993,
+		Coin:     9_007_199_254_740_993,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalSnapshotResponse(snapshot, 9_007_199_254_740_993, 123, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response EnterFarmResponse
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("decode response: %v; payload=%s", err, payload)
+	}
+	if response.Snapshot.OwnerUID != 9_007_199_254_740_993 ||
+		response.Snapshot.Coin != 9_007_199_254_740_993 ||
+		uint64(response.FarmSeq) != 9_007_199_254_740_993 {
+		t.Fatalf("response lost uint64 precision: %#v", response)
+	}
+}
+
 func TestHandlerRejectsUnownedFarm(t *testing.T) {
 	handler := NewHandler(runtimeStub{}, []byte("internal-token"), func(uint64) bool { return false }, nil)
 	response := handler.Execute(CommandRequest{Operation: OperationEnterFarm, FarmUID: 42})

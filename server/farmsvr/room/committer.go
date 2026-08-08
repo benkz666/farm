@@ -63,6 +63,7 @@ type commitItem struct {
 	generation uint64
 	snapshot   *farm.Aggregate
 	outbox     []outbox.Event
+	plan       outbox.PersistPlan
 	waiters    []commitWaiter
 }
 
@@ -121,6 +122,12 @@ func (c *Committer) SetMetrics(m *telemetry.Metrics) {
 
 // Enqueue 提交一份 immutable 快照与可选 outbox 事件。
 func (c *Committer) Enqueue(uid, generation uint64, snapshot *farm.Aggregate, outboxEvents []outbox.Event, durable bool) (<-chan CommitResult, error) {
+	return c.EnqueuePlan(uid, generation, snapshot, outboxEvents, outbox.PersistPlan{Mode: outbox.PersistFull}, durable)
+}
+
+// EnqueuePlan preserves the ordinary per-UID ordering while carrying the
+// smallest safe persistence plan for the immutable snapshot.
+func (c *Committer) EnqueuePlan(uid, generation uint64, snapshot *farm.Aggregate, outboxEvents []outbox.Event, plan outbox.PersistPlan, durable bool) (<-chan CommitResult, error) {
 	if c == nil {
 		return nil, errors.New("actor: committer is nil")
 	}
@@ -133,6 +140,7 @@ func (c *Committer) Enqueue(uid, generation uint64, snapshot *farm.Aggregate, ou
 		generation: generation,
 		snapshot:   snapshot,
 		outbox:     append([]outbox.Event(nil), outboxEvents...),
+		plan:       plan,
 		waiters: []commitWaiter{{
 			generation: generation,
 			result:     result,
@@ -204,6 +212,7 @@ func (c *Committer) run() {
 			commits = append(commits, outbox.FarmCommit{
 				Snapshot: entry.snapshot,
 				Outbox:   entry.outbox,
+				Plan:     entry.plan,
 			})
 		}
 		if m := c.metrics; m != nil {
@@ -242,6 +251,7 @@ func (c *Committer) collectBatch() (map[uint64]*commitItem, bool) {
 		if item.generation > entry.generation {
 			entry.generation = item.generation
 			entry.snapshot = item.snapshot
+			entry.plan = item.plan
 		}
 		entry.outbox = mergeOutboxEvents(entry.outbox, item.outbox)
 	}

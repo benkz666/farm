@@ -32,22 +32,298 @@ func (s *Store) CommitFarms(ctx context.Context, commits []outbox.FarmCommit) er
 	if len(commits) == 0 {
 		return nil
 	}
-	snapshots := make([]*farm.Aggregate, 0, len(commits))
-	var outboxEvents []outbox.Event
+	fullSnapshots := make([]*farm.Aggregate, 0, len(commits))
+	var fullOutbox []outbox.Event
+	specialized := make([]outbox.FarmCommit, 0, len(commits))
 	for _, commit := range commits {
-		snapshots = append(snapshots, commit.Snapshot)
-		outboxEvents = append(outboxEvents, commit.Outbox...)
+		if commit.Snapshot == nil {
+			return errors.New("store: invalid farm commit")
+		}
+		if commit.Plan.Mode == outbox.PersistFull ||
+			(commit.Plan.Mode != outbox.PersistCrossOwner && len(commit.Outbox) > 0) {
+			fullSnapshots = append(fullSnapshots, commit.Snapshot)
+			fullOutbox = append(fullOutbox, commit.Outbox...)
+			continue
+		}
+		specialized = append(specialized, commit)
 	}
-	if err := s.saveFarmsToMySQL(ctx, snapshots, outboxEvents); err != nil {
+	if len(fullSnapshots) > 0 {
+		if err := s.saveFarmsToMySQL(ctx, fullSnapshots, fullOutbox); err != nil {
+			return err
+		}
+		if err := s.cacheFarmsPipeline(ctx, fullSnapshots); err != nil {
+			logFarmCacheFailure("cache_farms_pipeline", fullSnapshots, err)
+		}
+	}
+	if len(specialized) > 0 {
+		if err := s.saveSpecializedFarmCommits(ctx, specialized); err != nil {
+			return err
+		}
+		snapshots := make([]*farm.Aggregate, 0, len(specialized))
+		for _, commit := range specialized {
+			snapshots = append(snapshots, commit.Snapshot)
+		}
+		if err := s.cacheFarmsPipeline(ctx, snapshots); err != nil {
+			logFarmCacheFailure("cache_specialized_farms_pipeline", snapshots, err)
+			s.invalidateFarmCaches(snapshots)
+		}
+	}
+	return nil
+}
+
+func logFarmCacheFailure(op string, snapshots []*farm.Aggregate, err error) {
+	telemetry.L().Error("store farm cache pipeline failed",
+		"component", "store", "op", op, "count", len(snapshots), "err", err.Error())
+}
+
+func (s *Store) invalidateFarmCaches(snapshots []*farm.Aggregate) {
+	if s == nil || s.rdb == nil || len(snapshots) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	pipe := s.rdb.Pipeline()
+	for _, snapshot := range snapshots {
+		if snapshot != nil && snapshot.UID != 0 {
+			pipe.Del(ctx, farmKey(snapshot.UID))
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		telemetry.L().Error("store farm cache invalidation failed",
+			"component", "store", "op", "invalidate_specialized_farms", "err", err.Error())
+	}
+}
+
+// SaveEconomy persists the subset mutated by Buy/Sell. It deliberately avoids
+// rewriting plots, daily/cross blobs and codex rows on every shop operation.
+func (s *Store) SaveEconomy(ctx context.Context, agg *farm.Aggregate) error {
+	return s.CommitFarms(ctx, []outbox.FarmCommit{{
+		Snapshot: agg, Plan: outbox.PersistPlan{Mode: outbox.PersistEconomy},
+	}})
+}
+
+// SaveCrossVisitor persists visitor reservation/settlement state without
+// touching plots or codex. Settlement can also modify inventory and level.
+func (s *Store) SaveCrossVisitor(ctx context.Context, agg *farm.Aggregate, includeItems bool) error {
+	return s.CommitFarms(ctx, []outbox.FarmCommit{{
+		Snapshot: agg,
+		Plan:     outbox.PersistPlan{Mode: outbox.PersistCrossVisitor, IncludeItems: includeItems},
+	}})
+}
+
+// CommitCrossOwner atomically persists one owner plot, owner-side state and
+// the result outbox. This preserves the cross-farm durable boundary while
+// avoiding a rewrite of all plots and inventory.
+func (s *Store) CommitCrossOwner(ctx context.Context, agg *farm.Aggregate, plotIndex uint8, event outbox.Event) error {
+	return s.CommitFarms(ctx, []outbox.FarmCommit{{
+		Snapshot: agg, Outbox: []outbox.Event{event},
+		Plan: outbox.PersistPlan{Mode: outbox.PersistCrossOwner, PlotIndex: plotIndex},
+	}})
+}
+
+func encodeCrossVisitorBlobs(agg *farm.Aggregate) ([]byte, []byte, error) {
+	dailyBlob, err := json.Marshal(agg.Daily)
+	if err != nil {
+		return nil, nil, fmt.Errorf("store: encode cross visitor daily uid %d: %w", agg.UID, err)
+	}
+	crossBlob := []byte{}
+	if len(agg.CrossPending) > 0 {
+		crossBlob, err = json.Marshal(agg.CrossPending)
+		if err != nil {
+			return nil, nil, fmt.Errorf("store: encode cross visitor pending uid %d: %w", agg.UID, err)
+		}
+	}
+	return dailyBlob, crossBlob, nil
+}
+
+func (s *Store) saveSpecializedFarmCommits(ctx context.Context, commits []outbox.FarmCommit) error {
+	if s == nil || s.db == nil || len(commits) == 0 {
+		return errors.New("store: invalid specialized farm commits")
+	}
+	now := time.Now().UnixMilli()
+	var economyRows, localPlotRows, visitorRows, ownerRows []string
+	var economyArgs, localPlotArgs, visitorArgs, ownerArgs []any
+	var itemUIDs []uint64
+	var itemSnapshots []*farm.Aggregate
+	var plotValues []string
+	var plotArgs []any
+	var outboxEvents []outbox.Event
+	var codexValues []string
+	var codexArgs []any
+
+	for _, commit := range commits {
+		agg := commit.Snapshot
+		if agg == nil || agg.UID == 0 {
+			return errors.New("store: invalid specialized farm snapshot")
+		}
+		switch commit.Plan.Mode {
+		case outbox.PersistEconomy:
+			petBlob, err := json.Marshal(agg.Pet)
+			if err != nil {
+				return fmt.Errorf("store: encode economy pet uid %d: %w", agg.UID, err)
+			}
+			row := "SELECT ?, ?, ?, ?, ?, ?, ?"
+			if len(economyRows) == 0 {
+				row = "SELECT ? AS uid, ? AS level_value, ? AS exp_value, ? AS coin, ? AS pet_blob, ? AS farm_seq, ? AS updated_at"
+			}
+			economyRows = append(economyRows, row)
+			economyArgs = append(economyArgs, agg.UID, agg.Level, agg.Exp, agg.Coin, petBlob, agg.FarmSeq, now)
+			itemUIDs = append(itemUIDs, agg.UID)
+			itemSnapshots = append(itemSnapshots, agg)
+
+		case outbox.PersistPlot:
+			if int(commit.Plan.PlotIndex) >= len(agg.Plots) {
+				return errors.New("store: invalid specialized local plot commit")
+			}
+			plotBlob, err := EncodePlot(agg.Plots[commit.Plan.PlotIndex])
+			if err != nil {
+				return fmt.Errorf("store: encode local plot uid %d: %w", agg.UID, err)
+			}
+			row := "SELECT ?, ?, ?, ?, CAST(? AS BINARY(8)), ?, ?"
+			if len(localPlotRows) == 0 {
+				row = "SELECT ? AS uid, ? AS level_value, ? AS exp_value, ? AS coin, " +
+					"CAST(? AS BINARY(8)) AS codex_bitmap, ? AS farm_seq, ? AS updated_at"
+			}
+			localPlotRows = append(localPlotRows, row)
+			localPlotArgs = append(localPlotArgs,
+				agg.UID, agg.Level, agg.Exp, agg.Coin,
+				encodeCodexBitmap(agg.CodexHarvests), agg.FarmSeq, now,
+			)
+			plotValues = append(plotValues, "(?, ?, ?)")
+			plotArgs = append(plotArgs, agg.UID, commit.Plan.PlotIndex, plotBlob)
+			if commit.Plan.IncludeItems {
+				itemUIDs = append(itemUIDs, agg.UID)
+				itemSnapshots = append(itemSnapshots, agg)
+			}
+			if commit.Plan.IncludeCodex {
+				for cropID, count := range agg.CodexHarvests {
+					if count == 0 {
+						continue
+					}
+					if _, ok := gameconfig.CropByID(cropID); !ok {
+						return fmt.Errorf("store: invalid codex crop ID %d", cropID)
+					}
+					codexValues = append(codexValues, "(?, ?, ?, ?)")
+					codexArgs = append(codexArgs, agg.UID, cropID, count, now)
+				}
+			}
+
+		case outbox.PersistCrossVisitor:
+			dailyBlob, crossBlob, err := encodeCrossVisitorBlobs(agg)
+			if err != nil {
+				return err
+			}
+			row := "SELECT ?, ?, ?, ?, ?, ?, ?, ?"
+			if len(visitorRows) == 0 {
+				row = "SELECT ? AS uid, ? AS level_value, ? AS exp_value, ? AS coin, ? AS daily_blob, ? AS cross_blob, ? AS farm_seq, ? AS updated_at"
+			}
+			visitorRows = append(visitorRows, row)
+			visitorArgs = append(visitorArgs, agg.UID, agg.Level, agg.Exp, agg.Coin, dailyBlob, crossBlob, agg.FarmSeq, now)
+			if commit.Plan.IncludeItems {
+				itemUIDs = append(itemUIDs, agg.UID)
+				itemSnapshots = append(itemSnapshots, agg)
+			}
+
+		case outbox.PersistCrossOwner:
+			if int(commit.Plan.PlotIndex) >= len(agg.Plots) || len(commit.Outbox) == 0 {
+				return errors.New("store: invalid specialized cross owner commit")
+			}
+			petBlob, err := json.Marshal(agg.Pet)
+			if err != nil {
+				return fmt.Errorf("store: encode cross owner pet uid %d: %w", agg.UID, err)
+			}
+			receiptBlob := []byte{}
+			if len(agg.CrossReceipts) > 0 {
+				receiptBlob, err = json.Marshal(agg.CrossReceipts)
+				if err != nil {
+					return fmt.Errorf("store: encode cross receipts uid %d: %w", agg.UID, err)
+				}
+			}
+			plotBlob, err := EncodePlot(agg.Plots[commit.Plan.PlotIndex])
+			if err != nil {
+				return fmt.Errorf("store: encode cross owner plot uid %d: %w", agg.UID, err)
+			}
+			row := "SELECT ?, ?, ?, ?, ?, ?, ?, ?"
+			if len(ownerRows) == 0 {
+				row = "SELECT ? AS uid, ? AS level_value, ? AS exp_value, ? AS coin, ? AS pet_blob, ? AS cross_receipt_blob, ? AS farm_seq, ? AS updated_at"
+			}
+			ownerRows = append(ownerRows, row)
+			ownerArgs = append(ownerArgs, agg.UID, agg.Level, agg.Exp, agg.Coin, petBlob, receiptBlob, agg.FarmSeq, now)
+			plotValues = append(plotValues, "(?, ?, ?)")
+			plotArgs = append(plotArgs, agg.UID, commit.Plan.PlotIndex, plotBlob)
+			outboxEvents = append(outboxEvents, commit.Outbox...)
+
+		default:
+			return fmt.Errorf("store: unsupported specialized persist mode %d", commit.Plan.Mode)
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin specialized farm tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if len(economyRows) > 0 {
+		query := `UPDATE player AS p JOIN (` + strings.Join(economyRows, " UNION ALL ") + `) AS v ON p.uid = v.uid
+			SET p.level = v.level_value, p.exp = v.exp_value, p.coin = v.coin,
+				p.pet_blob = v.pet_blob, p.farm_seq = v.farm_seq, p.updated_at = v.updated_at`
+		if _, err := tx.ExecContext(ctx, query, economyArgs...); err != nil {
+			return fmt.Errorf("store: batch update economy: %w", err)
+		}
+	}
+	if len(localPlotRows) > 0 {
+		query := `UPDATE player AS p JOIN (` + strings.Join(localPlotRows, " UNION ALL ") + `) AS v ON p.uid = v.uid
+			SET p.level = v.level_value, p.exp = v.exp_value, p.coin = v.coin,
+				p.codex_bitmap = v.codex_bitmap,
+				p.farm_seq = v.farm_seq, p.updated_at = v.updated_at`
+		if _, err := tx.ExecContext(ctx, query, localPlotArgs...); err != nil {
+			return fmt.Errorf("store: batch update local plots: %w", err)
+		}
+	}
+	if len(visitorRows) > 0 {
+		query := `UPDATE player AS p JOIN (` + strings.Join(visitorRows, " UNION ALL ") + `) AS v ON p.uid = v.uid
+			SET p.level = v.level_value, p.exp = v.exp_value, p.coin = v.coin,
+				p.daily_blob = v.daily_blob, p.cross_blob = v.cross_blob,
+				p.farm_seq = v.farm_seq, p.updated_at = v.updated_at`
+		if _, err := tx.ExecContext(ctx, query, visitorArgs...); err != nil {
+			return fmt.Errorf("store: batch update cross visitors: %w", err)
+		}
+	}
+	if len(ownerRows) > 0 {
+		query := `UPDATE player AS p JOIN (` + strings.Join(ownerRows, " UNION ALL ") + `) AS v ON p.uid = v.uid
+			SET p.level = v.level_value, p.exp = v.exp_value, p.coin = v.coin,
+				p.pet_blob = v.pet_blob, p.cross_receipt_blob = v.cross_receipt_blob,
+				p.farm_seq = v.farm_seq, p.updated_at = v.updated_at`
+		if _, err := tx.ExecContext(ctx, query, ownerArgs...); err != nil {
+			return fmt.Errorf("store: batch update cross owners: %w", err)
+		}
+	}
+	if len(plotValues) > 0 {
+		query := "INSERT INTO farm_plot (uid, plot_index, `blob`) VALUES " + strings.Join(plotValues, ",") +
+			" ON DUPLICATE KEY UPDATE `blob` = VALUES(`blob`)"
+		if _, err := tx.ExecContext(ctx, query, plotArgs...); err != nil {
+			return fmt.Errorf("store: batch upsert selected plots: %w", err)
+		}
+	}
+	if err := batchReplaceItemsTx(ctx, tx, itemUIDs, itemSnapshots); err != nil {
 		return err
 	}
-	if err := s.cacheFarmsPipeline(ctx, snapshots); err != nil {
-		telemetry.L().Error("store farm cache pipeline failed",
-			"component", "store",
-			"op", "cache_farms_pipeline",
-			"count", len(snapshots),
-			"err", err.Error(),
-		)
+	if len(codexValues) > 0 {
+		query := `INSERT INTO player_codex (uid, crop_id, harvest_count, updated_at) VALUES ` +
+			strings.Join(codexValues, ",") + `
+			ON DUPLICATE KEY UPDATE
+				harvest_count = GREATEST(harvest_count, VALUES(harvest_count)),
+				updated_at = VALUES(updated_at)`
+		if _, err := tx.ExecContext(ctx, query, codexArgs...); err != nil {
+			return fmt.Errorf("store: batch upsert selected player_codex: %w", err)
+		}
+	}
+	if err := insertOutboxEventsTx(ctx, tx, outboxEvents, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit specialized farms: %w", err)
 	}
 	return nil
 }

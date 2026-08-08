@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"farm/server/domain/farm"
 	"farm/server/shared/errcode"
@@ -20,12 +21,6 @@ const (
 	CommandMailNotify  uint32 = 9004 // 新邮件/邻里申请等个人通知（只推提示，不推全文）
 	CommandSessionKick uint32 = 9006
 	CommandTaskNotify  uint32 = 9008
-	// CommandPushBatch packs multiple already-encoded push Envelopes into one
-	// WebSocket text frame. client_seq is always 0; responses never use this cmd.
-	CommandPushBatch uint32 = 9010
-
-	// MaxPushBatchEnvelopes caps how many inner Envelopes one PushBatch may carry.
-	MaxPushBatchEnvelopes = 64
 )
 
 // Envelope is the public JSON shape written on the WebSocket wire.
@@ -34,6 +29,15 @@ type Envelope struct {
 	ClientSeq uint32          `json:"client_seq"`
 	Err       errcode.Code    `json:"err"`
 	Payload   json.RawMessage `json:"payload"`
+	// PreparedPayload is an already-marshaled typed Protobuf oneof body. It is
+	// never accepted from clients and lets Farm snapshots cross Gateway without
+	// a JSON decode/re-encode. PreparedField is the WireEnvelope oneof field.
+	PreparedPayload []byte `json:"-"`
+	PreparedField   uint32 `json:"-"`
+	// PreparedSuffix contains trusted protobuf fields appended to the prepared
+	// oneof body by Gateway. Keeping it separate avoids copying a large Farm
+	// snapshot merely to add the small relation/mutable fields.
+	PreparedSuffix []byte `json:"-"`
 }
 
 // EncodeFarmDelta builds the FarmDelta push Envelope bytes once for fan-out.
@@ -42,7 +46,22 @@ func EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("wireenv: marshal FarmDelta: %w", err)
 	}
-	return EncodeEnvelope(Envelope{
+	return AppendTrustedEnvelope(nil, Envelope{
+		Cmd:       CommandFarmDelta,
+		ClientSeq: 0,
+		Err:       errcode.OK,
+		Payload:   payload,
+	})
+}
+
+// EncodeFarmDeltaRecord builds a frame-ready binary record for Gateway-local
+// fan-out. Unlike EncodeFarmDelta it is not a complete public frame.
+func EncodeFarmDeltaRecord(delta farm.FarmDelta) ([]byte, error) {
+	payload, err := json.Marshal(delta)
+	if err != nil {
+		return nil, fmt.Errorf("wireenv: marshal FarmDelta: %w", err)
+	}
+	return EncodeTrustedBinaryRecord(Envelope{
 		Cmd:       CommandFarmDelta,
 		ClientSeq: 0,
 		Err:       errcode.OK,
@@ -76,47 +95,34 @@ func DecodeFarmDelta(encoded []byte) (farm.FarmDelta, error) {
 
 // EncodeEnvelope serializes one client Envelope frame.
 func EncodeEnvelope(envelope Envelope) ([]byte, error) {
-	if err := validatePayloadObject(envelope.Payload); err != nil {
+	if err := ValidatePayloadObject(envelope.Payload); err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(envelope)
-	if err != nil {
-		return nil, fmt.Errorf("wireenv: encode envelope: %w", err)
-	}
-	return encoded, nil
+	return AppendTrustedEnvelope(nil, envelope)
 }
 
-// EncodePushBatch builds one cmd=9010 frame that embeds pre-encoded push
-// Envelope JSON objects via json.RawMessage — no per-envelope decode/re-encode.
-// Caller must pass 2..MaxPushBatchEnvelopes envelopes; a single push should be
-// written raw to avoid the wrapper bytes.
-func EncodePushBatch(envelopes [][]byte) ([]byte, error) {
-	if len(envelopes) < 2 {
-		return nil, fmt.Errorf("wireenv: PushBatch requires at least 2 envelopes")
+// AppendTrustedEnvelope appends one Envelope whose payload was produced by a
+// trusted server-side JSON encoder. Unlike encoding/json's RawMessage path it
+// does not compact and rescan the payload. Callers accepting browser or remote
+// arbitrary bytes must use EncodeEnvelope, which performs complete validation.
+//
+// The first/last byte guard catches accidental empty/scalar payloads without
+// adding an O(payload size) scan to every server response.
+func AppendTrustedEnvelope(dst []byte, envelope Envelope) ([]byte, error) {
+	payload := bytes.TrimSpace(envelope.Payload)
+	if len(payload) < 2 || payload[0] != '{' || payload[len(payload)-1] != '}' {
+		return nil, fmt.Errorf("wireenv: trusted envelope payload must be a JSON object")
 	}
-	if len(envelopes) > MaxPushBatchEnvelopes {
-		return nil, fmt.Errorf("wireenv: PushBatch exceeds max %d envelopes", MaxPushBatchEnvelopes)
-	}
-	raws := make([]json.RawMessage, len(envelopes))
-	for i, envelope := range envelopes {
-		envelope = bytes.TrimSpace(envelope)
-		if len(envelope) == 0 || envelope[0] != '{' {
-			return nil, fmt.Errorf("wireenv: PushBatch item %d must be a JSON object", i)
-		}
-		raws[i] = json.RawMessage(envelope)
-	}
-	payload, err := json.Marshal(struct {
-		Envelopes []json.RawMessage `json:"envelopes"`
-	}{Envelopes: raws})
-	if err != nil {
-		return nil, fmt.Errorf("wireenv: marshal PushBatch payload: %w", err)
-	}
-	return EncodeEnvelope(Envelope{
-		Cmd:       CommandPushBatch,
-		ClientSeq: 0,
-		Err:       errcode.OK,
-		Payload:   payload,
-	})
+	dst = append(dst, `{"cmd":`...)
+	dst = strconv.AppendUint(dst, uint64(envelope.Cmd), 10)
+	dst = append(dst, `,"client_seq":`...)
+	dst = strconv.AppendUint(dst, uint64(envelope.ClientSeq), 10)
+	dst = append(dst, `,"err":`...)
+	dst = strconv.AppendInt(dst, int64(envelope.Err), 10)
+	dst = append(dst, `,"payload":`...)
+	dst = append(dst, payload...)
+	dst = append(dst, '}')
+	return dst, nil
 }
 
 // DecodeEnvelope decodes exactly one Envelope JSON value.
@@ -126,7 +132,7 @@ func DecodeEnvelope(data []byte) (Envelope, error) {
 	if err := DecodeStrictJSON(data, &envelope); err != nil {
 		return Envelope{}, fmt.Errorf("wireenv: decode envelope: %w", err)
 	}
-	if err := validatePayloadObject(envelope.Payload); err != nil {
+	if err := ValidatePayloadObject(envelope.Payload); err != nil {
 		return Envelope{}, err
 	}
 	return envelope, nil
@@ -147,14 +153,19 @@ func DecodeStrictJSON(data []byte, target any) error {
 	return nil
 }
 
-func validatePayloadObject(payload json.RawMessage) error {
+// ValidatePayloadObject validates an untrusted Envelope payload once at an
+// ingress boundary so downstream trusted encoders can avoid rescanning it.
+func ValidatePayloadObject(payload json.RawMessage) error {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) == 0 || payload[0] != '{' {
 		return fmt.Errorf("wireenv: envelope payload must be a JSON object")
 	}
-	var object map[string]json.RawMessage
-	if err := DecodeStrictJSON(payload, &object); err != nil {
-		return fmt.Errorf("wireenv: invalid envelope payload: %w", err)
+	// The previous implementation decoded into map[string]RawMessage solely to
+	// validate the JSON shape. That reparsed every inbound and outbound payload
+	// and allocated a map on the hottest Gateway path. json.Valid performs the
+	// same complete-value syntax check without materializing the object.
+	if !json.Valid(payload) {
+		return fmt.Errorf("wireenv: invalid envelope payload")
 	}
 	return nil
 }

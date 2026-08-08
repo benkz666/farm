@@ -6,7 +6,7 @@
 
 **Architecture:** Actor 串行写路径成功后向房间订阅者广播 `FarmDelta`；Gateway 维护连接订阅；`friendship` 表双向关系；客户端必须登录，状态仅由 snapshot/Rsp/Delta/Sync 驱动。
 
-**Tech Stack:** 现有 Go farm-server、MySQL/Redis、Vue3 + Vite、JSON Envelope（`farm.v1.json`）
+**Tech Stack:** 现有 Go farm-server、MySQL/Redis、Vue3 + Vite、二进制批 Envelope（`farm.v2.bin`）
 
 ## Global Constraints
 

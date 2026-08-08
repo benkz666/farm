@@ -30,7 +30,30 @@ type Event struct {
 type FarmCommit struct {
 	Snapshot *farm.Aggregate
 	Outbox   []Event
+	Plan     PersistPlan
 }
+
+// PersistMode identifies the smallest safe row set for one aggregate commit.
+// The zero value is deliberately the conservative full-snapshot mode.
+type PersistMode uint8
+
+const (
+	PersistFull PersistMode = iota
+	PersistEconomy
+	PersistPlot
+	PersistCrossVisitor
+	PersistCrossOwner
+)
+
+// PersistPlan travels through the Actor committer so reduced writes preserve
+// the same per-UID ordering and batching guarantees as full snapshots.
+type PersistPlan struct {
+	Mode         PersistMode
+	PlotIndex    uint8
+	IncludeItems bool
+	IncludeCodex bool
+}
+
 func CrossResultEventID(ownerUID, visitorUID, reqID uint64) string {
 	return fmt.Sprintf("cross_result:%d:%d:%d", ownerUID, visitorUID, reqID)
 }

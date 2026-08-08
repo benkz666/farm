@@ -50,7 +50,7 @@
 | --- | --- | --- |
 | 服务端语言 | Go 1.22+ | goroutine + channel 与 Actor 模型同构，mailbox 就是一个 channel；单机长连接能力强；`pprof` 和 `go test -bench` 让压测和瓶颈定位几乎零成本 |
 | 传输 | WebSocket（游戏流量） + HTTPS（注册登录） | 服务端要主动推送地块变更，必须长连接。农场是秒级更新的房间制玩法，不需要 UDP/KCP，见 2.3 节 |
-| 序列化 | 严格 JSON Envelope | 客户端协议和内部 RPC 都可直接抓包；UID、邮件 ID 等 64 位标识统一传十进制字符串 |
+| 序列化 | `farm.v3.pb` Protobuf 批帧 | Enter/Sync/Delta 类型化；低频命令使用受校验 JSON 分支；64 位标识在浏览器适配层统一为十进制字符串 |
 | 热数据 | Redis 7 | Actor 的 backing store 与跨进程共享状态 |
 | 持久化 | MySQL 8 分库分表 | 游戏数据是强 schema 的，关系模型合适；分片方案见 5.7 节 |
 | 消息 | Kafka `[已实现]` | Gateway 与 Farm 的跨农场动作通过持久消息回环；内存实现只用于单元测试 |
@@ -251,6 +251,8 @@ uid -> hash(uid) % 1024 -> 逻辑分片号 -> 查路由表 -> 物理实例
 ### D5 好友关系：单行权威 + 可重建物化视图
 
 **决策**：好友关系的权威存储是一张 `friendship(uid_lo, uid_hi)` 表，主键为二元组，按 `hash(uid_lo, uid_hi)` 分片。每个玩家自己分片内的 `friend_ids` 只是一个**可随时重建的读缓存**，不是权威数据。
+
+**当前实现边界（2026-08）**：MySQL `friendship` 表是唯一权威源；Social 使用有容量上限的进程内关系缓存（含正负值）和好友列表缓存，Redis 保存可重建的关系 `1/0` 与列表读缓存。并发冷读只合并同一个关系键或同一个用户列表的请求，目前没有把全量好友图常驻内存，也没有把不同关系自动拼成批量查询。MySQL 写提交后同步更新关系缓存并失效双方列表；Redis 操作失败时对应键绕过 Redis 回源 MySQL。Social 实例之间通过 Redis Pub/Sub 传播失效，并继续向本实例连接的 Gateway/Farm watcher 广播。现有 1 核 Social 实测仅支持将热点 `AreFriends` 稳定容量表述为约 5 万 QPS/Pod，不能据此宣称 8 万—15 万 QPS。
 
 **驱动理由**
 

@@ -2,6 +2,17 @@ package farm
 
 import "testing"
 
+func TestDeltaRingAllocatesLazily(t *testing.T) {
+	var ring DeltaRing
+	if ring.deltas != nil {
+		t.Fatal("zero-value ring allocated storage")
+	}
+	ring.Append(FarmDelta{OwnerUID: 7, FarmSeq: 1})
+	if len(ring.deltas) != 1 || cap(ring.deltas) >= DeltaRingCapacity {
+		t.Fatalf("first append len/cap = %d/%d, want a small lazy allocation", len(ring.deltas), cap(ring.deltas))
+	}
+}
+
 func TestDeltaRingSinceRejectsEvictedSequence(t *testing.T) {
 	var ring DeltaRing
 	for seq := uint64(1); seq <= DeltaRingCapacity+1; seq++ {

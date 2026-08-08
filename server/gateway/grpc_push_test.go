@@ -115,8 +115,10 @@ func TestGRPCPushFarmDeltaBatch(t *testing.T) {
 	}
 
 	frame := readRawFrame(t, viewer)
-	if !bytes.Equal(frame, envelope) {
-		t.Fatalf("frame = %s, want %s", frame, envelope)
+	batch, decodeErr := clientwire.DecodeBinaryBatch(frame)
+	want, wantErr := clientwire.DecodeEnvelope(envelope)
+	if decodeErr != nil || wantErr != nil || len(batch) != 1 || batch[0].Cmd != want.Cmd || !bytes.Equal(batch[0].Payload, want.Payload) {
+		t.Fatalf("binary frame = %#v decodeErr=%v wantErr=%v", batch, decodeErr, wantErr)
 	}
 }
 

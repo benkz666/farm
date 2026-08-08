@@ -70,21 +70,17 @@ func (w *failingWireWriter) WriteMessage(messageType int, data []byte) error {
 func expandPhysicalPushFrames(frames [][]byte) ([]json.RawMessage, error) {
 	out := make([]json.RawMessage, 0)
 	for _, frame := range frames {
-		var envelope clientwire.Envelope
-		if err := json.Unmarshal(frame, &envelope); err != nil {
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
+		if err != nil {
 			return nil, err
 		}
-		if envelope.Cmd != CommandPushBatch {
-			out = append(out, append(json.RawMessage(nil), frame...))
-			continue
+		for _, envelope := range envelopes {
+			encoded, err := clientwire.EncodeEnvelope(envelope)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, encoded)
 		}
-		var payload struct {
-			Envelopes []json.RawMessage `json:"envelopes"`
-		}
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			return nil, err
-		}
-		out = append(out, payload.Envelopes...)
 	}
 	return out, nil
 }
@@ -122,12 +118,17 @@ func TestPushCoalesceBatchesMultipleWrites(t *testing.T) {
 	const n = 32
 	raw := make([][]byte, 0, n)
 	for i := 1; i <= n; i++ {
-		encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: uint64(i)})
+		delta := farm.FarmDelta{OwnerUID: 42, FarmSeq: uint64(i)}
+		expected, err := clientwire.EncodeFarmDelta(delta)
 		if err != nil {
 			t.Fatalf("EncodeFarmDelta: %v", err)
 		}
-		raw = append(raw, encoded)
-		if err := connection.pushFarmDelta(42, farm.FarmDelta{OwnerUID: 42, FarmSeq: uint64(i)}, encoded); err != nil {
+		encoded, err := clientwire.EncodeFarmDeltaRecord(delta)
+		if err != nil {
+			t.Fatalf("EncodeFarmDeltaRecord: %v", err)
+		}
+		raw = append(raw, expected)
+		if err := connection.pushFarmDelta(42, delta, encoded); err != nil {
 			t.Fatalf("pushFarmDelta %d: %v", i, err)
 		}
 	}
@@ -184,7 +185,7 @@ func TestPushWriterWriteFailureClosesAndStopsEnqueue(t *testing.T) {
 	connection.startPushWriter()
 	t.Cleanup(connection.closePushWriter)
 
-	encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
+	encoded, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -230,7 +231,7 @@ func TestDropSlowConnectionOnQueueFull(t *testing.T) {
 	close(connection.pushDone) // no live writer; closePushWriter/mark must stay safe
 	connection.pushMu.Unlock()
 
-	filler, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
+	filler, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -263,7 +264,7 @@ func TestPushCoalesceSingleWriteRaw(t *testing.T) {
 	t.Parallel()
 
 	connection, writer := newTestPushConn(t, time.Millisecond)
-	encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: 9})
+	encoded, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 42, FarmSeq: 9})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -274,8 +275,9 @@ func TestPushCoalesceSingleWriteRaw(t *testing.T) {
 	if writer.writeN.Load() != 1 {
 		t.Fatalf("writes = %d", writer.writeN.Load())
 	}
-	if !bytes.Equal(messages[0], encoded) {
-		t.Fatalf("single push should write raw envelope, got %s", messages[0])
+	batch, err := clientwire.DecodeBinaryBatch(messages[0])
+	if err != nil || len(batch) != 1 || batch[0].Cmd != CommandFarmDelta {
+		t.Fatalf("single push binary batch = %#v err=%v", batch, err)
 	}
 }
 
@@ -289,7 +291,7 @@ func TestPushQueueFullReturnsError(t *testing.T) {
 	connection.pushStop = make(chan struct{})
 	connection.pushMu.Unlock()
 
-	filler, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
+	filler, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -307,7 +309,7 @@ func TestRespondDoesNotWaitCoalesceWindow(t *testing.T) {
 	t.Parallel()
 
 	connection, writer := newTestPushConn(t, 50*time.Millisecond)
-	encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
+	encoded, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -328,10 +330,11 @@ func TestRespondDoesNotWaitCoalesceWindow(t *testing.T) {
 	}
 
 	messages := waitWrites(t, writer, 1, time.Second)
-	var first clientwire.Envelope
-	if err := json.Unmarshal(messages[0], &first); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	firstBatch, err := clientwire.DecodeBinaryBatch(messages[0])
+	if err != nil || len(firstBatch) != 1 {
+		t.Fatalf("decode first batch: len=%d err=%v", len(firstBatch), err)
 	}
+	first := firstBatch[0]
 	if first.Cmd != CommandPing || first.ClientSeq != 7 {
 		t.Fatalf("first write = %#v, want immediate Ping response", first)
 	}
@@ -341,7 +344,7 @@ func TestClosePushWriterDoesNotLeakOrPanic(t *testing.T) {
 	t.Parallel()
 
 	connection, _ := newTestPushConn(t, time.Millisecond)
-	encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
+	encoded, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -371,16 +374,21 @@ func TestEnterFarmHeldDeltasEnqueueAfterResponse(t *testing.T) {
 	}
 
 	messages := waitWrites(t, writer, 2, time.Second)
-	var rsp clientwire.Envelope
-	if err := json.Unmarshal(messages[0], &rsp); err != nil {
-		t.Fatalf("unmarshal rsp: %v", err)
+	rspBatch, err := clientwire.DecodeBinaryBatch(messages[0])
+	if err != nil || len(rspBatch) != 1 {
+		t.Fatalf("decode rsp batch: len=%d err=%v", len(rspBatch), err)
 	}
+	rsp := rspBatch[0]
 	if rsp.Cmd != CommandEnterFarm || rsp.ClientSeq != 2 {
 		t.Fatalf("first = %#v, want EnterFarm response", rsp)
 	}
-	delta, err := clientwire.DecodeFarmDelta(messages[1])
-	if err != nil {
-		t.Fatalf("second should be raw FarmDelta: %v (%s)", err, messages[1])
+	deltaBatch, err := clientwire.DecodeBinaryBatch(messages[1])
+	if err != nil || len(deltaBatch) != 1 {
+		t.Fatalf("second should be binary FarmDelta: len=%d err=%v", len(deltaBatch), err)
+	}
+	var delta farm.FarmDelta
+	if err := json.Unmarshal(deltaBatch[0].Payload, &delta); err != nil {
+		t.Fatalf("decode FarmDelta payload: %v", err)
 	}
 	if delta.FarmSeq != 3 {
 		t.Fatalf("held FarmSeq = %d", delta.FarmSeq)
@@ -390,8 +398,12 @@ func TestEnterFarmHeldDeltasEnqueueAfterResponse(t *testing.T) {
 func TestMixedPushTypesPreserveOrderInBatch(t *testing.T) {
 	t.Parallel()
 
-	connection, writer := newTestPushConn(t, time.Millisecond)
-	farmEnc, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
+	// Race instrumentation can stretch four sequential encodes beyond the
+	// production 1 ms window and split this focused ordering assertion into two
+	// legal frames. Use a wider test-only window so the intended single-batch
+	// precondition is deterministic.
+	connection, writer := newTestPushConn(t, 50*time.Millisecond)
+	farmEnc, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1})
 	if err != nil {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
@@ -409,30 +421,21 @@ func TestMixedPushTypesPreserveOrderInBatch(t *testing.T) {
 	}
 
 	messages := waitWrites(t, writer, 1, time.Second)
-	var batch clientwire.Envelope
-	if err := json.Unmarshal(messages[0], &batch); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if batch.Cmd != CommandPushBatch {
-		t.Fatalf("cmd = %d", batch.Cmd)
-	}
-	var payload struct {
-		Envelopes []clientwire.Envelope `json:"envelopes"`
-	}
-	if err := json.Unmarshal(batch.Payload, &payload); err != nil {
-		t.Fatalf("payload: %v", err)
+	envelopes, err := clientwire.DecodeBinaryBatch(messages[0])
+	if err != nil {
+		t.Fatalf("decode binary batch: %v", err)
 	}
 	want := []uint32{CommandFarmDelta, CommandPlayerDelta, CommandTaskNotify, CommandMailNotify}
-	if len(payload.Envelopes) != len(want) {
-		t.Fatalf("len = %d", len(payload.Envelopes))
+	if len(envelopes) != len(want) {
+		t.Fatalf("len = %d", len(envelopes))
 	}
 	for i, cmd := range want {
-		if payload.Envelopes[i].Cmd != cmd || payload.Envelopes[i].ClientSeq != 0 {
-			t.Fatalf("envelope[%d] = %#v", i, payload.Envelopes[i])
+		if envelopes[i].Cmd != cmd || envelopes[i].ClientSeq != 0 {
+			t.Fatalf("envelope[%d] = %#v", i, envelopes[i])
 		}
 	}
-	if payload.Envelopes[0].Err != errcode.OK {
-		t.Fatalf("farm err = %v", payload.Envelopes[0].Err)
+	if envelopes[0].Err != errcode.OK {
+		t.Fatalf("farm err = %v", envelopes[0].Err)
 	}
 }
 
@@ -446,7 +449,7 @@ func BenchmarkPushCoalesce32(b *testing.B) {
 	connection.startPushWriter()
 	defer connection.closePushWriter()
 
-	encoded, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
+	encoded, err := clientwire.EncodeFarmDeltaRecord(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
 	if err != nil {
 		b.Fatal(err)
 	}

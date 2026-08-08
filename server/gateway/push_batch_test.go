@@ -193,8 +193,13 @@ func TestReceiveFarmDeltaBatchWritesIdenticalEncodedBytes(t *testing.T) {
 
 	frame7 := readRawFrame(t, v7)
 	frame8 := readRawFrame(t, v8)
-	if !bytes.Equal(frame7, envelope) || !bytes.Equal(frame8, envelope) {
-		t.Fatalf("frames not identical to pre-encoded envelope\n7=%s\n8=%s\nwant=%s", frame7, frame8, envelope)
+	batch7, err7 := clientwire.DecodeBinaryBatch(frame7)
+	batch8, err8 := clientwire.DecodeBinaryBatch(frame8)
+	want, wantErr := clientwire.DecodeEnvelope(envelope)
+	if err7 != nil || err8 != nil || wantErr != nil || len(batch7) != 1 || len(batch8) != 1 ||
+		batch7[0].Cmd != want.Cmd || batch8[0].Cmd != want.Cmd ||
+		!bytes.Equal(batch7[0].Payload, want.Payload) || !bytes.Equal(batch8[0].Payload, want.Payload) {
+		t.Fatalf("binary frames differ: err7=%v err8=%v wantErr=%v", err7, err8, wantErr)
 	}
 }
 
@@ -308,8 +313,10 @@ func TestReceiveFarmDeltaBatchDedupesConnIDs(t *testing.T) {
 	}
 
 	frame := readRawFrame(t, viewer)
-	if !bytes.Equal(frame, envelope) {
-		t.Fatalf("frame = %s, want %s", frame, envelope)
+	batch, decodeErr := clientwire.DecodeBinaryBatch(frame)
+	want, wantErr := clientwire.DecodeEnvelope(envelope)
+	if decodeErr != nil || wantErr != nil || len(batch) != 1 || batch[0].Cmd != want.Cmd || !bytes.Equal(batch[0].Payload, want.Payload) {
+		t.Fatalf("binary frame = %#v decodeErr=%v wantErr=%v", batch, decodeErr, wantErr)
 	}
 	_ = viewer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
 	if _, _, err := viewer.ReadMessage(); err == nil {
@@ -324,7 +331,7 @@ func TestRoomHubBroadcastEncodesOnceAndReusesBytes(t *testing.T) {
 	var encodeCalls atomic.Int64
 	hub.encodeFarmDelta = func(delta farm.FarmDelta) ([]byte, error) {
 		encodeCalls.Add(1)
-		return clientwire.EncodeFarmDelta(delta)
+		return clientwire.EncodeFarmDeltaRecord(delta)
 	}
 
 	var (

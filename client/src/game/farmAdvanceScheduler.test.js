@@ -127,3 +127,25 @@ test('页面恢复时可立即校准并重新建立周期排程', async () => {
   assert.equal(syncCalls, 1)
   assert.equal(timer.delay, 3_000)
 })
+
+test('服务端主动推进模式禁用边界轮询，只保留低频一致性兜底', () => {
+  let timer = null
+  const scheduler = createFarmAdvanceScheduler({
+    now: () => 1_500,
+    getPlots: () => [growingPlot()],
+    isActive: () => true,
+    useBoundarySync: false,
+    getConsistencyIntervalMs: () => 15 * 60_000,
+    setTimeout(fn, delay) {
+      timer = { fn, delay }
+      return 1
+    },
+    clearTimeout() {
+      timer = null
+    },
+    async sync() {},
+  })
+
+  scheduler.schedule()
+  assert.equal(timer.delay, 15 * 60_000)
+})

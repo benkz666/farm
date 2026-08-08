@@ -62,6 +62,16 @@ func dialBufconn(t *testing.T, listener *bufconn.Listener, token string) *grpc.C
 		) error {
 			return invoker(WithBearerToken(ctx, token), method, req, reply, cc, opts...)
 		}),
+		grpc.WithStreamInterceptor(func(
+			ctx context.Context,
+			desc *grpc.StreamDesc,
+			cc *grpc.ClientConn,
+			method string,
+			streamer grpc.Streamer,
+			opts ...grpc.CallOption,
+		) (grpc.ClientStream, error) {
+			return streamer(WithBearerToken(ctx, token), desc, cc, method, opts...)
+		}),
 	)
 	if err != nil {
 		t.Fatalf("dial bufconn: %v", err)

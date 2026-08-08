@@ -177,21 +177,22 @@ func (p *benchPlayer) readLoop() {
 			p.readErr = err
 			return
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelope, err := gateway.DecodeEnvelope(frame)
+		envelopes, err := gateway.DecodeBinaryBatch(frame)
 		if err != nil {
 			continue
 		}
-		if envelope.ClientSeq == 0 {
-			continue
-		}
-		select {
-		case p.resp <- envelope:
-		default:
-			// 缓冲满只可能是迟到应答堆积；丢弃它们，绝不让读协程停下来，
-			// 否则连接上的推送会越积越多，最终拖慢被测的那一次读。
+		for _, envelope := range envelopes {
+			if envelope.ClientSeq == 0 {
+				continue
+			}
+			select {
+			case p.resp <- envelope:
+			default:
+				// 缓冲满只可能是迟到应答堆积；丢弃它们，绝不让读协程停下来。
+			}
 		}
 	}
 }
@@ -219,15 +220,15 @@ func benchExchange(p *benchPlayer, cmd uint32, payload map[string]any) (gateway.
 	for attempt := 0; attempt < benchRateLimitRetries; attempt++ {
 		seq := p.seq
 		p.seq++
-		frame, err := gateway.EncodeEnvelope(gateway.Envelope{
+		frame, err := gateway.EncodeBinaryBatch([]gateway.Envelope{{
 			Cmd:       cmd,
 			ClientSeq: seq,
 			Payload:   mustJSON(payload),
-		})
+		}})
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("编码 cmd=%d: %w", cmd, err)
 		}
-		if err := p.conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+		if err := p.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 			return gateway.Envelope{}, fmt.Errorf("发送 cmd=%d: %w", cmd, err)
 		}
 		envelope, err := p.await(cmd, seq, benchResponseTimeout)
@@ -635,7 +636,7 @@ func benchFireRound(visitors []*benchVisitor, ownerUID uint64) []benchOutcome {
 func (v *benchVisitor) waterOnce(ownerUID uint64, ready *sync.WaitGroup, gun <-chan struct{}) benchOutcome {
 	seq := v.player.seq
 	v.player.seq++
-	frame, encodeErr := gateway.EncodeEnvelope(gateway.Envelope{
+	frame, encodeErr := gateway.EncodeBinaryBatch([]gateway.Envelope{{
 		Cmd:       gateway.CommandWater,
 		ClientSeq: seq,
 		Payload: mustJSON(map[string]any{
@@ -643,7 +644,7 @@ func (v *benchVisitor) waterOnce(ownerUID uint64, ready *sync.WaitGroup, gun <-c
 			"plot_index": v.plot,
 			"arg":        0,
 		}),
-	})
+	}})
 	ready.Done()
 	<-gun
 	if encodeErr != nil {
@@ -651,7 +652,7 @@ func (v *benchVisitor) waterOnce(ownerUID uint64, ready *sync.WaitGroup, gun <-c
 	}
 
 	sentAt := time.Now()
-	if err := v.player.conn.WriteMessage(websocket.TextMessage, frame); err != nil {
+	if err := v.player.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
 		return benchOutcome{latency: time.Since(sentAt), transport: "写出请求失败: " + err.Error()}
 	}
 	envelope, err := v.player.await(gateway.CommandWater, seq, benchResponseTimeout)

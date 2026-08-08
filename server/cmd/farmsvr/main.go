@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/crossfarm"
@@ -87,8 +89,17 @@ func run() error {
 	}
 	defer closeStorage()
 
+	actorIdleTTL, err := durationSetting("FARM_ACTOR_IDLE_TTL", "2m")
+	if err != nil {
+		return err
+	}
+	actorMaxResident, err := intSetting("FARM_ACTOR_MAX_RESIDENT", 20_000)
+	if err != nil {
+		return err
+	}
 	metrics := telemetry.NewMetrics(nil)
-	runtime := room.NewRuntime(storage, 0)
+	runtime := room.NewRuntime(storage, actorIdleTTL)
+	runtime.SetMaxResident(actorMaxResident)
 	runtime.SetHazardSalt(farm.DeriveHazardSalt(hazardSecret))
 	runtime.SetMetrics(metrics)
 	owns := func(uid uint64) bool {
@@ -147,6 +158,7 @@ func run() error {
 		farmrpc.WithMailNotifyPublisher(mailNotifyPublisher),
 		farmrpc.WithTimeProfileSwitch(timeProfiles),
 	)
+	owner.SetAdvanceScheduler(commandHandler.ScheduleAdvanceAt)
 	crossServer := crossfarm.NewGRPCServer(owner, visitor, owns, playerDeltaPublisher, storage)
 
 	return (servicehost.Host{
@@ -170,9 +182,28 @@ func run() error {
 		},
 		BeforeShutdown: func(ctx context.Context) error {
 			_ = dispatcher.Shutdown(ctx)
+			commandHandler.Shutdown()
 			return runtime.Shutdown(ctx)
 		},
 	}).Run(ctx)
+}
+
+func durationSetting(name, fallback string) (time.Duration, error) {
+	raw := servicehost.Getenv(name, fallback)
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("farm: %s must be a positive duration, got %q", name, raw)
+	}
+	return value, nil
+}
+
+func intSetting(name string, fallback int) (int, error) {
+	raw := servicehost.Getenv(name, strconv.Itoa(fallback))
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("farm: %s must be a non-negative integer, got %q", name, raw)
+	}
+	return value, nil
 }
 
 func startFriendInvalidationWatch(ctx context.Context, cache *friendauth.Cache, social *socialapi.GRPCClient) {

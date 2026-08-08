@@ -78,9 +78,22 @@ func NewGRPCServer(friendStore store.FriendStore) *GRPCServer {
 	return &GRPCServer{store: friendStore, hub: newInvalidationHub()}
 }
 
-// RegisterGRPC registers SocialService on a gRPC server.
-func RegisterGRPC(server *grpc.Server, friendStore store.FriendStore) {
-	farmv1.RegisterSocialServiceServer(server, NewGRPCServer(friendStore))
+// RegisterGRPC registers SocialService on a gRPC server and returns the adapter
+// so the process can attach its distributed invalidation subscriber.
+func RegisterGRPC(server *grpc.Server, friendStore store.FriendStore) *GRPCServer {
+	adapter := NewGRPCServer(friendStore)
+	farmv1.RegisterSocialServiceServer(server, adapter)
+	return adapter
+}
+
+// StartDistributedInvalidations forwards changes received by this Social
+// replica to the Gateway/Farm streams connected to the same replica.
+func (server *GRPCServer) StartDistributedInvalidations(ctx context.Context) {
+	source, ok := server.store.(store.FriendInvalidationSource)
+	if !ok {
+		return
+	}
+	go source.WatchFriendInvalidations(ctx, server.hub.broadcast)
 }
 
 func (server *GRPCServer) AreFriends(ctx context.Context, request *farmv1.AreFriendsRequest) (*farmv1.AreFriendsResponse, error) {
@@ -148,7 +161,13 @@ func (server *GRPCServer) FindUser(ctx context.Context, request *farmv1.FindUser
 }
 
 func (server *GRPCServer) CreateFriendRequest(ctx context.Context, request *farmv1.PairRequest) (*farmv1.Empty, error) {
-	return server.pairMutation(ctx, request, server.store.CreateFriendRequest)
+	resp, err := server.pairMutation(ctx, request, server.store.CreateFriendRequest)
+	if err == nil {
+		// A reverse pending request implicitly accepts and creates the relation.
+		// Broadcasting for the ordinary pending case is a harmless invalidation.
+		server.hub.broadcast(request.Uid, request.PeerUid)
+	}
+	return resp, err
 }
 
 func (server *GRPCServer) ListIncomingFriendRequests(ctx context.Context, request *farmv1.UidRequest) (*farmv1.ListFriendRequestsResponse, error) {

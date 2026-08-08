@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: farm-topology
+  namespace: farm
+  labels:
+    app.kubernetes.io/name: farm
+    farm.example.com/route-profile: dual
+data:
+  FARM_ROUTE_TABLE: /app/deploy/route-table.json
+  FARM_FARM_GRPC_TARGETS: >-
+    {"farm-0":"farmsvr-0.farmsvr:9210","farm-1":"farmsvr-1.farmsvr:9210"}

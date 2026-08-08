@@ -44,6 +44,13 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 		}),
 		nil,
 	)
+	scheduled := 0
+	owner.SetAdvanceScheduler(func(uid uint64, due int64) {
+		if uid != 9 || due <= 0 {
+			t.Fatalf("scheduled uid=%d due=%d", uid, due)
+		}
+		scheduled++
+	})
 
 	action := CrossAction{ReqID: 2, Kind: Water, VisitorUID: 7, OwnerUID: 9, PlotIndex: 0}
 	first, err := owner.Apply(context.Background(), action)
@@ -53,6 +60,9 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 	delta := <-deltas
 	if delta.OwnerUID != 9 || delta.FarmSeq != 1 || len(delta.Plots) != 1 || delta.Plots[0].Index != 0 {
 		t.Fatalf("delta = %#v", delta)
+	}
+	if scheduled != 1 {
+		t.Fatalf("schedule calls=%d, want 1", scheduled)
 	}
 
 	duplicate, err := owner.Apply(context.Background(), action)

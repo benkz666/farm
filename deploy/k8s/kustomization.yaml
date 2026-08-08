@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: farm
+
+resources:
+  - namespace.yaml
+  - config/common-env-secret.yaml
+  - config/route-table-single.yaml
+  - config/farm-topology-single.yaml
+  - mysql.yaml
+  - redis.yaml
+  - migrate-job.yaml
+  - socialsvr.yaml
+  - farmsvr.yaml
+  - gateway.yaml
+
+# gateway-hpa.yaml 和 gateway-nodeport.yaml 需要按需单独 apply，
+# 以便默认基线保持单 gateway、使用 port-forward。

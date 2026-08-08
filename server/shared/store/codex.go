@@ -62,6 +62,9 @@ func (s *Store) IssueCodexRewards(ctx context.Context, uid uint64, progress farm
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("store: commit codex reward: %w", err)
 	}
+	if len(issued) > 0 {
+		s.invalidateMailboxAfterCommit(uid)
+	}
 	return issued, nil
 }
 

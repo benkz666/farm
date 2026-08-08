@@ -19,14 +19,9 @@
 
 ### 1.2 编码
 
-Schema 用 Protobuf 单一定义，传输层可切两种编码：
+WebSocket 仅支持二进制子协议 `farm.v3.pb`，不提供旧子协议的协商分支。每个 Protobuf `WireBatch` 可携带 1～64 个 `WireEnvelope`；客户端同一微任务内发出的请求会合并，Gateway 的应答和推送也按帧合并。
 
-| 编码 | 子协议标识 | 用途 |
-| --- | --- | --- |
-| JSON | `farm.v1.json` | 开发期。抓包可读，浏览器 DevTools 直接看得懂 |
-| Binary | `farm.v1.pb` | 压测与生产。体积约为 JSON 的 40%，编解码快约 5 倍 |
-
-客户端通过 WebSocket 握手的 `Sec-WebSocket-Protocol` 头声明，服务端回显确认。**只维护一份 `.proto`**，两种编码由同一份生成代码产出，杜绝了「JSON 和二进制字段对不上」这类只在切换时才暴露的问题。
+`WireEnvelope` 的 `cmd`、`client_seq`、`err` 为类型化字段。EnterFarm、SyncFarm 与 FarmDelta 使用明确的 Protobuf message；其他低频命令暂时使用受校验的 `json_payload` oneof 分支。Farm 可把预编码快照子消息不透明地交给 Gateway，Gateway 只追加自己负责的关系/调试字段。浏览器适配层把 UID、`farm_seq` 等 64 位标识转换为十进制字符串，禁止转为 JavaScript Number。
 
 ### 1.3 消息信封
 

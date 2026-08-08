@@ -39,7 +39,7 @@
 单二进制 `farm-server`：
 
 - HTTP：`POST /api/register`、`POST /api/login`（路径对齐 `protocol.md` 5.1）；静态文件服务挂载 `client/`  
-- WebSocket：游戏流量；子协议 `farm.v1.json`  
+- WebSocket：游戏流量；子协议 `farm.v2.bin`
 - 进程内：Gateway + Auth + Actor 运行时 + Farm 聚合 + Store  
 
 ```text

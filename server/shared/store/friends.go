@@ -133,11 +133,18 @@ func (s *Store) RemoveFriends(ctx context.Context, a, b uint64) error {
 func (s *Store) ListFriends(ctx context.Context, uid uint64) ([]FriendRow, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT p.uid, p.nickname
-		FROM friendship AS f
-		JOIN player AS p ON p.uid = CASE WHEN f.uid_lo = ? THEN f.uid_hi ELSE f.uid_lo END
-		WHERE f.uid_lo = ? OR f.uid_hi = ?
+		FROM (
+			SELECT uid_hi AS friend_uid, created_at
+			FROM friendship
+			WHERE uid_lo = ?
+			UNION ALL
+			SELECT uid_lo AS friend_uid, created_at
+			FROM friendship
+			WHERE uid_hi = ?
+		) AS f
+		JOIN player AS p ON p.uid = f.friend_uid
 		ORDER BY f.created_at ASC, p.uid ASC`,
-		uid, uid, uid,
+		uid, uid,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: list friends: %w", err)

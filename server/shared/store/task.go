@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +12,37 @@ import (
 
 	"farm/server/shared/gameconfig"
 )
+
+// ListTasksEncoded returns a pre-encoded task array for the Farm response hot
+// path. The ordinary structured API remains available to mutation code and
+// tests; both views are invalidated together after a committed task change.
+func (s *Store) ListTasksEncoded(ctx context.Context, uid uint64, dayKey int64) ([]byte, error) {
+	cacheKey := taskReadKey{uid: uid, dayKey: dayKey}
+	for attempt := 0; attempt < 3; attempt++ {
+		if encoded, ok := s.taskEncoded.get(cacheKey, time.Now()); ok {
+			return append([]byte(nil), encoded...), nil
+		}
+		generation := s.taskCacheGeneration(cacheKey)
+		tasks, err := s.ListTasks(ctx, uid, dayKey)
+		if err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(tasks)
+		if err != nil {
+			return nil, fmt.Errorf("store: encode task list: %w", err)
+		}
+		if s.putTaskEncodedIfCurrent(cacheKey, generation, encoded) {
+			return encoded, nil
+		}
+	}
+	// Sustained concurrent task writes should not grow the call stack or fail a
+	// valid read merely because it is not cacheable at this instant.
+	tasks, err := s.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(tasks)
+}
 
 const (
 	TaskPlantID      uint32 = 1
@@ -65,42 +97,85 @@ const (
 // calendar day. The persisted logic_day column name is retained for schema
 // compatibility.
 func (s *Store) ListTasks(ctx context.Context, uid uint64, dayKey int64) ([]Task, error) {
-	definitions, err := s.ensureDailyTasks(ctx, uid, dayKey)
-	if err != nil {
-		return nil, err
+	cacheKey := taskReadKey{uid: uid, dayKey: dayKey}
+	if tasks, ok := s.taskRead.get(cacheKey, time.Now()); ok {
+		return cloneTasks(tasks), nil
+	}
+	generation := s.taskCacheGeneration(cacheKey)
+	// 每日任务的选择只取决于 uid + dayKey，因此列表冷读无需先执行
+	// INSERT/DELETE/兼容迁移事务。进度与领取操作仍会通过 ensureDailyTasks
+	// 幂等物化任务板；这里只把尚未落库的定义合成为零写入的只读视图。
+	definitions := dailyTaskDefinitionsFor(uid, dayKey)
+	startMs, nextStartMs, validDay := gameconfig.LocalDayBounds(dayKey)
+	if !validDay {
+		startMs, nextStartMs = 0, 0
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT task_id, progress, target, reward_coin, claimed_at IS NOT NULL
+		SELECT task_id, progress, target, reward_coin,
+		       claimed_at IS NOT NULL, FALSE AS legacy_daily_claimed
 		FROM player_task
 		WHERE uid = ? AND logic_day = ?
-		ORDER BY task_id`, uid, dayKey)
+		UNION ALL
+		SELECT 0, 0, 0, 0, FALSE,
+		       EXISTS(
+		           SELECT 1 FROM daily_login
+		           WHERE uid = ? AND created_at >= ? AND created_at < ?
+		       )`, uid, dayKey, uid, startMs, nextStartMs)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tasks: %w", err)
 	}
 	defer rows.Close()
 
-	byID := make(map[uint32]Task, len(definitions))
+	type persistedTask struct {
+		progress uint32
+		claimed  bool
+	}
+	byID := make(map[uint32]persistedTask, len(definitions))
+	legacyDailyClaimed := false
 	for rows.Next() {
-		var task Task
-		if err := rows.Scan(&task.ID, &task.Progress, &task.Target, &task.RewardCoin, &task.Claimed); err != nil {
+		var id, progress, ignoredTarget uint32
+		var ignoredReward int64
+		var claimed, legacyClaimed bool
+		if err := rows.Scan(&id, &progress, &ignoredTarget, &ignoredReward, &claimed, &legacyClaimed); err != nil {
 			return nil, fmt.Errorf("store: scan task: %w", err)
 		}
-		if definition, ok := dailyTaskDefinitionByID(definitions, task.ID); ok {
-			task.DayKey = dayKey
-			task.Title = definition.title
-			task.Kind = definition.kind
-			byID[task.ID] = task
+		legacyDailyClaimed = legacyDailyClaimed || legacyClaimed
+		if _, ok := dailyTaskDefinitionByID(definitions, id); ok {
+			byID[id] = persistedTask{progress: progress, claimed: claimed}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: iterate tasks: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("store: close task rows: %w", err)
+	}
+
 	tasks := make([]Task, 0, len(definitions))
 	for _, definition := range definitions {
-		if task, ok := byID[definition.id]; ok {
-			tasks = append(tasks, task)
+		task := Task{
+			ID:         definition.id,
+			DayKey:     dayKey,
+			Kind:       definition.kind,
+			Title:      definition.title,
+			Progress:   definition.initialProgress,
+			Target:     definition.target,
+			RewardCoin: definition.rewardCoin,
 		}
+		if persisted, ok := byID[definition.id]; ok {
+			task.Progress = min(persisted.progress, definition.target)
+			task.Claimed = persisted.claimed
+			if task.Claimed {
+				task.Progress = task.Target
+			}
+		}
+		if definition.id == TaskDailyLoginID && legacyDailyClaimed {
+			task.Progress = task.Target
+			task.Claimed = true
+		}
+		tasks = append(tasks, task)
 	}
+	s.putTaskReadIfCurrent(cacheKey, generation, tasks)
 	return tasks, nil
 }
 
@@ -110,20 +185,29 @@ func (s *Store) AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskI
 	if uid == 0 || amount == 0 || !IsDailyTaskID(taskID) {
 		return TaskAdvanceResult{}, errors.New("store: invalid task progress")
 	}
-	definitions, err := s.ensureDailyTasks(ctx, uid, dayKey)
-	if err != nil {
-		return TaskAdvanceResult{}, err
-	}
+	definitions := dailyTaskDefinitionsFor(uid, dayKey)
 	definition, ok := dailyTaskDefinitionByID(definitions, taskID)
 	// 这个动作今天没有被抽中时无需写库，也不应被调用方当作异常记录。
 	if !ok {
 		return TaskAdvanceResult{}, nil
 	}
+	initialProgress := definition.target
+	if remaining := definition.target - definition.initialProgress; amount < remaining {
+		initialProgress = definition.initialProgress + amount
+	}
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE player_task
-		SET progress = LEAST(target, progress + ?)
-		WHERE uid = ? AND logic_day = ? AND task_id = ? AND progress < target`,
-		amount, uid, dayKey, taskID,
+		INSERT INTO player_task (
+			uid, logic_day, task_id, progress, target, reward_coin
+		) VALUES (?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			progress = IF(
+				claimed_at IS NULL,
+				LEAST(VALUES(target), progress + ?),
+				progress
+			),
+			target = VALUES(target),
+			reward_coin = VALUES(reward_coin)`,
+		uid, dayKey, taskID, initialProgress, definition.target, definition.rewardCoin, amount,
 	)
 	if err != nil {
 		return TaskAdvanceResult{}, fmt.Errorf("store: advance task %d: %w", taskID, err)
@@ -137,6 +221,7 @@ func (s *Store) AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskI
 	if changed == 0 {
 		return TaskAdvanceResult{}, nil
 	}
+	s.invalidateTaskCache(taskReadKey{uid: uid, dayKey: dayKey})
 	var task Task
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT task_id, progress, target, reward_coin, claimed_at IS NOT NULL
@@ -211,6 +296,7 @@ func (s *Store) ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID 
 	if err := tx.Commit(); err != nil {
 		return TaskReward{}, fmt.Errorf("store: commit claim task: %w", err)
 	}
+	s.invalidateTaskCache(taskReadKey{uid: uid, dayKey: dayKey})
 	_ = s.DeleteFarmCache(ctx, uid)
 	return TaskReward{Coin: rewardCoin}, nil
 }
@@ -279,13 +365,19 @@ func (s *Store) initializeDailyTasks(ctx context.Context, uid uint64, dayKey int
 	}
 	defer tx.Rollback()
 
-	deleteQuery, deleteArgs := dailyTaskDeleteStaleQuery(uid, dayKey, definitions)
-	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
-		return nil, fmt.Errorf("store: remove stale daily tasks: %w", err)
-	}
+	// Upsert the selected rows before deleting stale definitions. Under MySQL's
+	// default REPEATABLE READ isolation, deleting an empty (uid, day) range first
+	// takes next-key/gap locks. Concurrent cold initialization of adjacent UIDs
+	// can then deadlock when every transaction tries to insert into a gap held by
+	// another transaction. Materializing each UID's selected rows first confines
+	// the following DELETE to that UID's existing primary-key records.
 	query, args := dailyTaskInsertQuery(uid, dayKey, definitions)
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return nil, fmt.Errorf("store: initialize daily tasks: %w", err)
+	}
+	deleteQuery, deleteArgs := dailyTaskDeleteStaleQuery(uid, dayKey, definitions)
+	if _, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...); err != nil {
+		return nil, fmt.Errorf("store: remove stale daily tasks: %w", err)
 	}
 	// 旧每日登录映射只在本进程首次初始化该玩家当天任务时执行。
 	if err := markLegacyDailyLoginClaimed(ctx, tx.ExecContext, uid, dayKey); err != nil {

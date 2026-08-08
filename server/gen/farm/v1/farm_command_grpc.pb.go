@@ -19,7 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	FarmCommandService_Execute_FullMethodName = "/farm.internal.v1.FarmCommandService/Execute"
+	FarmCommandService_Execute_FullMethodName            = "/farm.internal.v1.FarmCommandService/Execute"
+	FarmCommandService_ExecuteStream_FullMethodName      = "/farm.internal.v1.FarmCommandService/ExecuteStream"
+	FarmCommandService_ExecuteBatchStream_FullMethodName = "/farm.internal.v1.FarmCommandService/ExecuteBatchStream"
 )
 
 // FarmCommandServiceClient is the client API for FarmCommandService service.
@@ -32,6 +34,13 @@ const (
 // uses the separate typed CrossFarmService contract.
 type FarmCommandServiceClient interface {
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
+	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
+	// request_id correlates responses because commands for different farms may
+	// complete out of order; commands for one farm_uid remain ordered.
+	ExecuteStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteRequest, StreamExecuteResponse], error)
+	// ExecuteBatchStream amortizes protobuf and HTTP/2 framing across unrelated
+	// client commands while preserving request_id correlation.
+	ExecuteBatchStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse], error)
 }
 
 type farmCommandServiceClient struct {
@@ -52,6 +61,32 @@ func (c *farmCommandServiceClient) Execute(ctx context.Context, in *ExecuteReque
 	return out, nil
 }
 
+func (c *farmCommandServiceClient) ExecuteStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteRequest, StreamExecuteResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &FarmCommandService_ServiceDesc.Streams[0], FarmCommandService_ExecuteStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamExecuteRequest, StreamExecuteResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FarmCommandService_ExecuteStreamClient = grpc.BidiStreamingClient[StreamExecuteRequest, StreamExecuteResponse]
+
+func (c *farmCommandServiceClient) ExecuteBatchStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &FarmCommandService_ServiceDesc.Streams[1], FarmCommandService_ExecuteBatchStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamExecuteBatchRequest, StreamExecuteBatchResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FarmCommandService_ExecuteBatchStreamClient = grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse]
+
 // FarmCommandServiceServer is the server API for FarmCommandService service.
 // All implementations must embed UnimplementedFarmCommandServiceServer
 // for forward compatibility.
@@ -62,6 +97,13 @@ func (c *farmCommandServiceClient) Execute(ctx context.Context, in *ExecuteReque
 // uses the separate typed CrossFarmService contract.
 type FarmCommandServiceServer interface {
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
+	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
+	// request_id correlates responses because commands for different farms may
+	// complete out of order; commands for one farm_uid remain ordered.
+	ExecuteStream(grpc.BidiStreamingServer[StreamExecuteRequest, StreamExecuteResponse]) error
+	// ExecuteBatchStream amortizes protobuf and HTTP/2 framing across unrelated
+	// client commands while preserving request_id correlation.
+	ExecuteBatchStream(grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]) error
 	mustEmbedUnimplementedFarmCommandServiceServer()
 }
 
@@ -74,6 +116,12 @@ type UnimplementedFarmCommandServiceServer struct{}
 
 func (UnimplementedFarmCommandServiceServer) Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Execute not implemented")
+}
+func (UnimplementedFarmCommandServiceServer) ExecuteStream(grpc.BidiStreamingServer[StreamExecuteRequest, StreamExecuteResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ExecuteStream not implemented")
+}
+func (UnimplementedFarmCommandServiceServer) ExecuteBatchStream(grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ExecuteBatchStream not implemented")
 }
 func (UnimplementedFarmCommandServiceServer) mustEmbedUnimplementedFarmCommandServiceServer() {}
 func (UnimplementedFarmCommandServiceServer) testEmbeddedByValue()                            {}
@@ -114,6 +162,20 @@ func _FarmCommandService_Execute_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FarmCommandService_ExecuteStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(FarmCommandServiceServer).ExecuteStream(&grpc.GenericServerStream[StreamExecuteRequest, StreamExecuteResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FarmCommandService_ExecuteStreamServer = grpc.BidiStreamingServer[StreamExecuteRequest, StreamExecuteResponse]
+
+func _FarmCommandService_ExecuteBatchStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(FarmCommandServiceServer).ExecuteBatchStream(&grpc.GenericServerStream[StreamExecuteBatchRequest, StreamExecuteBatchResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type FarmCommandService_ExecuteBatchStreamServer = grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]
+
 // FarmCommandService_ServiceDesc is the grpc.ServiceDesc for FarmCommandService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -126,6 +188,19 @@ var FarmCommandService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _FarmCommandService_Execute_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ExecuteStream",
+			Handler:       _FarmCommandService_ExecuteStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ExecuteBatchStream",
+			Handler:       _FarmCommandService_ExecuteBatchStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "farm/internal/v1/farm_command.proto",
 }

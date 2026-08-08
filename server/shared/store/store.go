@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 
 	"farm/server/domain/farm"
@@ -162,10 +162,28 @@ const (
 
 // Store 是 SessionStore 与 FarmStore 的唯一实现，组合 MySQL 与 Redis。
 type Store struct {
-	db       *sql.DB
-	rdb      *redis.Client
-	farmTTL  time.Duration
-	taskInit dailyTaskInitCache
+	db             *sql.DB
+	rdb            *redis.Client
+	farmTTL        time.Duration
+	taskInit       dailyTaskInitCache
+	taskRead       boundedTTLCache[taskReadKey, []Task]
+	taskEncoded    boundedTTLCache[taskReadKey, []byte]
+	taskCacheState [taskCacheStateShardCount]taskCacheState
+	mailbox        mailboxCache
+}
+
+// CachedFriendStore returns the Social-facing friendship store with bounded
+// process-local caches and Redis cache-aside reads. MySQL remains authoritative.
+// Other services should continue to use Social's gRPC boundary instead of
+// constructing this wrapper themselves.
+func (s *Store) CachedFriendStore() FriendStore {
+	if s == nil {
+		return s
+	}
+	if s.rdb == nil {
+		return newCachedFriendStore(s, nil)
+	}
+	return newCachedFriendStoreWithBus(s, s.rdb, redisFriendInvalidationBus{client: s.rdb})
 }
 
 // New 用已建立的 *sql.DB / *redis.Client 组装 Store，farmTTL<=0 时用 DefaultFarmCacheTTL。
@@ -173,12 +191,19 @@ func New(db *sql.DB, rdb *redis.Client, farmTTL time.Duration) *Store {
 	if farmTTL <= 0 {
 		farmTTL = DefaultFarmCacheTTL
 	}
-	return &Store{db: db, rdb: rdb, farmTTL: farmTTL}
+	storage := &Store{db: db, rdb: rdb, farmTTL: farmTTL}
+	storage.mailbox.local.ttl = mailLocalCacheTTL
+	storage.mailbox.local.capacity = mailLocalCacheCapacity
+	return storage
 }
 
 // Open 按 DSN / addr 建立 MySQL 与 Redis 连接并 ping 通，返回 Store 与统一 Close。
 func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration) (*Store, func() error, error) {
-	db, err := sql.Open("mysql", mysqlDSN)
+	optimizedDSN, err := mysqlDSNWithInterpolation(mysqlDSN)
+	if err != nil {
+		return nil, nil, err
+	}
+	db, err := sql.Open("mysql", optimizedDSN)
 	if err != nil {
 		return nil, nil, fmt.Errorf("store: open mysql: %w", err)
 	}
@@ -194,7 +219,10 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 		return nil, nil, fmt.Errorf("store: ping redis: %w", err)
 	}
 
+	storage := New(db, rdb, farmTTL)
+	storage.startMailboxInvalidations()
 	closeFn := func() error {
+		storage.stopMailboxInvalidations()
 		rdbErr := rdb.Close()
 		dbErr := db.Close()
 		if dbErr != nil {
@@ -202,7 +230,19 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 		}
 		return rdbErr
 	}
-	return New(db, rdb, farmTTL), closeFn, nil
+	return storage, closeFn, nil
+}
+
+// mysqlDSNWithInterpolation lets the driver safely encode placeholders into
+// COM_QUERY. This removes the PREPARE/EXECUTE/CLOSE round trips that otherwise
+// occurred for almost every short request in this service.
+func mysqlDSNWithInterpolation(dsn string) (string, error) {
+	config, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", fmt.Errorf("store: parse mysql DSN: %w", err)
+	}
+	config.InterpolateParams = true
+	return config.FormatDSN(), nil
 }
 
 func configureMySQLPool(db *sql.DB) {

@@ -80,9 +80,15 @@ let runtimeDisposed = false;
 /** 服务端下次自然日 00:00（Unix 毫秒） */
 let taskResetAt = 0;
 
-// FarmDelta 是实时主链路；好友镜像每 3 秒向权威端校准一次，兜底修复
+// FarmDelta 是实时主链路；前台每 15~30 分钟随机校准一次，兜底修复
 // 浏览器切后台、短暂断网或 Gateway 写失败造成的单次推送丢失。
-const FRIEND_FARM_CONSISTENCY_INTERVAL_MS = 3_000;
+const FARM_CONSISTENCY_MIN_INTERVAL_MS = 15 * 60_000;
+const FARM_CONSISTENCY_JITTER_MS = 15 * 60_000;
+
+function nextFarmConsistencyIntervalMs() {
+  return FARM_CONSISTENCY_MIN_INTERVAL_MS +
+    Math.floor(Math.random() * FARM_CONSISTENCY_JITTER_MS);
+}
 
 /** @type {ReturnType<typeof createTaskResetScheduler>|null} */
 let taskResetScheduler = null;
@@ -383,14 +389,14 @@ function bindOnlineClient(client) {
     clearTimeout,
     now: farmNow,
     getPlots: () => state.plots,
-    // FarmMirror 以 ClientSeq 独立关联响应，农事同步可以和普通操作并发。
-    // 不能受 onlineBusy 阻断：进入农场/地块操作应用快照时 onlineBusy 仍为 true，
-    // 若此时丢掉成熟边界 timer，主人视图会停在旧阶段而访客进入时已看到新状态。
+    // FarmMirror 以 ClientSeq 独立关联响应，兜底同步可以和普通操作并发。
+    // 服务端负责成熟/风险边界推进，客户端不再创建高频边界轮询。
     isActive: () => isOnline() && !!netClient && !!session.viewingOwnerUid &&
-      (!isVisitingFriend() || document.visibilityState !== 'hidden'),
-    getConsistencyIntervalMs: () => isVisitingFriend()
-      ? FRIEND_FARM_CONSISTENCY_INTERVAL_MS
-      : 0,
+      document.visibilityState !== 'hidden',
+    // 在线状态变化由 FarmDelta 驱动；SyncFarm 只负责断线/丢包恢复和
+    // 15~30 分钟随机兜底，避免所有客户端在固定周期形成同步尖峰。
+    useBoundarySync: false,
+    getConsistencyIntervalMs: nextFarmConsistencyIntervalMs,
     sync: async () => {
       await farmMirror?.syncNow?.();
     },
@@ -1614,9 +1620,9 @@ const onGlobalPointerMove = (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.
 addEventListener('pointermove', onGlobalPointerMove);
 
 // 后台标签页的 timer 可能被浏览器降频；重新可见或获得焦点时立即校准，
-// 保证玩家切回好友农场看到的是最新权威状态。
+// 保证玩家切回任意农场视图时执行一次权威校准。
 const onFarmPageResume = () => {
-  if (document.visibilityState === 'hidden' || !isVisitingFriend()) return;
+  if (document.visibilityState === 'hidden' || !isOnline() || !session.viewingOwnerUid) return;
   void farmAdvanceScheduler?.reconcileNow?.();
 };
 addEventListener('focus', onFarmPageResume);

@@ -78,6 +78,13 @@ type DeltaPublisher interface {
 	Publish(ctx context.Context, delta farm.FarmDelta, originator presence.ConnRef) error
 }
 
+// ActiveFarmChecker reports whether a farm still has a live room subscriber.
+// The scheduler uses it after an Actor was evicted so offline farms are not
+// loaded only to produce a push nobody can receive.
+type ActiveFarmChecker interface {
+	HasActiveFarm(ctx context.Context, uid uint64) (bool, error)
+}
+
 // DeltaBatchPusher delivers one PushBatch to a single Gateway.
 type DeltaBatchPusher interface {
 	PushBatch(ctx context.Context, gatewayID string, batch PushBatch) error
@@ -147,6 +154,15 @@ func (p *FanoutPublisher) SetMetrics(m *telemetry.Metrics) {
 		return
 	}
 	p.metrics = m
+}
+
+// HasActiveFarm checks the same leased room index used by Publish.
+func (p *FanoutPublisher) HasActiveFarm(ctx context.Context, uid uint64) (bool, error) {
+	if p == nil || p.registry == nil || uid == 0 {
+		return false, nil
+	}
+	refs, err := p.registry.LookupSubscribers(ctx, uid)
+	return len(refs) > 0, err
 }
 
 // Publish attempts all current room subscribers except the connection that

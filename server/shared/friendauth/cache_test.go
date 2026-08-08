@@ -2,6 +2,7 @@ package friendauth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,8 +11,13 @@ import (
 )
 
 type friendStub struct {
-	value bool
-	calls int
+	value       bool
+	calls       int
+	listRows    []store.FriendRow
+	listCalls   int
+	searchRow   store.UserSearchRow
+	searchErr   error
+	searchCalls int
 }
 
 func (s *friendStub) AreFriends(context.Context, uint64, uint64) (bool, error) {
@@ -19,14 +25,16 @@ func (s *friendStub) AreFriends(context.Context, uint64, uint64) (bool, error) {
 	return s.value, nil
 }
 
-func (s *friendStub) AddFriends(context.Context, uint64, uint64) error     { return nil }
+func (s *friendStub) AddFriends(context.Context, uint64, uint64) error    { return nil }
 func (s *friendStub) RemoveFriends(context.Context, uint64, uint64) error { return nil }
 func (s *friendStub) ListFriends(context.Context, uint64) ([]store.FriendRow, error) {
-	return nil, nil
+	s.listCalls++
+	return append([]store.FriendRow(nil), s.listRows...), nil
 }
 func (s *friendStub) CountFriends(context.Context, uint64) (int, error) { return 0, nil }
 func (s *friendStub) FindUserByUsername(context.Context, string) (store.UserSearchRow, error) {
-	return store.UserSearchRow{}, nil
+	s.searchCalls++
+	return s.searchRow, s.searchErr
 }
 func (s *friendStub) CreateFriendRequest(context.Context, uint64, uint64) error { return nil }
 func (s *friendStub) ListIncomingFriendRequests(context.Context, uint64) ([]store.FriendRequestRow, error) {
@@ -123,18 +131,67 @@ func TestWatchInvalidationsAllowsWildcardUID(t *testing.T) {
 func TestCacheEvictsWhenAtCapacity(t *testing.T) {
 	stub := &friendStub{value: true}
 	cache := NewCache(stub)
-	cache.capacity = 2
+	cache.capacity = cacheShardCount
 	cache.ttl = time.Hour
 
-	for i := uint64(1); i <= 3; i++ {
+	for i := uint64(1); i <= cacheShardCount+1; i++ {
 		if _, err := cache.AreFriends(context.Background(), i, i+100); err != nil {
 			t.Fatalf("AreFriends pair %d: %v", i, err)
 		}
 	}
-	cache.mu.Lock()
-	size := len(cache.entries)
-	cache.mu.Unlock()
-	if size > 2 {
-		t.Fatalf("entries = %d, want <= 2", size)
+	size := cache.entryCount()
+	if size > cacheShardCount {
+		t.Fatalf("entries = %d, want <= %d", size, cacheShardCount)
+	}
+}
+
+func TestListFriendsCachesCopyAndInvalidatesBothUIDs(t *testing.T) {
+	stub := &friendStub{listRows: []store.FriendRow{{UID: 2, Nickname: "peer"}}}
+	cache := NewCache(stub)
+
+	first, err := cache.ListFriends(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("ListFriends: %v", err)
+	}
+	first[0].Nickname = "mutated"
+	second, err := cache.ListFriends(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("cached ListFriends: %v", err)
+	}
+	if stub.listCalls != 1 || second[0].Nickname != "peer" {
+		t.Fatalf("cached rows=%#v calls=%d", second, stub.listCalls)
+	}
+
+	cache.Invalidate(1, 2)
+	if _, err := cache.ListFriends(context.Background(), 1); err != nil {
+		t.Fatalf("ListFriends after invalidation: %v", err)
+	}
+	if stub.listCalls != 2 {
+		t.Fatalf("list calls=%d, want 2", stub.listCalls)
+	}
+}
+
+func TestFindUserCachesPositiveAndNotFound(t *testing.T) {
+	stub := &friendStub{searchRow: store.UserSearchRow{UID: 9, Nickname: "nine"}}
+	cache := NewCache(stub)
+	for range 2 {
+		row, err := cache.FindUserByUsername(context.Background(), "user9")
+		if err != nil || row.UID != 9 {
+			t.Fatalf("FindUserByUsername = %#v err=%v", row, err)
+		}
+	}
+	if stub.searchCalls != 1 {
+		t.Fatalf("positive search calls=%d, want 1", stub.searchCalls)
+	}
+
+	stub.searchErr = store.ErrAccountNotFound
+	for range 2 {
+		_, err := cache.FindUserByUsername(context.Background(), "missing")
+		if !errors.Is(err, store.ErrAccountNotFound) {
+			t.Fatalf("missing error=%v", err)
+		}
+	}
+	if stub.searchCalls != 2 {
+		t.Fatalf("total search calls=%d, want 2", stub.searchCalls)
 	}
 }

@@ -6,7 +6,7 @@
 
 **Architecture:** `hash(uid)%1024` 逻辑分片经路由表到 FarmServer；Gateway 无状态任意接入并用连接注册表回推；跨农场一律 `CrossAction`→Kafka→主人裁决→`CrossResult`（测试可注入内存 EventBus）；禁止 Actor 同步等待另一 Actor。
 
-**Tech Stack:** Go 1.22+、现有 MySQL/Redis、新增 Kafka（compose）、Vue3+Vite 客户端、JSON Envelope `farm.v1.json`
+**Tech Stack:** Go 1.22+、现有 MySQL/Redis、新增 Kafka（compose）、Vue3+Vite 客户端、二进制批 Envelope `farm.v2.bin`
 
 ## Global Constraints
 

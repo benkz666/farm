@@ -1,18 +1,25 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
+	"time"
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/farmrpc"
 	"farm/server/farmsvr/room"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/telemetry"
 )
 
 var errFriendAccessRevoked = errors.New("gateway: friend access revoked during enter")
+
+const roomWatermarkFreshness = 2 * time.Second
 
 type syncFarmRequest struct {
 	OwnerUID clientjson.UID    `json:"owner_uid"`
@@ -29,6 +36,22 @@ type syncFarmResponse struct {
 }
 
 func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) Envelope {
+	return g.handleEnterFarmCore(connection, request, nil)
+}
+
+type gatewayPayloadFields struct {
+	enabled  bool
+	mutable  bool
+	relation string
+}
+
+func (g *Gateway) handleEnterFarmForWire(connection *wsConnection, request Envelope) (Envelope, gatewayPayloadFields) {
+	var fields gatewayPayloadFields
+	response := g.handleEnterFarmCore(connection, request, &fields)
+	return response, fields
+}
+
+func (g *Gateway) handleEnterFarmCore(connection *wsConnection, request Envelope, wireFields *gatewayPayloadFields) Envelope {
 	response := Envelope{
 		Cmd:       request.Cmd,
 		ClientSeq: request.ClientSeq,
@@ -54,8 +77,9 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 			return response
 		}
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
-			Operation:  farmrpc.OperationEnterFarm,
-			Originator: g.connectionRef(connection),
+			Operation:      farmrpc.OperationEnterFarm,
+			Originator:     g.connectionRef(connection),
+			PreferPrepared: relation == "SELF" && wireFields != nil,
 		})
 		if err != nil {
 			g.leaveFarm(connection)
@@ -65,6 +89,26 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 		if result.Err != errcode.OK {
 			g.leaveFarm(connection)
 			response.Err = result.Err
+			return response
+		}
+		connection.setRoomWatermark(ownerUID, result.FarmSeq)
+		if relation == "SELF" {
+			if wireFields != nil {
+				wireFields.enabled = true
+				wireFields.mutable = g.allowDebug
+				wireFields.relation = relation
+				response.Payload = result.Payload
+				response.PreparedPayload = result.PreparedPayload
+				response.PreparedField = result.PreparedField
+				return response
+			}
+			payload, appendErr := appendTrustedGatewayPayloadFields(result.Payload, g.allowDebug, relation)
+			if appendErr != nil {
+				g.leaveFarm(connection)
+				response.Err = errcode.Internal
+				return response
+			}
+			response.Payload = payload
 			return response
 		}
 		var remote farmrpc.EnterFarmResponse
@@ -161,6 +205,7 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 	}
 
 	response.Payload = marshalPayload(enter)
+	connection.setRoomWatermark(ownerUID, uint64(enter.FarmSeq))
 	if relation == "FRIEND" {
 		if err := g.advanceVisitTask(connection.uid); err != nil {
 			telemetry.L().Error("gateway advance visit task failed",
@@ -174,6 +219,20 @@ func (g *Gateway) handleEnterFarm(connection *wsConnection, request Envelope) En
 }
 
 func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Envelope {
+	return g.handleSyncFarmCore(connection, request, nil, time.Time{})
+}
+
+func (g *Gateway) handleSyncFarmForWire(connection *wsConnection, request Envelope) (Envelope, gatewayPayloadFields) {
+	return g.handleSyncFarmForWireAt(connection, request, time.Now())
+}
+
+func (g *Gateway) handleSyncFarmForWireAt(connection *wsConnection, request Envelope, observedAt time.Time) (Envelope, gatewayPayloadFields) {
+	var fields gatewayPayloadFields
+	response := g.handleSyncFarmCore(connection, request, &fields, observedAt)
+	return response, fields
+}
+
+func (g *Gateway) handleSyncFarmCore(connection *wsConnection, request Envelope, wireFields *gatewayPayloadFields, observedAt time.Time) Envelope {
 	response := Envelope{
 		Cmd:       request.Cmd,
 		ClientSeq: request.ClientSeq,
@@ -190,12 +249,34 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		response.Err = code
 		return response
 	}
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	if farmSeq, ok := connection.matchesFreshRoomWatermark(ownerUID, uint64(payload.FromSeq), observedAt); ok {
+		serverTime := g.Now()
+		timeProfile := g.TimeProfile()
+		response.Payload = marshalPayload(syncFarmResponse{
+			FarmSeq:            clientjson.Uint64(farmSeq),
+			ServerTime:         serverTime,
+			TimeProfile:        timeProfile,
+			TimeProfileMutable: g.allowDebug,
+		})
+		if wireFields != nil {
+			prepared, err := clientwire.MarshalSyncFarmCaughtUpPayload(farmSeq, serverTime, timeProfile, g.allowDebug)
+			if err == nil {
+				response.PreparedPayload = prepared
+				response.PreparedField = clientwire.PreparedSyncFarmResponse
+			}
+		}
+		return response
+	}
 
 	if g.farmRPC != nil {
 		result, err := g.executeFarmRPC(context.Background(), ownerUID, farmrpc.CommandRequest{
-			Operation:  farmrpc.OperationSyncFarm,
-			Originator: g.connectionRef(connection),
-			Payload:    marshalPayload(farmrpc.SyncFarmRequest{FromSeq: uint64(payload.FromSeq)}),
+			Operation:      farmrpc.OperationSyncFarm,
+			Originator:     g.connectionRef(connection),
+			Payload:        marshalPayload(farmrpc.SyncFarmRequest{FromSeq: uint64(payload.FromSeq)}),
+			PreferPrepared: relation == "SELF" && wireFields != nil,
 		})
 		if err != nil {
 			response.Err = errcode.Internal
@@ -203,6 +284,24 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		}
 		response.Err = result.Err
 		if result.Err == errcode.OK {
+			connection.setRoomWatermark(ownerUID, result.FarmSeq)
+			if relation == "SELF" {
+				if wireFields != nil {
+					wireFields.enabled = true
+					wireFields.mutable = g.allowDebug
+					response.Payload = result.Payload
+					response.PreparedPayload = result.PreparedPayload
+					response.PreparedField = result.PreparedField
+					return response
+				}
+				payload, appendErr := appendTrustedGatewayPayloadFields(result.Payload, g.allowDebug, "")
+				if appendErr != nil {
+					response.Err = errcode.Internal
+					return response
+				}
+				response.Payload = payload
+				return response
+			}
 			var sync syncFarmResponse
 			if err := unmarshalPayload(result.Payload, &sync); err != nil {
 				response.Err = errcode.Internal
@@ -275,7 +374,63 @@ func (g *Gateway) handleSyncFarm(connection *wsConnection, request Envelope) Env
 		g.writeStealHint(ownerUID, stealable)
 	}
 	response.Payload = marshalPayload(sync)
+	connection.setRoomWatermark(ownerUID, uint64(sync.FarmSeq))
 	return response
+}
+
+func (connection *wsConnection) setRoomWatermark(ownerUID, farmSeq uint64) {
+	if connection == nil || ownerUID == 0 {
+		return
+	}
+	connection.roomMu.Lock()
+	if connection.roomUID == ownerUID {
+		connection.roomSeq = farmSeq
+		connection.roomSeqKnown = true
+		connection.roomSeqObservedAt = time.Now().UnixNano()
+	}
+	connection.roomMu.Unlock()
+}
+
+func (connection *wsConnection) matchesFreshRoomWatermark(ownerUID, fromSeq uint64, now time.Time) (uint64, bool) {
+	if connection == nil || ownerUID == 0 {
+		return 0, false
+	}
+	connection.roomMu.Lock()
+	defer connection.roomMu.Unlock()
+	fresh := connection.roomUID == ownerUID && connection.roomSeqKnown &&
+		fromSeq == connection.roomSeq && now.UnixNano()-connection.roomSeqObservedAt <= roomWatermarkFreshness.Nanoseconds()
+	return connection.roomSeq, fresh
+}
+
+func (connection *wsConnection) observeRoomDeltaLocked(farmSeq uint64) {
+	if farmSeq == 0 || !connection.roomSeqKnown {
+		connection.roomSeqKnown = false
+		return
+	}
+	if farmSeq != connection.roomSeq+1 {
+		connection.roomSeqKnown = false
+		return
+	}
+	connection.roomSeq = farmSeq
+	connection.roomSeqKnown = true
+	connection.roomSeqObservedAt = time.Now().UnixNano()
+}
+
+func (connection *wsConnection) advanceRoomWatermark(ownerUID, farmSeq uint64) {
+	if connection == nil || ownerUID == 0 || farmSeq == 0 {
+		return
+	}
+	connection.roomMu.Lock()
+	defer connection.roomMu.Unlock()
+	if connection.roomUID != ownerUID || !connection.roomSeqKnown {
+		return
+	}
+	if farmSeq != connection.roomSeq && farmSeq != connection.roomSeq+1 {
+		connection.roomSeqKnown = false
+		return
+	}
+	connection.roomSeq = farmSeq
+	connection.roomSeqObservedAt = time.Now().UnixNano()
 }
 
 func (g *Gateway) farmAccess(viewerUID, requestedOwnerUID uint64) (ownerUID uint64, relation string, code errcode.Code) {
@@ -306,8 +461,79 @@ func redactFarmSnapshot(snap farm.FarmSnapshotJSON, relation string) farm.FarmSn
 	return snap
 }
 
+// appendGatewayPayloadFields validates an arbitrary Farm-produced JSON object
+// before appending Gateway-owned fields. The production RPC path validates at
+// executeFarmRPC and calls the trusted variant to avoid scanning it twice.
+func appendGatewayPayloadFields(payload json.RawMessage, mutable bool, relation string) (json.RawMessage, error) {
+	if err := clientwire.ValidatePayloadObject(payload); err != nil {
+		return nil, errors.New("gateway: invalid Farm RPC payload")
+	}
+	return appendTrustedGatewayPayloadFields(payload, mutable, relation)
+}
+
+func appendTrustedGatewayPayloadFields(payload json.RawMessage, mutable bool, relation string) (json.RawMessage, error) {
+	capacity := len(payload) + len(relation) + 64
+	return appendTrustedGatewayPayloadFieldsTo(make([]byte, 0, capacity), payload, mutable, relation)
+}
+
+func appendTrustedGatewayPayloadFieldsTo(result []byte, payload json.RawMessage, mutable bool, relation string) (json.RawMessage, error) {
+	payload = bytes.TrimSpace(payload)
+	if len(payload) < 2 || payload[0] != '{' || payload[len(payload)-1] != '}' {
+		return nil, errors.New("gateway: invalid Farm RPC payload")
+	}
+	contents := bytes.TrimSpace(payload[1 : len(payload)-1])
+	result = append(result, '{')
+	result = append(result, contents...)
+	if len(contents) > 0 {
+		result = append(result, ',')
+	}
+	result = append(result, `"time_profile_mutable":`...)
+	result = strconv.AppendBool(result, mutable)
+	if relation != "" {
+		result = append(result, `,"relation":`...)
+		result = strconv.AppendQuote(result, relation)
+	}
+	result = append(result, '}')
+	return json.RawMessage(result), nil
+}
+
+// appendTrustedGatewayEnvelope writes the final client Envelope and injects
+// Gateway-owned fields into a validated Farm payload in one destination buffer.
+// This avoids allocating an intermediate augmented payload on every hot-path
+// EnterFarm/SyncFarm response.
+func appendTrustedGatewayEnvelope(dst []byte, envelope Envelope, fields gatewayPayloadFields) ([]byte, error) {
+	dst = append(dst, `{"cmd":`...)
+	dst = strconv.AppendUint(dst, uint64(envelope.Cmd), 10)
+	dst = append(dst, `,"client_seq":`...)
+	dst = strconv.AppendUint(dst, uint64(envelope.ClientSeq), 10)
+	dst = append(dst, `,"err":`...)
+	dst = strconv.AppendInt(dst, int64(envelope.Err), 10)
+	dst = append(dst, `,"payload":`...)
+	var err error
+	dst, err = appendTrustedGatewayPayloadFieldsTo(dst, envelope.Payload, fields.mutable, fields.relation)
+	if err != nil {
+		return nil, err
+	}
+	dst = append(dst, '}')
+	return dst, nil
+}
+
 func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 	if connection == nil || connection.id == 0 || g.rooms == nil {
+		return nil
+	}
+	// Re-entering the same room still starts a new snapshot/delta ordering
+	// barrier, but it must not renew the distributed subscription on every
+	// EnterFarm. The periodic connection lease renewal owns that responsibility.
+	connection.roomMu.Lock()
+	alreadySubscribed := connection.roomUID == ownerUID
+	if alreadySubscribed {
+		connection.holdFarmDeltas = true
+		connection.heldFarmDeltas = nil
+		connection.roomSeqKnown = false
+	}
+	connection.roomMu.Unlock()
+	if alreadySubscribed {
 		return nil
 	}
 	if g.connRegistry != nil {
@@ -316,14 +542,15 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 		}
 	}
 
-	connection.writeMu.Lock()
 	connection.roomMu.Lock()
 	previousOwnerUID := connection.roomUID
 	connection.roomUID = ownerUID
+	connection.roomSeq = 0
+	connection.roomSeqKnown = false
+	connection.roomSeqObservedAt = 0
 	connection.holdFarmDeltas = true
 	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()
-	connection.writeMu.Unlock()
 	if previousOwnerUID == ownerUID {
 		return nil
 	}
@@ -356,6 +583,9 @@ func (g *Gateway) leaveFarm(connection *wsConnection) {
 	connection.roomMu.Lock()
 	ownerUID := connection.roomUID
 	connection.roomUID = 0
+	connection.roomSeq = 0
+	connection.roomSeqKnown = false
+	connection.roomSeqObservedAt = 0
 	connection.holdFarmDeltas = false
 	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()

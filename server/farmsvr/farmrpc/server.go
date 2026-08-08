@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"time"
 
 	"farm/server/domain/farm"
@@ -14,6 +15,7 @@ import (
 	"farm/server/farmsvr/room"
 	"farm/server/gateway/presence"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/store"
@@ -45,17 +47,21 @@ const (
 // CommandRequest is the HTTP JSON payload sent from a Gateway to the Farm
 // authoritative for FarmUID. The Gateway authenticates the player first.
 type CommandRequest struct {
-	Operation  Operation        `json:"operation"`
-	FarmUID    uint64           `json:"farm_uid"`
-	Originator presence.ConnRef `json:"originator,omitempty"`
-	Payload    json.RawMessage  `json:"payload,omitempty"`
+	Operation      Operation        `json:"operation"`
+	FarmUID        uint64           `json:"farm_uid"`
+	Originator     presence.ConnRef `json:"originator,omitempty"`
+	Payload        json.RawMessage  `json:"payload,omitempty"`
+	PreferPrepared bool             `json:"-"`
 }
 
 // CommandResponse preserves protocol-level errors inside a successful internal
 // request so a Gateway can return the same error code to its client.
 type CommandResponse struct {
-	Err     errcode.Code    `json:"err"`
-	Payload json.RawMessage `json:"payload"`
+	Err             errcode.Code    `json:"err"`
+	Payload         json.RawMessage `json:"payload"`
+	FarmSeq         uint64          `json:"farm_seq,omitempty"`
+	PreparedPayload []byte          `json:"-"`
+	PreparedField   uint32          `json:"-"`
 }
 
 // EnterFarmResponse is the Farm-owned portion of an EnterFarm response.
@@ -175,6 +181,16 @@ type Runtime interface {
 	Do(uid uint64, fn func(*room.FarmActor) error) error
 }
 
+type encodedTaskMailStore interface {
+	ListTasksEncoded(context.Context, uint64, int64) ([]byte, error)
+	ListMailsEncoded(context.Context, uint64) ([]byte, error)
+}
+
+type residentRuntime interface {
+	Runtime
+	IsResident(uid uint64) bool
+}
+
 // Handler serves authenticated Farm commands for a single physical Farm.
 type Handler struct {
 	runtime              Runtime
@@ -193,6 +209,7 @@ type Handler struct {
 	mailClaimer          MailClaimer
 	codexRewards         store.CodexRewardStore
 	mailNotifyPublisher  MailNotifyPublisher
+	advanceScheduler     *farmAdvanceScheduler
 }
 
 // StealHintWriter updates the weak-consistent FriendList stealable hint.
@@ -344,7 +361,90 @@ func NewHandler(runtime Runtime, token []byte, owns func(uint64) bool, now func(
 			option(handler)
 		}
 	}
+	handler.advanceScheduler = newFarmAdvanceScheduler(handler.now, handler.advanceScheduled)
 	return handler
+}
+
+// Shutdown stops the process-local farm timing heap. Runtime shutdown remains
+// owned by the Farm process bootstrap.
+func (h *Handler) Shutdown() {
+	if h != nil && h.advanceScheduler != nil {
+		h.advanceScheduler.Close()
+	}
+}
+
+func (h *Handler) scheduleAdvance(uid uint64, aggregate *farm.Aggregate) {
+	if h == nil || h.advanceScheduler == nil || aggregate == nil {
+		return
+	}
+	h.advanceScheduler.Schedule(uid, aggregate.NextAdvanceAt(h.now()))
+}
+
+// advanceScheduled performs the same authoritative transition as SyncFarm.
+// A resident Actor is used directly. If idle eviction already unloaded it, the
+// shared room lease decides whether it should be reconstructed for an online
+// subscriber; offline farms stay lazy and advance on their next EnterFarm.
+func (h *Handler) advanceScheduled(uid uint64) {
+	if h == nil || h.runtime == nil || uid == 0 {
+		return
+	}
+	resident, canCheckResident := h.runtime.(residentRuntime)
+	if canCheckResident && !resident.IsResident(uid) {
+		checker, ok := h.deltaPublisher.(ActiveFarmChecker)
+		if ok {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			active, err := checker.HasActiveFarm(ctx, uid)
+			cancel()
+			if err != nil {
+				h.advanceScheduler.Schedule(uid, h.now()+advanceRetryDelay.Milliseconds())
+				return
+			}
+			if !active {
+				return
+			}
+		}
+	}
+
+	var delta *farm.FarmDelta
+	var stealable bool
+	var next int64
+	err := h.runtime.Do(uid, func(farmActor *room.FarmActor) error {
+		if farmActor == nil || farmActor.Aggregate == nil {
+			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		now := h.now()
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(now, h.timeProfiles.Get())
+		if len(changes) > 0 {
+			farmActor.RequireFlush()
+			emitted := farm.FarmDelta{
+				OwnerUID: uid,
+				FarmSeq:  farmActor.Aggregate.FarmSeq,
+				Plots:    changes,
+			}
+			farmActor.Deltas.Append(emitted)
+			delta = &emitted
+			stealable = farmActor.Aggregate.HasStealable()
+		}
+		next = farmActor.Aggregate.NextAdvanceAt(now)
+		return nil
+	})
+	if err != nil {
+		h.advanceScheduler.Schedule(uid, h.now()+advanceRetryDelay.Milliseconds())
+		return
+	}
+	h.advanceScheduler.Schedule(uid, next)
+	h.publishDelta(delta, presence.ConnRef{})
+	if delta != nil {
+		h.writeStealHint(uid, stealable)
+	}
+}
+
+// ScheduleAdvanceAt lets other authoritative Farm write paths refresh the same
+// process-local boundary timer using a deadline computed inside their Actor.
+func (h *Handler) ScheduleAdvanceAt(uid uint64, due int64) {
+	if h != nil && h.advanceScheduler != nil {
+		h.advanceScheduler.Schedule(uid, due)
+	}
 }
 
 // Execute runs one Gateway-authorized command against the local farm runtime.
@@ -395,7 +495,11 @@ func (h *Handler) Execute(request CommandRequest) CommandResponse {
 }
 
 func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
-	var response EnterFarmResponse
+	var snapshot json.RawMessage
+	var snapshotProto []byte
+	var farmSeq uint64
+	var serverTime int64
+	var timeProfile string
 	var delta *farm.FarmDelta
 	var stealable bool
 	var refreshHint bool
@@ -403,13 +507,10 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		changes := farmActor.Aggregate.AdvanceAllWithProfile(h.now(), h.timeProfiles.Get())
-		response = EnterFarmResponse{
-			Snapshot:    farmActor.Aggregate.Snapshot(),
-			FarmSeq:     clientjson.Uint64(farmActor.Aggregate.FarmSeq),
-			ServerTime:  h.now(),
-			TimeProfile: h.timeProfiles.Get(),
-		}
+		serverTime = h.now()
+		timeProfile = h.timeProfiles.Get()
+		changes := farmActor.Aggregate.AdvanceAllWithProfile(serverTime, timeProfile)
+		h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 		if len(changes) > 0 {
 			// 进入农场时惰性推进出的成熟/枯萎是权威状态，必须在响应前落盘。
 			farmActor.RequireFlush()
@@ -423,6 +524,16 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 			stealable = farmActor.Aggregate.HasStealable()
 			refreshHint = true
 		}
+		var err error
+		snapshot, err = farmActor.EncodedSnapshot()
+		if err != nil {
+			return err
+		}
+		snapshotProto, err = farmActor.EncodedSnapshotProto()
+		if err != nil {
+			return err
+		}
+		farmSeq = farmActor.Aggregate.FarmSeq
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: errcode.Internal}
@@ -431,7 +542,15 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
-	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(response)}
+	payload, err := marshalSnapshotResponse(snapshot, farmSeq, serverTime, timeProfile)
+	if err != nil {
+		return CommandResponse{Err: errcode.Internal}
+	}
+	prepared, err := clientwire.MarshalEnterFarmResponsePayload(snapshotProto, farmSeq, serverTime, timeProfile)
+	if err != nil {
+		return CommandResponse{Err: errcode.Internal}
+	}
+	return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: farmSeq, PreparedPayload: prepared, PreparedField: clientwire.PreparedEnterFarmResponse}
 }
 
 func (h *Handler) plotAction(command CommandRequest) CommandResponse {
@@ -466,7 +585,12 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			}
 		}
 		if farmActor.Aggregate.FarmSeq != beforeFarmSeq {
-			farmActor.MarkDirty()
+			includeItems := request.Kind == farm.Till || request.Kind == farm.Clear ||
+				request.Kind == farm.Plant || request.Kind == farm.Fertilize ||
+				request.Kind == farm.Harvest
+			farmActor.MarkPlotDirty(
+				uint8(request.PlotIndex), includeItems, request.Kind == farm.Harvest,
+			)
 			emitted := farm.FarmDelta{
 				OwnerUID: command.FarmUID,
 				FarmSeq:  farmActor.Aggregate.FarmSeq,
@@ -482,6 +606,7 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			stealable = farmActor.Aggregate.HasStealable()
 			refreshHint = true
 		}
+		h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: errcode.Internal}
@@ -522,7 +647,7 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			)
 		}
 	}
-	return CommandResponse{Err: result.Err, Payload: marshalPayload(response)}
+	return CommandResponse{Err: result.Err, Payload: marshalPayload(response), FarmSeq: uint64(response.FarmSeq)}
 }
 
 func (h *Handler) codexList(command CommandRequest) CommandResponse {
@@ -573,8 +698,9 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			})
 		}
 		if result.Err == errcode.OK {
-			// 同 Gateway 侧买卖：金币改动按 A 档同步落盘（架构 5.3 节）。
-			farmActor.RequireFlush()
+			// The committer preserves per-UID ordering and batches this reduced
+			// economy write with other shop operations.
+			farmActor.RequireEconomyFlush()
 			response = ActionResponse{
 				FarmSeq: clientjson.Uint64(farmActor.Aggregate.FarmSeq),
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -607,7 +733,7 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			)
 		}
 	}
-	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(response)}
+	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(response), FarmSeq: uint64(response.FarmSeq)}
 }
 
 func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
@@ -616,6 +742,8 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
 	var response SyncFarmResponse
+	var encodedSnapshot json.RawMessage
+	var encodedSnapshotProto []byte
 	var delta *farm.FarmDelta
 	var stealable bool
 	var refreshHint bool
@@ -642,20 +770,38 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 		response.ServerTime = now
 		response.TimeProfile = h.timeProfiles.Get()
 		if request.FromSeq == uint64(response.FarmSeq) {
+			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 			return nil
 		}
 		if request.FromSeq > uint64(response.FarmSeq) {
-			snapshot := farmActor.Aggregate.Snapshot()
-			response.Snapshot = &snapshot
+			var err error
+			encodedSnapshot, err = farmActor.EncodedSnapshot()
+			if err != nil {
+				return err
+			}
+			encodedSnapshotProto, err = farmActor.EncodedSnapshotProto()
+			if err != nil {
+				return err
+			}
+			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 			return nil
 		}
 		deltas, ok := farmActor.Deltas.Since(request.FromSeq + 1)
 		if !ok || len(deltas) == 0 {
-			snapshot := farmActor.Aggregate.Snapshot()
-			response.Snapshot = &snapshot
+			var err error
+			encodedSnapshot, err = farmActor.EncodedSnapshot()
+			if err != nil {
+				return err
+			}
+			encodedSnapshotProto, err = farmActor.EncodedSnapshotProto()
+			if err != nil {
+				return err
+			}
+			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 			return nil
 		}
 		response.Deltas = deltas
+		h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 		return nil
 	}); err != nil {
 		return CommandResponse{Err: errcode.Internal}
@@ -664,7 +810,52 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
-	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(response)}
+	if len(encodedSnapshot) > 0 {
+		payload, err := marshalSnapshotResponse(
+			encodedSnapshot,
+			uint64(response.FarmSeq),
+			response.ServerTime,
+			response.TimeProfile,
+		)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		prepared, err := clientwire.MarshalSyncFarmSnapshotPayload(encodedSnapshotProto, uint64(response.FarmSeq), response.ServerTime, response.TimeProfile)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: uint64(response.FarmSeq), PreparedPayload: prepared, PreparedField: clientwire.PreparedSyncFarmResponse}
+	}
+	payload := marshalPayload(response)
+	if len(response.Deltas) == 0 {
+		prepared, err := clientwire.MarshalSyncFarmCaughtUpPayload(uint64(response.FarmSeq), response.ServerTime, response.TimeProfile, false)
+		if err == nil {
+			return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: uint64(response.FarmSeq), PreparedPayload: prepared, PreparedField: clientwire.PreparedSyncFarmResponse}
+		}
+	}
+	return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: uint64(response.FarmSeq)}
+}
+
+// marshalSnapshotResponse embeds one trusted pre-encoded snapshot and appends
+// the small request-specific fields without asking encoding/json to traverse
+// the full farm again. EnterFarm and snapshot-fallback SyncFarm share this
+// exact Farm-owned payload shape.
+func marshalSnapshotResponse(snapshot json.RawMessage, farmSeq uint64, serverTime int64, timeProfile string) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(snapshot)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		return nil, errors.New("farmrpc: invalid pre-encoded snapshot")
+	}
+	result := make([]byte, 0, len(trimmed)+96+len(timeProfile))
+	result = append(result, `{"snapshot":`...)
+	result = append(result, trimmed...)
+	result = append(result, `,"farm_seq":"`...)
+	result = strconv.AppendUint(result, farmSeq, 10)
+	result = append(result, `","server_time":`...)
+	result = strconv.AppendInt(result, serverTime, 10)
+	result = append(result, `,"time_profile":`...)
+	result = strconv.AppendQuote(result, timeProfile)
+	result = append(result, '}')
+	return result, nil
 }
 
 func (h *Handler) pet(command CommandRequest) CommandResponse {
@@ -737,7 +928,7 @@ func (h *Handler) crossReserve(command CommandRequest) CommandResponse {
 		now := h.now()
 		code = crossfarm.ReserveVisitor(farmActor.Aggregate, reservation, now)
 		if code == errcode.OK {
-			farmActor.RequireFlush()
+			farmActor.RequireCrossVisitorFlush(false)
 		}
 		telemetry.L().Debug("farmrpc cross reserve",
 			"component", "farmrpc",
@@ -766,7 +957,7 @@ func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
 		now := h.now()
 		response.Reward, response.PlayerDelta, code = crossfarm.SettleVisitor(farmActor.Aggregate, result, now)
 		// 重投看到 Timeout 也可能只是前一次 commit 结果不确定，仍需 durable barrier。
-		farmActor.RequireFlush()
+		farmActor.RequireCrossVisitorFlush(true)
 		telemetry.L().Debug("farmrpc cross settle",
 			"component", "farmrpc",
 			"op", "cross_settle",
@@ -792,6 +983,13 @@ func (h *Handler) taskList(command CommandRequest) CommandResponse {
 	}
 	now := h.now()
 	dayKey := gameconfig.LocalDayKey(now)
+	if encodedStore, ok := h.taskMail.(encodedTaskMailStore); ok {
+		encoded, err := encodedStore.ListTasksEncoded(context.Background(), command.FarmUID, dayKey)
+		if err != nil {
+			return CommandResponse{Err: taskListErrorCode(err)}
+		}
+		return CommandResponse{Err: errcode.OK, Payload: wrapEncodedList("tasks", encoded, gameconfig.NextLocalDayResetMs(now))}
+	}
 	tasks, err := h.taskMail.ListTasks(context.Background(), command.FarmUID, dayKey)
 	if err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
@@ -812,11 +1010,40 @@ func (h *Handler) mailList(command CommandRequest) CommandResponse {
 	if err := decodeJSON(bytes.NewReader(command.Payload), &struct{}{}); err != nil {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
+	if encodedStore, ok := h.taskMail.(encodedTaskMailStore); ok {
+		encoded, err := encodedStore.ListMailsEncoded(context.Background(), command.FarmUID)
+		if err != nil {
+			return CommandResponse{Err: taskListErrorCode(err)}
+		}
+		return CommandResponse{Err: errcode.OK, Payload: wrapEncodedList("mails", encoded, 0)}
+	}
 	mails, err := h.taskMail.ListMails(context.Background(), command.FarmUID)
 	if err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
 	}
 	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(MailListResponse{Mails: mails})}
+}
+
+func wrapEncodedList(field string, encoded []byte, resetAt int64) json.RawMessage {
+	capacity := len(encoded) + len(field) + 24
+	if resetAt != 0 {
+		capacity += 32
+	}
+	result := make([]byte, 0, capacity)
+	result = append(result, '{', '"')
+	result = append(result, field...)
+	result = append(result, '"', ':')
+	if len(encoded) == 0 {
+		result = append(result, '[', ']')
+	} else {
+		result = append(result, encoded...)
+	}
+	if resetAt != 0 {
+		result = append(result, `,"reset_at":`...)
+		result = strconv.AppendInt(result, resetAt, 10)
+	}
+	result = append(result, '}')
+	return result
 }
 
 func (h *Handler) mailRead(command CommandRequest) CommandResponse {

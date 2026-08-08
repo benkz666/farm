@@ -95,7 +95,7 @@ func TestRoomHubDeltaMetricsOneLocalBatch(t *testing.T) {
 	var encodeCalls atomic.Int64
 	hub.encodeFarmDelta = func(delta farm.FarmDelta) ([]byte, error) {
 		encodeCalls.Add(1)
-		return clientwire.EncodeFarmDelta(delta)
+		return clientwire.EncodeFarmDeltaRecord(delta)
 	}
 	for _, connID := range []uint64{1, 2, 3} {
 		hub.Subscribe(11, connID, func(farm.FarmDelta, []byte) {})
@@ -119,7 +119,7 @@ func TestRoomHubDeltaMetricsSkipsEmptyTargets(t *testing.T) {
 	hub := NewRoomHub()
 	hub.metrics = metrics
 	hub.encodeFarmDelta = func(delta farm.FarmDelta) ([]byte, error) {
-		return clientwire.EncodeFarmDelta(delta)
+		return clientwire.EncodeFarmDeltaRecord(delta)
 	}
 
 	hub.Broadcast(farm.FarmDelta{OwnerUID: 11, FarmSeq: 1})

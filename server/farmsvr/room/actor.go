@@ -2,7 +2,11 @@
 package room
 
 import (
+	"encoding/json"
+	"errors"
+
 	"farm/server/domain/farm"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
 )
 
@@ -23,6 +27,17 @@ type FarmActor struct {
 	// outboxEvents 记录尚未 durable ack 的跨农场结果等事件。
 	outboxEvents []stampedOutboxEvent
 	outboxTail   int
+	persistPlan  outbox.PersistPlan
+	planSet      bool
+	planGen      uint64
+
+	// snapshotJSON is the immutable, client-visible full snapshot for
+	// snapshotSeq. Actor serialization makes it safe to reuse until a write
+	// invalidates it; the response builder copies it into its own payload.
+	snapshotJSONSeq  uint64
+	snapshotJSON     json.RawMessage
+	snapshotProtoSeq uint64
+	snapshotProto    []byte
 }
 
 // MarkDirty 标记当前回调已真实改动聚合；纯读路径不得调用。
@@ -31,6 +46,56 @@ func (a *FarmActor) MarkDirty() {
 		return
 	}
 	a.dirty = true
+	a.mergePersistPlan(outbox.PersistPlan{Mode: outbox.PersistFull})
+	a.InvalidateSnapshot()
+}
+
+// InvalidateSnapshot drops transport encodings after state was persisted by a
+// specialized store path. Unlike MarkDirty it must not enqueue another full
+// aggregate write.
+func (a *FarmActor) InvalidateSnapshot() {
+	if a == nil {
+		return
+	}
+	a.snapshotJSON = nil
+	a.snapshotProto = nil
+}
+
+// EncodedSnapshotProto returns the typed Protobuf snapshot cached at the same
+// aggregate version as EncodedSnapshot.
+func (a *FarmActor) EncodedSnapshotProto() ([]byte, error) {
+	if a == nil || a.Aggregate == nil {
+		return nil, errors.New("room: actor aggregate is nil")
+	}
+	if len(a.snapshotProto) > 0 && a.snapshotProtoSeq == a.Aggregate.FarmSeq {
+		return a.snapshotProto, nil
+	}
+	encoded, err := clientwire.MarshalFarmSnapshotPayload(a.Aggregate.Snapshot())
+	if err != nil {
+		return nil, err
+	}
+	a.snapshotProtoSeq = a.Aggregate.FarmSeq
+	a.snapshotProto = encoded
+	return a.snapshotProto, nil
+}
+
+// EncodedSnapshot returns the pre-encoded full snapshot for the current
+// aggregate version. The returned bytes are immutable and may only be used
+// while respecting the Actor ownership contract.
+func (a *FarmActor) EncodedSnapshot() (json.RawMessage, error) {
+	if a == nil || a.Aggregate == nil {
+		return nil, errors.New("room: actor aggregate is nil")
+	}
+	if len(a.snapshotJSON) > 0 && a.snapshotJSONSeq == a.Aggregate.FarmSeq {
+		return a.snapshotJSON, nil
+	}
+	encoded, err := json.Marshal(a.Aggregate.Snapshot())
+	if err != nil {
+		return nil, err
+	}
+	a.snapshotJSONSeq = a.Aggregate.FarmSeq
+	a.snapshotJSON = encoded
+	return a.snapshotJSON, nil
 }
 
 func (a *FarmActor) consumeDirty() bool {
@@ -50,6 +115,95 @@ func (a *FarmActor) RequireFlush() {
 	}
 	a.syncFlush = true
 	a.MarkDirty()
+}
+
+// RequireEconomyFlush requests an ordered durable shop commit that only
+// rewrites player economy and inventory rows.
+func (a *FarmActor) RequireEconomyFlush() {
+	a.requirePlannedFlush(outbox.PersistPlan{Mode: outbox.PersistEconomy})
+}
+
+// MarkPlotDirty records the smallest ordered write-behind plan for a local
+// plot mutation. Inventory and codex rows are included only for actions that
+// can actually change them.
+func (a *FarmActor) MarkPlotDirty(plotIndex uint8, includeItems, includeCodex bool) {
+	if a == nil {
+		return
+	}
+	a.dirty = true
+	a.mergePersistPlan(outbox.PersistPlan{
+		Mode:         outbox.PersistPlot,
+		PlotIndex:    plotIndex,
+		IncludeItems: includeItems,
+		IncludeCodex: includeCodex,
+	})
+	a.InvalidateSnapshot()
+}
+
+// RequireCrossVisitorFlush requests an ordered visitor reservation/settlement
+// commit. Settlement includes inventory while reservation does not.
+func (a *FarmActor) RequireCrossVisitorFlush(includeItems bool) {
+	a.requirePlannedFlush(outbox.PersistPlan{
+		Mode: outbox.PersistCrossVisitor, IncludeItems: includeItems,
+	})
+}
+
+// RequireCrossOwnerFlush keeps the owner mutation and result outbox atomic in
+// one reduced commit.
+func (a *FarmActor) RequireCrossOwnerFlush(plotIndex uint8, event outbox.Event) {
+	if a == nil || event.EventID == "" {
+		return
+	}
+	a.outboxEvents = append(a.outboxEvents, stampedOutboxEvent{event: event})
+	a.requirePlannedFlush(outbox.PersistPlan{Mode: outbox.PersistCrossOwner, PlotIndex: plotIndex})
+}
+
+func (a *FarmActor) requirePlannedFlush(plan outbox.PersistPlan) {
+	if a == nil {
+		return
+	}
+	a.syncFlush = true
+	a.dirty = true
+	a.mergePersistPlan(plan)
+	a.InvalidateSnapshot()
+}
+
+func (a *FarmActor) mergePersistPlan(plan outbox.PersistPlan) {
+	if !a.planSet {
+		a.persistPlan = plan
+		a.planSet = true
+		return
+	}
+	if a.persistPlan.Mode != plan.Mode ||
+		(plan.Mode == outbox.PersistCrossOwner || plan.Mode == outbox.PersistPlot) &&
+			a.persistPlan.PlotIndex != plan.PlotIndex {
+		a.persistPlan = outbox.PersistPlan{Mode: outbox.PersistFull}
+		return
+	}
+	a.persistPlan.IncludeItems = a.persistPlan.IncludeItems || plan.IncludeItems
+	a.persistPlan.IncludeCodex = a.persistPlan.IncludeCodex || plan.IncludeCodex
+}
+
+func (a *FarmActor) stampPersistGeneration(generation uint64) {
+	if a != nil && a.planSet {
+		a.planGen = generation
+	}
+}
+
+func (a *FarmActor) pendingPersistPlan() outbox.PersistPlan {
+	if a == nil || !a.planSet {
+		return outbox.PersistPlan{Mode: outbox.PersistFull}
+	}
+	return a.persistPlan
+}
+
+func (a *FarmActor) ackPersistPlan(generation uint64) {
+	if a == nil || !a.planSet || generation < a.planGen {
+		return
+	}
+	a.persistPlan = outbox.PersistPlan{}
+	a.planSet = false
+	a.planGen = 0
 }
 
 type stampedOutboxEvent struct {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -171,13 +172,13 @@ func runPlanting(baseURL string) error {
 	}
 
 	conn, response, err := websocket.DefaultDialer.Dial(login.WSURL, http.Header{
-		"Sec-WebSocket-Protocol": []string{gateway.JSONSubprotocol},
+		"Sec-WebSocket-Protocol": []string{gateway.BinarySubprotocol},
 	})
 	if err != nil {
 		return fmt.Errorf("dial websocket: %w", err)
 	}
 	defer conn.Close()
-	if response.Header.Get("Sec-WebSocket-Protocol") != gateway.JSONSubprotocol {
+	if response.Header.Get("Sec-WebSocket-Protocol") != gateway.BinarySubprotocol {
 		return fmt.Errorf("websocket subprotocol was not negotiated")
 	}
 
@@ -363,11 +364,11 @@ func exchange(conn *websocket.Conn, request gateway.Envelope) error {
 }
 
 func exchangeResponse(conn *websocket.Conn, request gateway.Envelope) (gateway.Envelope, error) {
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	for attempt := 0; attempt < 32; attempt++ {
@@ -375,24 +376,25 @@ func exchangeResponse(conn *websocket.Conn, request gateway.Envelope) (gateway.E
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		response, err := gateway.DecodeEnvelope(data)
+		responses, err := gateway.DecodeBinaryBatch(data)
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
-		if response.ClientSeq == 0 {
-			// FarmDelta/PlayerDelta can legitimately race an ordinary Rsp.
-			continue
+		for _, response := range responses {
+			if response.ClientSeq == 0 {
+				continue
+			}
+			if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
+				return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
+			}
+			if response.Err != errcode.OK {
+				return gateway.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, errcode.OK)
+			}
+			return response, nil
 		}
-		if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
-			return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
-		}
-		if response.Err != errcode.OK {
-			return gateway.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, errcode.OK)
-		}
-		return response, nil
 	}
 	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
@@ -400,11 +402,11 @@ func exchangeResponse(conn *websocket.Conn, request gateway.Envelope) (gateway.E
 // exchangeResponseWithPush verifies that a command crossing Farm/Gateway
 // boundaries also reaches this client as a server push before its response.
 func exchangeResponseWithPush(conn *websocket.Conn, request gateway.Envelope, pushCmd uint32) (gateway.Envelope, gateway.Envelope, error) {
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	var push gateway.Envelope
@@ -413,27 +415,29 @@ func exchangeResponseWithPush(conn *websocket.Conn, request gateway.Envelope, pu
 		if err != nil {
 			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		env, err := gateway.DecodeEnvelope(frame)
+		envelopes, err := gateway.DecodeBinaryBatch(frame)
 		if err != nil {
 			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
-		if env.Cmd == pushCmd && env.ClientSeq == 0 {
-			push = env
-			continue
+		for _, env := range envelopes {
+			if env.Cmd == pushCmd && env.ClientSeq == 0 {
+				push = env
+				continue
+			}
+			if env.Cmd != request.Cmd || env.ClientSeq != request.ClientSeq {
+				continue
+			}
+			if env.Err != errcode.OK {
+				return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("err = %d, want %d", env.Err, errcode.OK)
+			}
+			if push.Cmd != pushCmd {
+				return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("missing server push cmd=%d", pushCmd)
+			}
+			return env, push, nil
 		}
-		if env.Cmd != request.Cmd || env.ClientSeq != request.ClientSeq {
-			continue
-		}
-		if env.Err != errcode.OK {
-			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("err = %d, want %d", env.Err, errcode.OK)
-		}
-		if push.Cmd != pushCmd {
-			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("missing server push cmd=%d", pushCmd)
-		}
-		return env, push, nil
 	}
 	return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
@@ -813,38 +817,73 @@ func runRoom(baseURL string) error {
 		}
 		// TaskNotify、MailNotify 与房间 Delta 是独立异步通道，LeaveFarm 之后仍
 		// 可能读到此前已经入队的个人通知。这里只拒绝离开后产生的 plot 1 Delta。
-		envelope, decodeErr := gateway.DecodeEnvelope(data)
-		if decodeErr != nil || envelope.Cmd != gateway.CommandFarmDelta {
+		envelopes, decodeErr := gateway.DecodeBinaryBatch(data)
+		if decodeErr != nil {
 			continue
 		}
-		var pushed farm.FarmDelta
-		if json.Unmarshal(envelope.Payload, &pushed) == nil && pushed.OwnerUID == loginA.UID && pushed.FarmSeq >= 2 {
-			return fmt.Errorf("player B received post-leave FarmDelta: seq=%d", pushed.FarmSeq)
+		for _, envelope := range envelopes {
+			if envelope.Cmd != gateway.CommandFarmDelta {
+				continue
+			}
+			var pushed farm.FarmDelta
+			if json.Unmarshal(envelope.Payload, &pushed) == nil && pushed.OwnerUID == loginA.UID && pushed.FarmSeq >= 2 {
+				return fmt.Errorf("player B received post-leave FarmDelta: seq=%d", pushed.FarmSeq)
+			}
 		}
 	}
 	return nil
 }
 
-// readServerPush 读取一帧服务端主动推送的 Envelope，不校验 ClientSeq。
+var pendingServerPushes = struct {
+	sync.Mutex
+	byConnection map[*websocket.Conn][]gateway.Envelope
+}{byConnection: make(map[*websocket.Conn][]gateway.Envelope)}
+
+// readServerPush 逐个读取服务端主动推送，不校验 ClientSeq。同一物理帧内
+// 剩余的 Envelope 会保留到后续调用，避免二进制批量合帧后丢消息。
 func readServerPush(conn *websocket.Conn) (gateway.Envelope, error) {
+	pendingServerPushes.Lock()
+	if queued := pendingServerPushes.byConnection[conn]; len(queued) > 0 {
+		envelope := queued[0]
+		if len(queued) == 1 {
+			delete(pendingServerPushes.byConnection, conn)
+		} else {
+			pendingServerPushes.byConnection[conn] = queued[1:]
+		}
+		pendingServerPushes.Unlock()
+		return envelope, nil
+	}
+	pendingServerPushes.Unlock()
+
 	messageType, data, err := conn.ReadMessage()
 	if err != nil {
 		return gateway.Envelope{}, err
 	}
-	if messageType != websocket.TextMessage {
-		return gateway.Envelope{}, fmt.Errorf("push message type = %d, want text", messageType)
+	if messageType != websocket.BinaryMessage {
+		return gateway.Envelope{}, fmt.Errorf("push message type = %d, want binary", messageType)
 	}
-	return gateway.DecodeEnvelope(data)
+	envelopes, err := gateway.DecodeBinaryBatch(data)
+	if err != nil || len(envelopes) == 0 {
+		return gateway.Envelope{}, err
+	}
+	if len(envelopes) > 1 {
+		pendingServerPushes.Lock()
+		pendingServerPushes.byConnection[conn] = append(
+			pendingServerPushes.byConnection[conn], envelopes[1:]...,
+		)
+		pendingServerPushes.Unlock()
+	}
+	return envelopes[0], nil
 }
 
 func dialAndHandshake(login authResponse) (*websocket.Conn, error) {
 	conn, response, err := websocket.DefaultDialer.Dial(login.WSURL, http.Header{
-		"Sec-WebSocket-Protocol": []string{gateway.JSONSubprotocol},
+		"Sec-WebSocket-Protocol": []string{gateway.BinarySubprotocol},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("dial websocket: %w", err)
 	}
-	if response.Header.Get("Sec-WebSocket-Protocol") != gateway.JSONSubprotocol {
+	if response.Header.Get("Sec-WebSocket-Protocol") != gateway.BinarySubprotocol {
 		_ = conn.Close()
 		return nil, fmt.Errorf("websocket subprotocol was not negotiated")
 	}
@@ -864,24 +903,28 @@ func dialAndHandshake(login authResponse) (*websocket.Conn, error) {
 
 // exchangeEnvelope 与 exchangeResponse 类似，但不校验 Err 字段，便于断言错误码。
 func exchangeEnvelope(conn *websocket.Conn, request gateway.Envelope) (gateway.Envelope, error) {
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	messageType, data, err := conn.ReadMessage()
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 	}
-	if messageType != websocket.TextMessage {
-		return gateway.Envelope{}, fmt.Errorf("response message type = %d, want text", messageType)
+	if messageType != websocket.BinaryMessage {
+		return gateway.Envelope{}, fmt.Errorf("response message type = %d, want binary", messageType)
 	}
-	response, err := gateway.DecodeEnvelope(data)
+	responses, err := gateway.DecodeBinaryBatch(data)
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
 	}
+	if len(responses) != 1 {
+		return gateway.Envelope{}, fmt.Errorf("response batch size = %d, want 1", len(responses))
+	}
+	response := responses[0]
 	if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
 		return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
 	}
@@ -1103,11 +1146,11 @@ func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, owne
 		Payload:   mustJSON(map[string]any{"owner_uid": ownerUID, "plot_index": plotIndex, "arg": 0}),
 	}
 	*seq++
-	data, err := gateway.EncodeEnvelope(request)
+	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
 		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -1119,15 +1162,17 @@ func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, owne
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		env, err := gateway.DecodeEnvelope(frame)
+		envelopes, err := gateway.DecodeBinaryBatch(frame)
 		if err != nil {
 			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
-		if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
-			return env, nil
+		for _, env := range envelopes {
+			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
+				return env, nil
+			}
 		}
 		// 服务端主动推送（如 FarmDelta）忽略，继续等待匹配响应。
 	}

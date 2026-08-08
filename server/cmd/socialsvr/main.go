@@ -38,6 +38,7 @@ func run() error {
 		return err
 	}
 	defer closeStorage()
+	friendStore := storage.CachedFriendStore()
 
 	return (servicehost.Host{
 		Config:  config,
@@ -46,7 +47,8 @@ func run() error {
 		GRPC: &servicehost.GRPC{
 			Addr: config.GRPCAddr,
 			Register: func(server *grpc.Server) {
-				socialapi.RegisterGRPC(server, storage)
+				adapter := socialapi.RegisterGRPC(server, friendStore)
+				adapter.StartDistributedInvalidations(ctx)
 			},
 		},
 	}).Run(ctx)

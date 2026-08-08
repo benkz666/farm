@@ -48,6 +48,7 @@ export function createFarmAdvanceScheduler({
   getPlots,
   isActive,
   sync,
+  useBoundarySync = true,
   getConsistencyIntervalMs = () => 0,
   onError = () => {},
 }) {
@@ -65,7 +66,7 @@ export function createFarmAdvanceScheduler({
     clear();
     if (disposed || !isActive()) return;
     const current = now();
-    const boundaryTarget = nextFarmSyncAt(getPlots(), current);
+    const boundaryTarget = useBoundarySync ? nextFarmSyncAt(getPlots(), current) : 0;
     const consistencyInterval = Number(getConsistencyIntervalMs()) || 0;
     const consistencyTarget = consistencyInterval > 0
       ? current + consistencyInterval

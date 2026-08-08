@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -22,11 +24,25 @@ import (
 	"farm/server/shared/telemetry"
 )
 
+var wsWriteBufferPool sync.Pool
+
 var wsUpgrader = websocket.Upgrader{
-	Subprotocols: []string{JSONSubprotocol},
+	Subprotocols: []string{BinarySubprotocol},
+	// A farm snapshot fits in this buffer in the common case. The pool lets
+	// short-lived WebSocket connections reuse it instead of allocating one
+	// write buffer per connection for its entire lifetime.
+	WriteBufferSize: 8 << 10,
+	WriteBufferPool: &wsWriteBufferPool,
 	// Development accepts any origin; production must restrict this to trusted origins.
 	CheckOrigin: func(*http.Request) bool { return true },
 }
+
+const maxPooledResponseEnvelope = maxWSMessageSize
+
+var responseEnvelopePool = sync.Pool{New: func() any {
+	buffer := make([]byte, 0, 4<<10)
+	return &buffer
+}}
 
 const (
 	maxWSMessageSize = 64 << 10
@@ -37,25 +53,34 @@ const (
 	// wsWriteTimeout 防止慢客户端的 TCP 接收窗口被写阻塞：WriteMessage 持有 writeMu，
 	// 一旦卡住会连带阻塞房间广播循环与上游 Actor 的串行区。
 	wsWriteTimeout = 10 * time.Second
+	// Redis 中的 session 与连接/房间租约不需要随每条业务命令刷新。
+	// 30 秒一次既明显短于 2 分钟租约，也与服务端 WebSocket 心跳一致。
+	wsAuthValidationInterval = 30 * time.Second
 )
 
-// Lease renewal is driven by this read loop (no per-connection goroutine):
-// after each authenticated request, Gateway renews connreg lifecycle + room
-// leases. Each renew refreshes the Redis key fallback TTL (2*leaseTTL); members
-// still expire by score at 1*leaseTTL. Unrenewed keys self-delete afterward.
+// Auth/session validation and distributed lease renewal are rate-limited per
+// connection. Local ownership is still checked for every request, while Redis
+// is touched at most once per wsAuthValidationInterval.
 
 type wsConnection struct {
-	conn     *websocket.Conn
-	writer   wsWireWriter // optional test seam; nil means use conn
-	id       uint64
-	uid      uint64
-	token    string
-	authed   bool
-	limiter  *connectionLimiter
-	writeMu  sync.Mutex
-	kickOnce sync.Once
-	roomMu   sync.Mutex
-	roomUID  uint64
+	conn                 *websocket.Conn
+	writer               wsWireWriter // optional test seam; nil means use conn
+	id                   uint64
+	uid                  uint64
+	token                string
+	authed               bool
+	nextAuthValidationAt atomic.Int64
+	limiter              *connectionLimiter
+	metrics              *telemetry.Metrics
+	disconnectMu         sync.Mutex
+	disconnectReason     string
+	writeMu              sync.Mutex
+	kickOnce             sync.Once
+	roomMu               sync.Mutex
+	roomUID              uint64
+	roomSeq              uint64
+	roomSeqKnown         bool
+	roomSeqObservedAt    int64
 	// holdFarmDeltas keeps a newly-entered client from observing a delta before
 	// its EnterFarm snapshot has reached the wire.
 	holdFarmDeltas    bool
@@ -64,6 +89,7 @@ type wsConnection struct {
 	pushStarted       bool
 	pushClosed        bool
 	pushCh            chan []byte
+	responseCh        chan wsWriteRequest
 	pushStop          chan struct{}
 	pushDone          chan struct{}
 	pushCoalesce      time.Duration // 0 => pushCoalesceWindow; tests may shorten
@@ -129,7 +155,7 @@ type enterFarmResponse struct {
 }
 
 func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
-	if !supportsJSONSubprotocol(r) {
+	if !supportsBinarySubprotocol(r) {
 		writeHTTPError(w, errcode.BadRequest, http.StatusUpgradeRequired)
 		return
 	}
@@ -154,9 +180,19 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		conn:    conn,
 		id:      allocateConnID(&g.nextConnID),
 		limiter: newConnectionLimiter(),
+		metrics: g.metrics,
 	}
+	defer func() {
+		if g.metrics != nil {
+			g.metrics.ObserveWSDisconnect(connection.finalDisconnectReason())
+		}
+	}()
 	connection.startPushWriter()
 	connection.installPongHandler(g, wsReadTimeout)
+	if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
+		connection.setDisconnectReason("setup_error")
+		return
+	}
 	defer func() {
 		g.leaveFarm(&connection)
 		connection.closePushWriter()
@@ -168,99 +204,172 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	for {
-		if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
-			return
-		}
 		messageType, data, err := conn.ReadMessage()
 		if err != nil {
+			connection.setDisconnectReason(classifyWSReadError(err))
 			return
 		}
-		if messageType != websocket.TextMessage {
+		if messageType != websocket.BinaryMessage {
 			_ = connection.respond(Envelope{Err: errcode.BadRequest, Payload: emptyPayload})
 			continue
 		}
-		request, err := DecodeEnvelope(data)
+		requests, err := clientwire.DecodeBinaryBatch(data)
 		if err != nil {
 			_ = connection.respond(Envelope{Err: errcode.BadRequest, Payload: emptyPayload})
 			continue
 		}
-		if !connection.limiter.Allow() {
-			if err := connection.respond(Envelope{
-				Cmd:       request.Cmd,
-				ClientSeq: request.ClientSeq,
-				Err:       errcode.RateLimited,
-				Payload:   emptyPayload,
-			}); err != nil {
-				return
-			}
-			if connection.limiter.ShouldDisconnect() {
-				return
-			}
-			continue
-		}
-
-		if connection.authed {
-			sessionUID, sessionErr := g.sessions.Get(context.Background(), connection.token)
-			if sessionErr != nil || sessionUID != connection.uid {
-				code := sessionErrorCode(sessionErr)
-				if sessionErr == nil {
-					code = errcode.Kicked
+		responses := make([]Envelope, 0, len(requests))
+		releaseEnter := false
+		enableAfterHandshake := false
+		disconnectAfterWrite := false
+		for _, request := range requests {
+			if !g.disableWSRateLimit && !connection.limiter.Allow() {
+				responses = append(responses, Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.RateLimited, Payload: emptyPayload})
+				if connection.limiter.ShouldDisconnect() {
+					connection.setDisconnectReason("rate_limit")
+					disconnectAfterWrite = true
 				}
-				_ = connection.respond(Envelope{
-					Cmd:       request.Cmd,
-					ClientSeq: request.ClientSeq,
-					Err:       code,
-					Payload:   emptyPayload,
-				})
-				return
+				continue
 			}
-			if !g.renewConnectionLease(context.Background(), &connection) {
-				_ = connection.respond(Envelope{
-					Cmd:       request.Cmd,
-					ClientSeq: request.ClientSeq,
-					Err:       errcode.Kicked,
-					Payload:   emptyPayload,
-				})
-				return
+			if connection.authed && !g.validateAuthenticatedConnection(context.Background(), &connection) {
+				responses = append(responses, Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.Kicked, Payload: emptyPayload})
+				disconnectAfterWrite = true
+				connection.setDisconnectReason("session_replaced")
+				if connection.metrics != nil {
+					connection.metrics.ObserveWSSessionReplacement()
+				}
+				break
 			}
-		}
 
-		handledAt := time.Now()
-		response := g.handleWSRequest(&connection, request)
-		if g.metrics != nil {
-			code := uint32(response.Err)
-			if response.Cmd == 0 {
-				code = 0
+			handledAt := time.Now()
+			var wireFields gatewayPayloadFields
+			var response Envelope
+			if connection.authed && request.Cmd == CommandEnterFarm {
+				response, wireFields = g.handleEnterFarmForWire(&connection, request)
+			} else if connection.authed && request.Cmd == CommandSyncFarm {
+				response, wireFields = g.handleSyncFarmForWireAt(&connection, request, handledAt)
+			} else {
+				response = g.handleWSRequest(&connection, request)
 			}
-			g.metrics.ObserveWSRequest(request.Cmd, code, time.Since(handledAt))
+			if g.metrics != nil {
+				code := uint32(response.Err)
+				if response.Cmd == 0 {
+					code = 0
+				}
+				g.metrics.ObserveWSRequest(request.Cmd, code, time.Since(handledAt))
+				if request.Cmd == CommandHandshake && response.Err != errcode.OK {
+					g.metrics.ObserveWSHandshakeError(code)
+				}
+			}
+			if response.Cmd == 0 {
+				continue
+			}
+			if wireFields.enabled {
+				if len(response.PreparedPayload) > 0 {
+					var suffix []byte
+					var appendErr error
+					switch response.PreparedField {
+					case clientwire.PreparedEnterFarmResponse:
+						suffix, appendErr = clientwire.MarshalEnterFarmGatewaySuffix(wireFields.mutable, wireFields.relation)
+					case clientwire.PreparedSyncFarmResponse:
+						suffix = clientwire.MarshalSyncFarmGatewaySuffix(wireFields.mutable)
+					default:
+						appendErr = errors.New("gateway: invalid prepared Farm payload")
+					}
+					if appendErr != nil {
+						connection.setDisconnectReason("encode_error")
+						return
+					}
+					response.PreparedSuffix = suffix
+				} else {
+					payload, appendErr := appendTrustedGatewayPayloadFields(response.Payload, wireFields.mutable, wireFields.relation)
+					if appendErr != nil {
+						connection.setDisconnectReason("encode_error")
+						return
+					}
+					response.Payload = payload
+				}
+			}
+			responses = append(responses, response)
+			releaseEnter = releaseEnter || request.Cmd == CommandEnterFarm && response.Err == errcode.OK
+			enableAfterHandshake = enableAfterHandshake || request.Cmd == CommandHandshake && response.Err == errcode.OK
 		}
-		if response.Cmd == 0 {
-			// Cross-farm actions respond only after CrossResult settles the
-			// visitor reservation; emitting here would acknowledge too early.
-			continue
+		if len(responses) > 0 {
+			if err := connection.respondBatch(responses); err != nil {
+				connection.setDisconnectReason("response_write_error")
+				return
+			}
 		}
-		var respondErr error
-		if request.Cmd == CommandEnterFarm && response.Err == errcode.OK {
-			respondErr = connection.respondEnterFarm(response)
-		} else {
-			respondErr = connection.respond(response)
+		if releaseEnter {
+			if err := connection.releaseHeldFarmDeltas(); err != nil {
+				connection.setDisconnectReason("push_enqueue_error")
+				return
+			}
 		}
-		if respondErr != nil {
-			return
-		}
-		if request.Cmd == CommandHandshake && response.Err == errcode.OK {
+		if enableAfterHandshake {
 			connection.enableHeartbeat()
 			connection.enableTaskNotify(g)
 			connection.enableMailNotify(g)
 		}
+		if disconnectAfterWrite {
+			return
+		}
 	}
+}
+
+func (connection *wsConnection) setDisconnectReason(reason string) {
+	if connection == nil || reason == "" {
+		return
+	}
+	connection.disconnectMu.Lock()
+	if connection.disconnectReason == "" {
+		connection.disconnectReason = reason
+	}
+	connection.disconnectMu.Unlock()
+}
+
+func (connection *wsConnection) finalDisconnectReason() string {
+	if connection == nil {
+		return "unknown"
+	}
+	connection.disconnectMu.Lock()
+	reason := connection.disconnectReason
+	connection.disconnectMu.Unlock()
+	if reason == "" {
+		return "unknown"
+	}
+	return reason
+}
+
+func classifyWSReadError(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		switch closeErr.Code {
+		case websocket.CloseNormalClosure:
+			return "client_normal"
+		case websocket.CloseGoingAway:
+			return "client_going_away"
+		case websocket.CloseNoStatusReceived:
+			return "client_no_status"
+		default:
+			return "client_close_error"
+		}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "read_timeout"
+	}
+	return "read_error"
 }
 
 var emptyPayload = json.RawMessage(`{}`)
 
-func supportsJSONSubprotocol(r *http.Request) bool {
+func supportsBinarySubprotocol(r *http.Request) bool {
 	for _, subprotocol := range websocket.Subprotocols(r) {
-		if subprotocol == JSONSubprotocol {
+		if subprotocol == BinarySubprotocol {
 			return true
 		}
 	}
@@ -311,6 +420,7 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			}
 			return response
 		}
+		connection.scheduleNextAuthValidation(time.Now())
 		response.Payload = marshalPayload(handshakeResponse{UID: clientjson.UID(uid)})
 		return response
 	}
@@ -359,9 +469,28 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 }
 
 func (connection *wsConnection) respond(envelope Envelope) error {
-	connection.writeMu.Lock()
-	defer connection.writeMu.Unlock()
-	return connection.respondLocked(envelope)
+	return connection.respondBatch([]Envelope{envelope})
+}
+
+func (connection *wsConnection) respondBatch(envelopes []Envelope) error {
+	pooled := responseEnvelopePool.Get().(*[]byte)
+	buffer := (*pooled)[:0]
+	data, err := clientwire.AppendBinaryBatch(buffer, envelopes)
+	if err != nil {
+		releaseResponseEnvelope(pooled, buffer)
+		return err
+	}
+	err = connection.writeResponse(data)
+	releaseResponseEnvelope(pooled, data)
+	return err
+}
+
+func releaseResponseEnvelope(pooled *[]byte, buffer []byte) {
+	if pooled == nil || cap(buffer) > maxPooledResponseEnvelope {
+		return
+	}
+	*pooled = buffer[:0]
+	responseEnvelopePool.Put(pooled)
 }
 
 func (connection *wsConnection) kick(reason errcode.Code) {
@@ -369,7 +498,10 @@ func (connection *wsConnection) kick(reason errcode.Code) {
 		return
 	}
 	connection.kickOnce.Do(func() {
-		connection.closePushWriter()
+		connection.setDisconnectReason("session_replaced")
+		if connection.metrics != nil {
+			connection.metrics.ObserveWSSessionReplacement()
+		}
 		payload := marshalPayload(struct {
 			Reason errcode.Code `json:"reason"`
 		}{Reason: reason})
@@ -379,6 +511,7 @@ func (connection *wsConnection) kick(reason errcode.Code) {
 			Err:       errcode.OK,
 			Payload:   payload,
 		})
+		connection.markPushClosed()
 		_ = connection.conn.Close()
 	})
 }
@@ -387,13 +520,24 @@ func (connection *wsConnection) kick(reason errcode.Code) {
 // arrived after entering the room. Held deltas are enqueued (not folded) after
 // the response so FarmSeq order stays contiguous and never precedes the snapshot.
 func (connection *wsConnection) respondEnterFarm(envelope Envelope) error {
-	connection.writeMu.Lock()
-	err := connection.respondLocked(envelope)
-	connection.writeMu.Unlock()
+	return connection.respondEnterFarmWithFields(envelope, gatewayPayloadFields{})
+}
+
+func (connection *wsConnection) respondEnterFarmWithFields(envelope Envelope, fields gatewayPayloadFields) error {
+	var err error
+	if fields.enabled {
+		err = connection.respondWithGatewayFields(envelope, fields)
+	} else {
+		err = connection.respond(envelope)
+	}
 	if err != nil {
 		return err
 	}
 
+	return connection.releaseHeldFarmDeltas()
+}
+
+func (connection *wsConnection) releaseHeldFarmDeltas() error {
 	for {
 		connection.roomMu.Lock()
 		held := connection.heldFarmDeltas
@@ -406,7 +550,12 @@ func (connection *wsConnection) respondEnterFarm(envelope Envelope) error {
 		connection.roomMu.Unlock()
 
 		for _, delta := range held {
-			data, encodeErr := clientwire.EncodeFarmDelta(delta)
+			connection.roomMu.Lock()
+			if connection.roomUID == delta.OwnerUID {
+				connection.observeRoomDeltaLocked(delta.FarmSeq)
+			}
+			connection.roomMu.Unlock()
+			data, encodeErr := clientwire.EncodeFarmDeltaRecord(delta)
 			if encodeErr != nil {
 				connection.roomMu.Lock()
 				connection.holdFarmDeltas = false
@@ -426,12 +575,29 @@ func (connection *wsConnection) respondEnterFarm(envelope Envelope) error {
 	}
 }
 
-func (connection *wsConnection) respondLocked(envelope Envelope) error {
-	data, err := EncodeEnvelope(envelope)
+func (connection *wsConnection) respondWithGatewayFields(envelope Envelope, fields gatewayPayloadFields) error {
+	payload, err := appendTrustedGatewayPayloadFields(envelope.Payload, fields.mutable, fields.relation)
 	if err != nil {
 		return err
 	}
-	return connection.writeEncodedLocked(data)
+	envelope.Payload = payload
+	return connection.respond(envelope)
+}
+
+// respondLocked remains the direct-write fallback for unit seams and callers
+// created without startPushWriter. Production responses use responseCh so the
+// connection has exactly one WebSocket data writer.
+func (connection *wsConnection) respondLocked(envelope Envelope) error {
+	pooled := responseEnvelopePool.Get().(*[]byte)
+	buffer := (*pooled)[:0]
+	data, err := clientwire.AppendBinaryBatch(buffer, []Envelope{envelope})
+	if err != nil {
+		releaseResponseEnvelope(pooled, buffer)
+		return remapWireenvError(err)
+	}
+	err = connection.writeEncodedLocked(data)
+	releaseResponseEnvelope(pooled, data)
+	return err
 }
 
 func (connection *wsConnection) writeEncodedLocked(data []byte) error {
@@ -442,18 +608,20 @@ func (connection *wsConnection) writeEncodedLocked(data []byte) error {
 	if err := writer.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
 		return err
 	}
-	return writer.WriteMessage(websocket.TextMessage, data)
+	return writer.WriteMessage(websocket.BinaryMessage, data)
 }
 
-// pushFarmDelta delivers a room delta. encoded must be the once-encoded public
-// Envelope; active connections enqueue it for coalesced WriteMessage. Connections
-// in hold cache the structured delta and encode only when the EnterFarm Rsp is flushed.
+// pushFarmDelta delivers a room delta. encoded is a once-encoded binary record;
+// active connections share it in their queues. Connections in hold cache the
+// structured delta and encode only after the EnterFarm response is flushed.
 func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDelta, encoded []byte) error {
 	connection.roomMu.Lock()
 	receiving := connection.roomUID == ownerUID
 	holding := connection.holdFarmDeltas
 	if receiving && holding {
 		connection.heldFarmDeltas = append(connection.heldFarmDeltas, copyFarmDelta(delta))
+	} else if receiving {
+		connection.observeRoomDeltaLocked(delta.FarmSeq)
 	}
 	connection.roomMu.Unlock()
 	if !receiving || holding {
@@ -461,7 +629,7 @@ func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDe
 	}
 	if len(encoded) == 0 {
 		var err error
-		encoded, err = clientwire.EncodeFarmDelta(delta)
+		encoded, err = clientwire.EncodeFarmDeltaRecord(delta)
 		if err != nil {
 			return err
 		}
@@ -472,7 +640,7 @@ func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDe
 // pushPlayerDelta delivers state owned by this connection's authenticated
 // player. Unlike FarmDelta, it is independent of the farm room being viewed.
 func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) error {
-	data, err := EncodeEnvelope(Envelope{
+	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
 		Cmd:       CommandPlayerDelta,
 		ClientSeq: 0,
 		Payload:   marshalPayload(delta),
@@ -487,7 +655,7 @@ func (connection *wsConnection) pushMailNotify(kind string) error {
 	if connection == nil {
 		return errors.New("gateway: nil MailNotify connection")
 	}
-	data, err := EncodeEnvelope(Envelope{
+	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
 		Cmd:       CommandMailNotify,
 		ClientSeq: 0,
 		Payload: marshalPayload(struct {
@@ -613,7 +781,7 @@ func (connection *wsConnection) pushTaskNotify(task store.Task) error {
 	if connection == nil {
 		return errors.New("gateway: nil TaskNotify connection")
 	}
-	data, err := EncodeEnvelope(Envelope{
+	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
 		Cmd:       CommandTaskNotify,
 		ClientSeq: 0,
 		Payload:   marshalPayload(task),

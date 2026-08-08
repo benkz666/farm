@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { CMD_SESSION_KICK, CMD_TASK_NOTIFY, CMD_PUSH_BATCH, MAX_PUSH_BATCH_ENVELOPES, NetClient } from './client.js'
+import { CMD_SESSION_KICK, CMD_TASK_NOTIFY, NetClient } from './client.js'
+import { decodeBinaryBatch, encodeBinaryBatch, MAX_BINARY_BATCH_ENVELOPES } from './binaryWire.js'
 
 test('AcceptInvite 使用 404 命令发送邀请凭证', async () => {
   const client = new NetClient()
@@ -95,12 +96,12 @@ test('FarmDelta 主动推送交给 delta 订阅者', () => {
   })
 
   client._onMessage({
-    data: JSON.stringify({
+    data: encodeBinaryBatch([{
       cmd: 9000,
       client_seq: 0,
       err: 0,
       payload: { owner_uid: 9, farm_seq: 3, plots: [] },
-    }),
+    }]),
   })
 
   assert.deepEqual(received.payload, { owner_uid: 9, farm_seq: 3, plots: [] })
@@ -114,12 +115,12 @@ test('PlayerDelta 主动推送交给个人状态订阅者', () => {
   })
 
   client._onMessage({
-    data: JSON.stringify({
+    data: encodeBinaryBatch([{
       cmd: 9002,
       client_seq: 0,
       err: 0,
       payload: { coin: 1170, exp: 2, level: 0, bag: {}, warehouse: { 'fruit:1': 3 } },
-    }),
+    }]),
   })
 
   assert.deepEqual(received.payload, {
@@ -154,12 +155,12 @@ test('SessionKick 推送终止重连并通知恢复失败', () => {
   })
 
   client._onMessage({
-    data: JSON.stringify({
+    data: encodeBinaryBatch([{
       cmd: CMD_SESSION_KICK,
       client_seq: 0,
       err: 0,
       payload: { reason: 1105 },
-    }),
+    }]),
   })
 
   assert.equal(client._fatalStopped, true)
@@ -188,12 +189,12 @@ test('TaskNotify 主动推送交给 onTaskNotify 订阅者，取消后不再投�
       claimed: false,
     },
   }
-  client._onMessage({ data: JSON.stringify(push) })
+  client._onMessage({ data: encodeBinaryBatch([push]) })
   assert.equal(hits.length, 1)
   assert.deepEqual(hits[0], push.payload)
 
   stop()
-  client._onMessage({ data: JSON.stringify(push) })
+  client._onMessage({ data: encodeBinaryBatch([push]) })
   assert.equal(hits.length, 1)
 })
 
@@ -205,12 +206,12 @@ test('重复 onTaskNotify 后取消旧订阅不会留下重复 listener', () => 
   stop1()
 
   client._onMessage({
-    data: JSON.stringify({
+    data: encodeBinaryBatch([{
       cmd: 9008,
       client_seq: 0,
       err: 0,
       payload: { id: 2, progress: 1, target: 1, reward_coin: 30, claimed: false },
-    }),
+    }]),
   })
 
   assert.deepEqual(hits, ['b'])
@@ -237,12 +238,7 @@ test('HTTP 鉴权失败保留协议错误码', async () => {
   }
 })
 
-test('CMD_PUSH_BATCH 为协议 9010', () => {
-  assert.equal(CMD_PUSH_BATCH, 9010)
-  assert.equal(MAX_PUSH_BATCH_ENVELOPES, 64)
-})
-
-test('PushBatch 按数组顺序依次触发 delta/player/task/mail', () => {
+test('二进制批帧按数组顺序依次触发 delta/player/task/mail', () => {
   const client = new NetClient()
   const order = []
   client.onDelta((env) => order.push(['delta', env.payload.farm_seq]))
@@ -251,12 +247,7 @@ test('PushBatch 按数组顺序依次触发 delta/player/task/mail', () => {
   client.onMailNotify((env) => order.push(['mail', env.payload.kind]))
 
   client._onMessage({
-    data: JSON.stringify({
-      cmd: CMD_PUSH_BATCH,
-      client_seq: 0,
-      err: 0,
-      payload: {
-        envelopes: [
+    data: encodeBinaryBatch([
           {
             cmd: 9000,
             client_seq: 0,
@@ -266,9 +257,7 @@ test('PushBatch 按数组顺序依次触发 delta/player/task/mail', () => {
           { cmd: 9002, client_seq: 0, err: 0, payload: { coin: 9 } },
           { cmd: 9008, client_seq: 0, err: 0, payload: { id: 1, progress: 1, target: 1 } },
           { cmd: 9004, client_seq: 0, err: 0, payload: { kind: 'new_mail' } },
-        ],
-      },
-    }),
+    ]),
   })
 
   assert.deepEqual(order, [
@@ -279,17 +268,17 @@ test('PushBatch 按数组顺序依次触发 delta/player/task/mail', () => {
   ])
 })
 
-test('PushBatch 不破坏请求 pending 匹配', async () => {
+test('二进制批帧不破坏请求 pending 匹配', async () => {
   const FakeWS = {
     CONNECTING: 0,
     OPEN: 1,
   }
-  const client = new NetClient({ WebSocket: FakeWS, requestTimeoutMs: 5_000 })
+  const client = new NetClient({ WebSocket: FakeWS, requestTimeoutMs: 5_000, queueMicrotask: (fn) => fn() })
   let sent
   client._ws = {
     readyState: FakeWS.OPEN,
-    send(text) {
-      sent = JSON.parse(text)
+    send(data) {
+      sent = decodeBinaryBatch(data)[0]
     },
   }
   const pending = client.request(102, { client_time: 1 })
@@ -297,106 +286,36 @@ test('PushBatch 不破坏请求 pending 匹配', async () => {
   const seq = sent.client_seq
 
   client._onMessage({
-    data: JSON.stringify({
-      cmd: CMD_PUSH_BATCH,
-      client_seq: 0,
-      err: 0,
-      payload: {
-        envelopes: [{ cmd: 9002, client_seq: 0, err: 0, payload: { coin: 1 } }],
-      },
-    }),
+    data: encodeBinaryBatch([{ cmd: 9002, client_seq: 0, err: 0, payload: { coin: 1 } }]),
   })
 
   client._onMessage({
-    data: JSON.stringify({
+    data: encodeBinaryBatch([{
       cmd: 102,
       client_seq: seq,
       err: 0,
       payload: { client_time: 1, server_time: 2 },
-    }),
+    }]),
   })
   const env = await pending
   assert.equal(env.payload.server_time, 2)
 })
 
-test('PushBatch 拒绝嵌套 batch', () => {
-  const client = new NetClient({ WebSocket: { CONNECTING: 0, OPEN: 1 } })
-  let closed = 0
-  client._ws = {
-    readyState: 1,
-    close() {
-      closed++
-    },
-  }
-  let rejected
-  client._pending.set(1, {
-    cmd: 102,
-    timer: null,
-    settled: false,
-    resolve() {},
-    reject(err) {
-      rejected = err
-    },
+test('一次微任务内请求合并为一个二进制批帧', async () => {
+  const callbacks = []
+  const sent = []
+  const client = new NetClient({
+    WebSocket: { CONNECTING: 0, OPEN: 1 },
+    queueMicrotask: (fn) => callbacks.push(fn),
   })
-
-  client._onMessage({
-    data: JSON.stringify({
-      cmd: CMD_PUSH_BATCH,
-      client_seq: 0,
-      err: 0,
-      payload: {
-        envelopes: [
-          {
-            cmd: CMD_PUSH_BATCH,
-            client_seq: 0,
-            err: 0,
-            payload: { envelopes: [] },
-          },
-        ],
-      },
-    }),
-  })
-
-  assert.match(String(rejected), /nested push batch/)
-  assert.equal(closed, 1)
-  assert.equal(client._ws, null)
-})
-
-test('PushBatch 拒绝超限内层数量', () => {
-  const client = new NetClient({ WebSocket: { CONNECTING: 0, OPEN: 1 } })
-  let closed = 0
-  client._ws = {
-    readyState: 1,
-    close() {
-      closed++
-    },
-  }
-  const envelopes = Array.from({ length: MAX_PUSH_BATCH_ENVELOPES + 1 }, () => ({
-    cmd: 9004,
-    client_seq: 0,
-    err: 0,
-    payload: { kind: 'x' },
-  }))
-  let rejected
-  client._pending.set(1, {
-    cmd: 102,
-    timer: null,
-    settled: false,
-    resolve() {},
-    reject(err) {
-      rejected = err
-    },
-  })
-
-  client._onMessage({
-    data: JSON.stringify({
-      cmd: CMD_PUSH_BATCH,
-      client_seq: 0,
-      err: 0,
-      payload: { envelopes },
-    }),
-  })
-
-  assert.match(String(rejected), /invalid push batch/)
-  assert.equal(closed, 1)
+  client._ws = { readyState: 1, send: (data) => sent.push(data) }
+  const first = client.request(102, { client_time: 1 }).catch(() => {})
+  const second = client.request(400, {}).catch(() => {})
+  assert.equal(sent.length, 0)
+  callbacks.shift()()
+  assert.equal(sent.length, 1)
+  assert.deepEqual(decodeBinaryBatch(sent[0]).map((env) => env.cmd), [102, 400])
+  assert.equal(MAX_BINARY_BATCH_ENVELOPES, 64)
+  client.close()
+  await Promise.all([first, second])
 })

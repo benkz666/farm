@@ -44,7 +44,7 @@ func (s *VisitorSettler) Settle(ctx context.Context, result CrossResult) (Visito
 		reward, playerDelta, code = SettleVisitor(visitor.Aggregate, result, s.now())
 		// Timeout 也必须形成 durable barrier：它可能是前一次结算已修改内存、
 		// 但 Commit 返回不确定错误后的重投。只有再次落盘成功，outbox 才能 ack。
-		visitor.RequireFlush()
+		visitor.RequireCrossVisitorFlush(true)
 		return nil
 	})
 	if err != nil {

@@ -30,7 +30,7 @@ type roomSubscription struct {
 func NewRoomHub() *RoomHub {
 	return &RoomHub{
 		rooms:           make(map[uint64]map[uint64]roomSubscription),
-		encodeFarmDelta: clientwire.EncodeFarmDelta,
+		encodeFarmDelta: clientwire.EncodeFarmDeltaRecord,
 	}
 }
 
@@ -171,7 +171,7 @@ func (h *RoomHub) BroadcastExcept(delta farm.FarmDelta, excludedConnectionID uin
 
 	encode := h.encodeFarmDelta
 	if encode == nil {
-		encode = clientwire.EncodeFarmDelta
+		encode = clientwire.EncodeFarmDeltaRecord
 	}
 	encodeStart := time.Now()
 	encoded, err := encode(delta)

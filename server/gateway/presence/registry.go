@@ -2,8 +2,8 @@
 //
 // Entries are per-member leases (Redis sorted set: member=gatewayID:connID,
 // score=expiresAtUnixMilli). DefaultLeaseTTL is 2m so a quiet-but-alive socket
-// can survive wsReadTimeout (90s) without a background renewer; Gateway renews
-// on Register/Subscribe and on each authenticated request.
+// can survive wsReadTimeout (90s). Gateway renews on Register/Subscribe and
+// periodically from authenticated traffic or WebSocket Pong handling.
 //
 // Every Upsert also drops members with expiresAt <= now and refreshes a
 // whole-key fallback TTL of 2*leaseTTL (+ granularity margin). That fallback

@@ -1,4 +1,4 @@
-// Package gateway implements the HTTP and JSON WebSocket boundary.
+// Package gateway implements the HTTP and binary WebSocket boundary.
 package gateway
 
 import (
@@ -54,9 +54,8 @@ const (
 	CommandMailNotify  = clientwire.CommandMailNotify
 	CommandSessionKick = clientwire.CommandSessionKick
 	CommandTaskNotify  = clientwire.CommandTaskNotify
-	CommandPushBatch   = clientwire.CommandPushBatch
 
-	JSONSubprotocol = "farm.v1.json"
+	BinarySubprotocol = clientwire.BinarySubprotocol
 )
 
 // Envelope is the JSON representation of protocol Envelope.
@@ -80,6 +79,17 @@ func DecodeEnvelope(data []byte) (Envelope, error) {
 		return Envelope{}, remapWireenvError(err)
 	}
 	return envelope, nil
+}
+
+// EncodeBinaryBatch serializes 1..64 envelopes into the only supported public
+// WebSocket frame format.
+func EncodeBinaryBatch(envelopes []Envelope) ([]byte, error) {
+	return clientwire.EncodeBinaryBatch(envelopes)
+}
+
+// DecodeBinaryBatch decodes the only supported public WebSocket frame format.
+func DecodeBinaryBatch(data []byte) ([]Envelope, error) {
+	return clientwire.DecodeBinaryBatch(data)
 }
 
 func remapWireenvError(err error) error {

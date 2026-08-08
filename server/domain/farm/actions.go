@@ -175,6 +175,53 @@ func (a *Aggregate) AdvanceAllWithProfile(now int64, profile string) []PlotChang
 	return a.advanceAll(now, profile)
 }
 
+// NextAdvanceAt returns the next authoritative time boundary that can change a
+// growing plot. Farm uses it to advance resident actors without periodic
+// SyncFarm polling from every browser. A zero result means no timer is needed.
+func (a *Aggregate) NextAdvanceAt(now int64) int64 {
+	if a == nil {
+		return 0
+	}
+	var next int64
+	for i := range a.Plots {
+		plot := &a.Plots[i]
+		if plot.State != StateGrowing || plot.MatureAt <= 0 || plot.SeasonDuration <= 0 {
+			continue
+		}
+		next = earlierPositive(next, plot.MatureAt)
+		windows := int64(gameconfig.RiskWindowsPerSeason)
+		windowLen := plot.SeasonDuration / windows
+		if windowLen <= 0 {
+			continue
+		}
+		if plot.WeedSince == 0 && plot.WeedNextWin < uint8(windows) {
+			boundary := plot.SeasonStartAt + int64(plot.WeedNextWin+1)*windowLen
+			next = earlierFutureBoundary(next, boundary, now)
+		}
+		if plot.PestSince == 0 && plot.PestNextWin < uint8(windows) {
+			boundary := plot.SeasonStartAt + int64(plot.PestNextWin+1)*windowLen
+			next = earlierFutureBoundary(next, boundary, now)
+		}
+	}
+	return next
+}
+
+func earlierPositive(current, candidate int64) int64 {
+	if candidate <= 0 || current > 0 && current <= candidate {
+		return current
+	}
+	return candidate
+}
+
+func earlierFutureBoundary(current, candidate, now int64) int64 {
+	// A stale boundary should run immediately. Advancing by one millisecond is
+	// required because hazard windows are half-open and scan wStart < to.
+	if candidate <= now {
+		candidate = now + 1
+	}
+	return earlierPositive(current, candidate)
+}
+
 func (a *Aggregate) advanceAll(now int64, profile string) []PlotChange {
 	if a == nil {
 		return nil

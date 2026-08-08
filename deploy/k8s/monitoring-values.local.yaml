@@ -1,0 +1,21 @@
+# 可选：kind 本地环境的轻量 kube-prometheus-stack 参数。
+# Prometheus/Grafana 不属于 farm namespace 的基础清单。
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+grafana:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 100m
+      memory: 256Mi

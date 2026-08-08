@@ -37,9 +37,12 @@ type FarmDelta struct {
 // DeltaRing 保留最近的农场增量，供断线恢复时补齐连续序列。
 // 它由单个 FarmActor 串行访问，不承担并发同步职责。
 type DeltaRing struct {
-	deltas [DeltaRingCapacity]FarmDelta
+	// Most resident farms have no recent mutation. Keeping the former fixed
+	// [200]FarmDelta array in every Actor consumed about 12.5 KiB before the
+	// first delta existed, so grow the ring lazily and cap it at the same
+	// protocol recovery window.
+	deltas []FarmDelta
 	first  int
-	length int
 }
 
 // Append 追加一条增量；满容量后淘汰最旧的一条。
@@ -48,12 +51,13 @@ func (r *DeltaRing) Append(delta FarmDelta) {
 		return
 	}
 
-	index := (r.first + r.length) % DeltaRingCapacity
-	if r.length == DeltaRingCapacity {
-		index = r.first
+	if len(r.deltas) < DeltaRingCapacity {
+		r.deltas = append(r.deltas, cloneDelta(delta))
+		return
+	}
+	index := r.first
+	if len(r.deltas) == DeltaRingCapacity {
 		r.first = (r.first + 1) % DeltaRingCapacity
-	} else {
-		r.length++
 	}
 	r.deltas[index] = cloneDelta(delta)
 }
@@ -61,7 +65,7 @@ func (r *DeltaRing) Append(delta FarmDelta) {
 // Since 返回 farm_seq 不小于 fromSeq 的所有保留增量。
 // 若 fromSeq 早于可连续补齐的最早序列，ok 为 false，调用方应退回全量快照。
 func (r *DeltaRing) Since(fromSeq uint64) ([]FarmDelta, bool) {
-	if r == nil || r.length == 0 {
+	if r == nil || len(r.deltas) == 0 {
 		return nil, true
 	}
 
@@ -70,8 +74,8 @@ func (r *DeltaRing) Since(fromSeq uint64) ([]FarmDelta, bool) {
 		return nil, false
 	}
 
-	deltas := make([]FarmDelta, 0, r.length)
-	for offset := range r.length {
+	deltas := make([]FarmDelta, 0, len(r.deltas))
+	for offset := range len(r.deltas) {
 		delta := r.deltas[(r.first+offset)%DeltaRingCapacity]
 		if delta.FarmSeq >= fromSeq {
 			deltas = append(deltas, cloneDelta(delta))

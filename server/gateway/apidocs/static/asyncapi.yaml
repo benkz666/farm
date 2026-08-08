@@ -1,0 +1,2466 @@
+asyncapi: 3.0.0
+info:
+  title: 经典农场 WebSocket API
+  version: 2.0.0
+  description: 浏览器游戏通信契约；仅支持 farm.v3.pb，每帧携带 1~64 个 Protobuf WireEnvelope。
+defaultContentType: application/octet-stream
+servers:
+  development:
+    host: 127.0.0.1:9002
+    pathname: /ws
+    protocol: ws
+channels:
+  farm:
+    address: /ws
+    messages:
+      HandshakeRequest:
+        $ref: '#/components/messages/HandshakeRequest'
+      HandshakeResponse:
+        $ref: '#/components/messages/HandshakeResponse'
+      PingRequest:
+        $ref: '#/components/messages/PingRequest'
+      PingResponse:
+        $ref: '#/components/messages/PingResponse'
+      EnterFarmRequest:
+        $ref: '#/components/messages/EnterFarmRequest'
+      EnterFarmResponse:
+        $ref: '#/components/messages/EnterFarmResponse'
+      LeaveFarmRequest:
+        $ref: '#/components/messages/LeaveFarmRequest'
+      LeaveFarmResponse:
+        $ref: '#/components/messages/LeaveFarmResponse'
+      SyncFarmRequest:
+        $ref: '#/components/messages/SyncFarmRequest'
+      SyncFarmResponse:
+        $ref: '#/components/messages/SyncFarmResponse'
+      TillRequest:
+        $ref: '#/components/messages/TillRequest'
+      TillResponse:
+        $ref: '#/components/messages/TillResponse'
+      ClearRequest:
+        $ref: '#/components/messages/ClearRequest'
+      ClearResponse:
+        $ref: '#/components/messages/ClearResponse'
+      PlantRequest:
+        $ref: '#/components/messages/PlantRequest'
+      PlantResponse:
+        $ref: '#/components/messages/PlantResponse'
+      WaterRequest:
+        $ref: '#/components/messages/WaterRequest'
+      WaterResponse:
+        $ref: '#/components/messages/WaterResponse'
+      RemoveWeedRequest:
+        $ref: '#/components/messages/RemoveWeedRequest'
+      RemoveWeedResponse:
+        $ref: '#/components/messages/RemoveWeedResponse'
+      RemovePestRequest:
+        $ref: '#/components/messages/RemovePestRequest'
+      RemovePestResponse:
+        $ref: '#/components/messages/RemovePestResponse'
+      FertilizeRequest:
+        $ref: '#/components/messages/FertilizeRequest'
+      FertilizeResponse:
+        $ref: '#/components/messages/FertilizeResponse'
+      HarvestRequest:
+        $ref: '#/components/messages/HarvestRequest'
+      HarvestResponse:
+        $ref: '#/components/messages/HarvestResponse'
+      StealRequest:
+        $ref: '#/components/messages/StealRequest'
+      StealResponse:
+        $ref: '#/components/messages/StealResponse'
+      BuyRequest:
+        $ref: '#/components/messages/BuyRequest'
+      BuyResponse:
+        $ref: '#/components/messages/BuyResponse'
+      SellRequest:
+        $ref: '#/components/messages/SellRequest'
+      SellResponse:
+        $ref: '#/components/messages/SellResponse'
+      FriendListRequest:
+        $ref: '#/components/messages/FriendListRequest'
+      FriendListResponse:
+        $ref: '#/components/messages/FriendListResponse'
+      GenShareLinkRequest:
+        $ref: '#/components/messages/GenShareLinkRequest'
+      GenShareLinkResponse:
+        $ref: '#/components/messages/GenShareLinkResponse'
+      AcceptInviteRequest:
+        $ref: '#/components/messages/AcceptInviteRequest'
+      AcceptInviteResponse:
+        $ref: '#/components/messages/AcceptInviteResponse'
+      RemoveFriendRequest:
+        $ref: '#/components/messages/RemoveFriendRequest'
+      RemoveFriendResponse:
+        $ref: '#/components/messages/RemoveFriendResponse'
+      AddFriendByUIDRequest:
+        $ref: '#/components/messages/AddFriendByUIDRequest'
+      AddFriendByUIDResponse:
+        $ref: '#/components/messages/AddFriendByUIDResponse'
+      SearchUserRequest:
+        $ref: '#/components/messages/SearchUserRequest'
+      SearchUserResponse:
+        $ref: '#/components/messages/SearchUserResponse'
+      RequestFriendRequest:
+        $ref: '#/components/messages/RequestFriendRequest'
+      RequestFriendResponse:
+        $ref: '#/components/messages/RequestFriendResponse'
+      ListFriendRequestsRequest:
+        $ref: '#/components/messages/ListFriendRequestsRequest'
+      ListFriendRequestsResponse:
+        $ref: '#/components/messages/ListFriendRequestsResponse'
+      AcceptFriendRequestRequest:
+        $ref: '#/components/messages/AcceptFriendRequestRequest'
+      AcceptFriendRequestResponse:
+        $ref: '#/components/messages/AcceptFriendRequestResponse'
+      RejectFriendRequestRequest:
+        $ref: '#/components/messages/RejectFriendRequestRequest'
+      RejectFriendRequestResponse:
+        $ref: '#/components/messages/RejectFriendRequestResponse'
+      PetStatusRequest:
+        $ref: '#/components/messages/PetStatusRequest'
+      PetStatusResponse:
+        $ref: '#/components/messages/PetStatusResponse'
+      PetActivateRequest:
+        $ref: '#/components/messages/PetActivateRequest'
+      PetActivateResponse:
+        $ref: '#/components/messages/PetActivateResponse'
+      PetFeedRequest:
+        $ref: '#/components/messages/PetFeedRequest'
+      PetFeedResponse:
+        $ref: '#/components/messages/PetFeedResponse'
+      TaskListRequest:
+        $ref: '#/components/messages/TaskListRequest'
+      TaskListResponse:
+        $ref: '#/components/messages/TaskListResponse'
+      TaskClaimRequest:
+        $ref: '#/components/messages/TaskClaimRequest'
+      TaskClaimResponse:
+        $ref: '#/components/messages/TaskClaimResponse'
+      MailListRequest:
+        $ref: '#/components/messages/MailListRequest'
+      MailListResponse:
+        $ref: '#/components/messages/MailListResponse'
+      MailReadRequest:
+        $ref: '#/components/messages/MailReadRequest'
+      MailReadResponse:
+        $ref: '#/components/messages/MailReadResponse'
+      MailClaimRequest:
+        $ref: '#/components/messages/MailClaimRequest'
+      MailClaimResponse:
+        $ref: '#/components/messages/MailClaimResponse'
+      MailDeleteRequest:
+        $ref: '#/components/messages/MailDeleteRequest'
+      MailDeleteResponse:
+        $ref: '#/components/messages/MailDeleteResponse'
+      CodexListRequest:
+        $ref: '#/components/messages/CodexListRequest'
+      CodexListResponse:
+        $ref: '#/components/messages/CodexListResponse'
+      ClaimDailyLoginRequest:
+        $ref: '#/components/messages/ClaimDailyLoginRequest'
+      ClaimDailyLoginResponse:
+        $ref: '#/components/messages/ClaimDailyLoginResponse'
+      SetTimeProfileRequest:
+        $ref: '#/components/messages/SetTimeProfileRequest'
+      SetTimeProfileResponse:
+        $ref: '#/components/messages/SetTimeProfileResponse'
+      FarmDeltaPush:
+        $ref: '#/components/messages/FarmDeltaPush'
+      PlayerDeltaPush:
+        $ref: '#/components/messages/PlayerDeltaPush'
+      MailNotifyPush:
+        $ref: '#/components/messages/MailNotifyPush'
+      SessionKickPush:
+        $ref: '#/components/messages/SessionKickPush'
+      TaskNotifyPush:
+        $ref: '#/components/messages/TaskNotifyPush'
+operations:
+  handshake:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Handshake 请求"
+    x-command: 100
+    x-performance-tier: ladder
+    x-performance-scenario: ws_handshake
+    x-performance-reason: "连接与会话注册"
+    messages:
+      - $ref: '#/channels/farm/messages/HandshakeRequest'
+  receiveHandshakeResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Handshake 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/HandshakeResponse'
+  ping:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Ping 请求"
+    x-command: 102
+    x-performance-tier: ladder
+    x-performance-scenario: ws_ping
+    x-performance-reason: "高频长连接心跳"
+    messages:
+      - $ref: '#/channels/farm/messages/PingRequest'
+  receivePingResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Ping 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/PingResponse'
+  enterFarm:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "EnterFarm 请求"
+    x-command: 200
+    x-performance-tier: ladder
+    x-performance-scenario: enter_farm
+    x-performance-reason: "Actor 加载和缓存回源"
+    messages:
+      - $ref: '#/channels/farm/messages/EnterFarmRequest'
+  receiveEnterFarmResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "EnterFarm 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/EnterFarmResponse'
+  leaveFarm:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "LeaveFarm 请求"
+    x-command: 202
+    x-performance-tier: baseline
+    x-performance-scenario: leave_farm
+    x-performance-reason: "房间订阅清理"
+    messages:
+      - $ref: '#/channels/farm/messages/LeaveFarmRequest'
+  receiveLeaveFarmResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "LeaveFarm 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/LeaveFarmResponse'
+  syncFarm:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "SyncFarm 请求"
+    x-command: 204
+    x-performance-tier: ladder
+    x-performance-scenario: sync_farm
+    x-performance-reason: "高频读取和序列化"
+    messages:
+      - $ref: '#/channels/farm/messages/SyncFarmRequest'
+  receiveSyncFarmResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "SyncFarm 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/SyncFarmResponse'
+  till:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Till 请求"
+    x-command: 206
+    x-performance-tier: baseline
+    x-performance-scenario: till
+    x-performance-reason: "地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/TillRequest'
+  receiveTillResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Till 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/TillResponse'
+  clear:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Clear 请求"
+    x-command: 208
+    x-performance-tier: baseline
+    x-performance-scenario: clear
+    x-performance-reason: "地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/ClearRequest'
+  receiveClearResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Clear 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/ClearResponse'
+  plant:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Plant 请求"
+    x-command: 210
+    x-performance-tier: baseline
+    x-performance-scenario: plant
+    x-performance-reason: "背包与地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/PlantRequest'
+  receivePlantResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Plant 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/PlantResponse'
+  water:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Water 请求"
+    x-command: 212
+    x-performance-tier: ladder
+    x-performance-scenario: water_local
+    x-performance-reason: "高频状态写，另有跨农场路径"
+    messages:
+      - $ref: '#/channels/farm/messages/WaterRequest'
+  receiveWaterResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Water 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/WaterResponse'
+  removeWeed:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemoveWeed 请求"
+    x-command: 214
+    x-performance-tier: baseline
+    x-performance-scenario: remove_weed
+    x-performance-reason: "地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/RemoveWeedRequest'
+  receiveRemoveWeedResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemoveWeed 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/RemoveWeedResponse'
+  removePest:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemovePest 请求"
+    x-command: 216
+    x-performance-tier: baseline
+    x-performance-scenario: remove_pest
+    x-performance-reason: "地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/RemovePestRequest'
+  receiveRemovePestResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemovePest 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/RemovePestResponse'
+  fertilize:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Fertilize 请求"
+    x-command: 218
+    x-performance-tier: baseline
+    x-performance-scenario: fertilize
+    x-performance-reason: "背包与地块状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/FertilizeRequest'
+  receiveFertilizeResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Fertilize 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/FertilizeResponse'
+  harvest:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Harvest 请求"
+    x-command: 220
+    x-performance-tier: ladder
+    x-performance-scenario: harvest
+    x-performance-reason: "结算、背包与任务推进"
+    messages:
+      - $ref: '#/channels/farm/messages/HarvestRequest'
+  receiveHarvestResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Harvest 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/HarvestResponse'
+  steal:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Steal 请求"
+    x-command: 222
+    x-performance-tier: ladder
+    x-performance-scenario: steal_cross
+    x-performance-reason: "跨服务和热点 Actor"
+    messages:
+      - $ref: '#/channels/farm/messages/StealRequest'
+  receiveStealResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Steal 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/StealResponse'
+  buy:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Buy 请求"
+    x-command: 302
+    x-performance-tier: ladder
+    x-performance-scenario: buy
+    x-performance-reason: "资产变更和持久化写"
+    messages:
+      - $ref: '#/channels/farm/messages/BuyRequest'
+  receiveBuyResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Buy 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/BuyResponse'
+  sell:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "Sell 请求"
+    x-command: 304
+    x-performance-tier: ladder
+    x-performance-scenario: sell
+    x-performance-reason: "资产变更和持久化写"
+    messages:
+      - $ref: '#/channels/farm/messages/SellRequest'
+  receiveSellResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "Sell 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/SellResponse'
+  friendList:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "FriendList 请求"
+    x-command: 400
+    x-performance-tier: ladder
+    x-performance-scenario: friend_list
+    x-performance-reason: "Redis 热点和缓存回源"
+    messages:
+      - $ref: '#/channels/farm/messages/FriendListRequest'
+  receiveFriendListResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "FriendList 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/FriendListResponse'
+  genShareLink:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "GenShareLink 请求"
+    x-command: 402
+    x-performance-tier: baseline
+    x-performance-scenario: gen_share_link
+    x-performance-reason: "低频社交读"
+    messages:
+      - $ref: '#/channels/farm/messages/GenShareLinkRequest'
+  receiveGenShareLinkResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "GenShareLink 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/GenShareLinkResponse'
+  acceptInvite:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "AcceptInvite 请求"
+    x-command: 404
+    x-performance-tier: baseline
+    x-performance-scenario: accept_invite
+    x-performance-reason: "好友关系写"
+    messages:
+      - $ref: '#/channels/farm/messages/AcceptInviteRequest'
+  receiveAcceptInviteResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "AcceptInvite 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/AcceptInviteResponse'
+  removeFriend:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemoveFriend 请求"
+    x-command: 406
+    x-performance-tier: baseline
+    x-performance-scenario: remove_friend
+    x-performance-reason: "好友关系写"
+    messages:
+      - $ref: '#/channels/farm/messages/RemoveFriendRequest'
+  receiveRemoveFriendResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "RemoveFriend 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/RemoveFriendResponse'
+  addFriendByUID:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "AddFriendByUID 请求"
+    x-command: 408
+    x-performance-tier: baseline
+    x-performance-scenario: add_friend_by_uid
+    x-performance-reason: "好友关系写"
+    messages:
+      - $ref: '#/channels/farm/messages/AddFriendByUIDRequest'
+  receiveAddFriendByUIDResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "AddFriendByUID 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/AddFriendByUIDResponse'
+  searchUser:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "SearchUser 请求"
+    x-command: 410
+    x-performance-tier: ladder
+    x-performance-scenario: search_user
+    x-performance-reason: "用户数据库读"
+    messages:
+      - $ref: '#/channels/farm/messages/SearchUserRequest'
+  receiveSearchUserResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "SearchUser 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/SearchUserResponse'
+  requestFriend:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "RequestFriend 请求"
+    x-command: 412
+    x-performance-tier: baseline
+    x-performance-scenario: request_friend
+    x-performance-reason: "好友申请写"
+    messages:
+      - $ref: '#/channels/farm/messages/RequestFriendRequest'
+  receiveRequestFriendResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "RequestFriend 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/RequestFriendResponse'
+  listFriendRequests:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "ListFriendRequests 请求"
+    x-command: 414
+    x-performance-tier: baseline
+    x-performance-scenario: list_friend_requests
+    x-performance-reason: "好友申请读"
+    messages:
+      - $ref: '#/channels/farm/messages/ListFriendRequestsRequest'
+  receiveListFriendRequestsResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "ListFriendRequests 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/ListFriendRequestsResponse'
+  acceptFriendRequest:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "AcceptFriendRequest 请求"
+    x-command: 416
+    x-performance-tier: baseline
+    x-performance-scenario: accept_friend_request
+    x-performance-reason: "好友关系事务写"
+    messages:
+      - $ref: '#/channels/farm/messages/AcceptFriendRequestRequest'
+  receiveAcceptFriendRequestResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "AcceptFriendRequest 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/AcceptFriendRequestResponse'
+  rejectFriendRequest:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "RejectFriendRequest 请求"
+    x-command: 418
+    x-performance-tier: baseline
+    x-performance-scenario: reject_friend_request
+    x-performance-reason: "好友申请写"
+    messages:
+      - $ref: '#/channels/farm/messages/RejectFriendRequestRequest'
+  receiveRejectFriendRequestResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "RejectFriendRequest 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/RejectFriendRequestResponse'
+  petStatus:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetStatus 请求"
+    x-command: 500
+    x-performance-tier: baseline
+    x-performance-scenario: pet_status
+    x-performance-reason: "低频状态读"
+    messages:
+      - $ref: '#/channels/farm/messages/PetStatusRequest'
+  receivePetStatusResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetStatus 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/PetStatusResponse'
+  petActivate:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetActivate 请求"
+    x-command: 502
+    x-performance-tier: baseline
+    x-performance-scenario: pet_activate
+    x-performance-reason: "宠物状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/PetActivateRequest'
+  receivePetActivateResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetActivate 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/PetActivateResponse'
+  petFeed:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetFeed 请求"
+    x-command: 504
+    x-performance-tier: baseline
+    x-performance-scenario: pet_feed
+    x-performance-reason: "背包与宠物状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/PetFeedRequest'
+  receivePetFeedResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "PetFeed 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/PetFeedResponse'
+  taskList:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "TaskList 请求"
+    x-command: 600
+    x-performance-tier: ladder
+    x-performance-scenario: task_list
+    x-performance-reason: "任务数据读取"
+    messages:
+      - $ref: '#/channels/farm/messages/TaskListRequest'
+  receiveTaskListResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "TaskList 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/TaskListResponse'
+  taskClaim:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "TaskClaim 请求"
+    x-command: 602
+    x-performance-tier: baseline
+    x-performance-scenario: task_claim
+    x-performance-reason: "一次性奖励写"
+    messages:
+      - $ref: '#/channels/farm/messages/TaskClaimRequest'
+  receiveTaskClaimResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "TaskClaim 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/TaskClaimResponse'
+  mailList:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailList 请求"
+    x-command: 604
+    x-performance-tier: ladder
+    x-performance-scenario: mail_list
+    x-performance-reason: "邮件列表查询和编码"
+    messages:
+      - $ref: '#/channels/farm/messages/MailListRequest'
+  receiveMailListResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailList 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/MailListResponse'
+  mailRead:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailRead 请求"
+    x-command: 606
+    x-performance-tier: baseline
+    x-performance-scenario: mail_read
+    x-performance-reason: "邮件状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/MailReadRequest'
+  receiveMailReadResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailRead 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/MailReadResponse'
+  mailClaim:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailClaim 请求"
+    x-command: 608
+    x-performance-tier: baseline
+    x-performance-scenario: mail_claim
+    x-performance-reason: "一次性附件领取"
+    messages:
+      - $ref: '#/channels/farm/messages/MailClaimRequest'
+  receiveMailClaimResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailClaim 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/MailClaimResponse'
+  mailDelete:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailDelete 请求"
+    x-command: 610
+    x-performance-tier: baseline
+    x-performance-scenario: mail_delete
+    x-performance-reason: "邮件状态写"
+    messages:
+      - $ref: '#/channels/farm/messages/MailDeleteRequest'
+  receiveMailDeleteResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailDelete 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/MailDeleteResponse'
+  codexList:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "CodexList 请求"
+    x-command: 612
+    x-performance-tier: baseline
+    x-performance-scenario: codex_list
+    x-performance-reason: "低频图鉴读"
+    messages:
+      - $ref: '#/channels/farm/messages/CodexListRequest'
+  receiveCodexListResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "CodexList 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/CodexListResponse'
+  claimDailyLogin:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "ClaimDailyLogin 请求"
+    x-command: 614
+    x-performance-tier: baseline
+    x-performance-scenario: claim_daily_login
+    x-performance-reason: "一次性奖励写"
+    messages:
+      - $ref: '#/channels/farm/messages/ClaimDailyLoginRequest'
+  receiveClaimDailyLoginResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "ClaimDailyLogin 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/ClaimDailyLoginResponse'
+  setTimeProfile:
+    action: send
+    channel: {$ref: '#/channels/farm'}
+    summary: "SetTimeProfile 请求"
+    x-command: 616
+    x-performance-tier: functional-only
+    x-performance-scenario: set_time_profile
+    x-performance-reason: "仅开发环境调试"
+    messages:
+      - $ref: '#/channels/farm/messages/SetTimeProfileRequest'
+  receiveSetTimeProfileResponse:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "SetTimeProfile 响应"
+    messages:
+      - $ref: '#/channels/farm/messages/SetTimeProfileResponse'
+  receiveFarmDelta:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "FarmDelta 服务端推送"
+    x-command: 9000
+    x-performance-tier: delivery
+    x-performance-scenario: farm_delta
+    x-performance-reason: "农场变化广播"
+    messages:
+      - $ref: '#/channels/farm/messages/FarmDeltaPush'
+  receivePlayerDelta:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "PlayerDelta 服务端推送"
+    x-command: 9002
+    x-performance-tier: delivery
+    x-performance-scenario: player_delta
+    x-performance-reason: "玩家资产变化"
+    messages:
+      - $ref: '#/channels/farm/messages/PlayerDeltaPush'
+  receiveMailNotify:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "MailNotify 服务端推送"
+    x-command: 9004
+    x-performance-tier: delivery
+    x-performance-scenario: mail_notify
+    x-performance-reason: "新邮件或社交提示"
+    messages:
+      - $ref: '#/channels/farm/messages/MailNotifyPush'
+  receiveSessionKick:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "SessionKick 服务端推送"
+    x-command: 9006
+    x-performance-tier: delivery
+    x-performance-scenario: session_kick
+    x-performance-reason: "同账号新会话踢下线"
+    messages:
+      - $ref: '#/channels/farm/messages/SessionKickPush'
+  receiveTaskNotify:
+    action: receive
+    channel: {$ref: '#/channels/farm'}
+    summary: "TaskNotify 服务端推送"
+    x-command: 9008
+    x-performance-tier: delivery
+    x-performance-scenario: task_notify
+    x-performance-reason: "任务进度变化"
+    messages:
+      - $ref: '#/channels/farm/messages/TaskNotifyPush'
+components:
+  messages:
+    HandshakeRequest:
+      name: HandshakeRequest
+      title: "HandshakeRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 100}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [token, client_config_ver, resume_farm_uid, resume_farm_seq]
+            properties:
+              token:
+                type: string
+              client_config_ver:
+                type: integer
+              resume_farm_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              resume_farm_seq:
+                $ref: '#/components/schemas/DecimalUint64'
+    HandshakeResponse:
+      name: HandshakeResponse
+      title: "HandshakeResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 100}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PingRequest:
+      name: PingRequest
+      title: "PingRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 102}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [client_time]
+            properties:
+              client_time:
+                type: integer
+                format: int64
+    PingResponse:
+      name: PingResponse
+      title: "PingResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 102}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    EnterFarmRequest:
+      name: EnterFarmRequest
+      title: "EnterFarmRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 200}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    EnterFarmResponse:
+      name: EnterFarmResponse
+      title: "EnterFarmResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 200}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    LeaveFarmRequest:
+      name: LeaveFarmRequest
+      title: "LeaveFarmRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 202}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    LeaveFarmResponse:
+      name: LeaveFarmResponse
+      title: "LeaveFarmResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 202}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    SyncFarmRequest:
+      name: SyncFarmRequest
+      title: "SyncFarmRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 204}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, from_seq]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              from_seq:
+                $ref: '#/components/schemas/DecimalUint64'
+    SyncFarmResponse:
+      name: SyncFarmResponse
+      title: "SyncFarmResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 204}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    TillRequest:
+      name: TillRequest
+      title: "TillRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 206}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    TillResponse:
+      name: TillResponse
+      title: "TillResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 206}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    ClearRequest:
+      name: ClearRequest
+      title: "ClearRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 208}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    ClearResponse:
+      name: ClearResponse
+      title: "ClearResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 208}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PlantRequest:
+      name: PlantRequest
+      title: "PlantRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 210}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    PlantResponse:
+      name: PlantResponse
+      title: "PlantResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 210}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    WaterRequest:
+      name: WaterRequest
+      title: "WaterRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 212}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    WaterResponse:
+      name: WaterResponse
+      title: "WaterResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 212}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    RemoveWeedRequest:
+      name: RemoveWeedRequest
+      title: "RemoveWeedRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 214}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    RemoveWeedResponse:
+      name: RemoveWeedResponse
+      title: "RemoveWeedResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 214}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    RemovePestRequest:
+      name: RemovePestRequest
+      title: "RemovePestRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 216}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    RemovePestResponse:
+      name: RemovePestResponse
+      title: "RemovePestResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 216}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    FertilizeRequest:
+      name: FertilizeRequest
+      title: "FertilizeRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 218}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    FertilizeResponse:
+      name: FertilizeResponse
+      title: "FertilizeResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 218}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    HarvestRequest:
+      name: HarvestRequest
+      title: "HarvestRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 220}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, arg]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              arg:
+                type: integer
+    HarvestResponse:
+      name: HarvestResponse
+      title: "HarvestResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 220}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    StealRequest:
+      name: StealRequest
+      title: "StealRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 222}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [owner_uid, plot_index, crop_id]
+            properties:
+              owner_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+              plot_index:
+                type: integer
+              crop_id:
+                type: integer
+    StealResponse:
+      name: StealResponse
+      title: "StealResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 222}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    BuyRequest:
+      name: BuyRequest
+      title: "BuyRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 302}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [item_id, quantity]
+            properties:
+              item_id:
+                type: integer
+              quantity:
+                type: integer
+    BuyResponse:
+      name: BuyResponse
+      title: "BuyResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 302}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    SellRequest:
+      name: SellRequest
+      title: "SellRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 304}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [item_id, quantity]
+            properties:
+              item_id:
+                type: integer
+              quantity:
+                type: integer
+    SellResponse:
+      name: SellResponse
+      title: "SellResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 304}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    FriendListRequest:
+      name: FriendListRequest
+      title: "FriendListRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 400}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    FriendListResponse:
+      name: FriendListResponse
+      title: "FriendListResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 400}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    GenShareLinkRequest:
+      name: GenShareLinkRequest
+      title: "GenShareLinkRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 402}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    GenShareLinkResponse:
+      name: GenShareLinkResponse
+      title: "GenShareLinkResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 402}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    AcceptInviteRequest:
+      name: AcceptInviteRequest
+      title: "AcceptInviteRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 404}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [token]
+            properties:
+              token:
+                type: string
+    AcceptInviteResponse:
+      name: AcceptInviteResponse
+      title: "AcceptInviteResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 404}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    RemoveFriendRequest:
+      name: RemoveFriendRequest
+      title: "RemoveFriendRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 406}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [peer_uid]
+            properties:
+              peer_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    RemoveFriendResponse:
+      name: RemoveFriendResponse
+      title: "RemoveFriendResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 406}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    AddFriendByUIDRequest:
+      name: AddFriendByUIDRequest
+      title: "AddFriendByUIDRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 408}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [peer_uid]
+            properties:
+              peer_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    AddFriendByUIDResponse:
+      name: AddFriendByUIDResponse
+      title: "AddFriendByUIDResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 408}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    SearchUserRequest:
+      name: SearchUserRequest
+      title: "SearchUserRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 410}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [username]
+            properties:
+              username:
+                type: string
+    SearchUserResponse:
+      name: SearchUserResponse
+      title: "SearchUserResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 410}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    RequestFriendRequest:
+      name: RequestFriendRequest
+      title: "RequestFriendRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 412}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [peer_uid]
+            properties:
+              peer_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    RequestFriendResponse:
+      name: RequestFriendResponse
+      title: "RequestFriendResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 412}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    ListFriendRequestsRequest:
+      name: ListFriendRequestsRequest
+      title: "ListFriendRequestsRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 414}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    ListFriendRequestsResponse:
+      name: ListFriendRequestsResponse
+      title: "ListFriendRequestsResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 414}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    AcceptFriendRequestRequest:
+      name: AcceptFriendRequestRequest
+      title: "AcceptFriendRequestRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 416}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [from_uid]
+            properties:
+              from_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    AcceptFriendRequestResponse:
+      name: AcceptFriendRequestResponse
+      title: "AcceptFriendRequestResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 416}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    RejectFriendRequestRequest:
+      name: RejectFriendRequestRequest
+      title: "RejectFriendRequestRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 418}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [from_uid]
+            properties:
+              from_uid:
+                $ref: '#/components/schemas/DecimalUint64'
+    RejectFriendRequestResponse:
+      name: RejectFriendRequestResponse
+      title: "RejectFriendRequestResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 418}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PetStatusRequest:
+      name: PetStatusRequest
+      title: "PetStatusRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 500}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PetStatusResponse:
+      name: PetStatusResponse
+      title: "PetStatusResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 500}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PetActivateRequest:
+      name: PetActivateRequest
+      title: "PetActivateRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 502}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [dog_type]
+            properties:
+              dog_type:
+                type: integer
+    PetActivateResponse:
+      name: PetActivateResponse
+      title: "PetActivateResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 502}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PetFeedRequest:
+      name: PetFeedRequest
+      title: "PetFeedRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 504}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [grams]
+            properties:
+              grams:
+                type: integer
+    PetFeedResponse:
+      name: PetFeedResponse
+      title: "PetFeedResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 504}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    TaskListRequest:
+      name: TaskListRequest
+      title: "TaskListRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 600}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    TaskListResponse:
+      name: TaskListResponse
+      title: "TaskListResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 600}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    TaskClaimRequest:
+      name: TaskClaimRequest
+      title: "TaskClaimRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 602}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [task_id]
+            properties:
+              task_id:
+                type: integer
+    TaskClaimResponse:
+      name: TaskClaimResponse
+      title: "TaskClaimResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 602}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailListRequest:
+      name: MailListRequest
+      title: "MailListRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 604}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailListResponse:
+      name: MailListResponse
+      title: "MailListResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 604}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailReadRequest:
+      name: MailReadRequest
+      title: "MailReadRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 606}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [all]
+            properties:
+              all:
+                type: boolean
+    MailReadResponse:
+      name: MailReadResponse
+      title: "MailReadResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 606}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailClaimRequest:
+      name: MailClaimRequest
+      title: "MailClaimRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 608}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [mail_id]
+            properties:
+              mail_id:
+                $ref: '#/components/schemas/DecimalUint64'
+    MailClaimResponse:
+      name: MailClaimResponse
+      title: "MailClaimResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 608}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailDeleteRequest:
+      name: MailDeleteRequest
+      title: "MailDeleteRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 610}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [all]
+            properties:
+              all:
+                type: boolean
+    MailDeleteResponse:
+      name: MailDeleteResponse
+      title: "MailDeleteResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 610}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    CodexListRequest:
+      name: CodexListRequest
+      title: "CodexListRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 612}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    CodexListResponse:
+      name: CodexListResponse
+      title: "CodexListResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 612}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    ClaimDailyLoginRequest:
+      name: ClaimDailyLoginRequest
+      title: "ClaimDailyLoginRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 614}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    ClaimDailyLoginResponse:
+      name: ClaimDailyLoginResponse
+      title: "ClaimDailyLoginResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 614}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    SetTimeProfileRequest:
+      name: SetTimeProfileRequest
+      title: "SetTimeProfileRequest"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 616}
+          client_seq:
+            type: integer
+            description: 客户端请求序号
+          err: {type: integer, format: int32, const: 0}
+          payload:
+            type: object
+            additionalProperties: false
+            required: [time_profile]
+            properties:
+              time_profile:
+                type: string
+    SetTimeProfileResponse:
+      name: SetTimeProfileResponse
+      title: "SetTimeProfileResponse"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 616}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    FarmDeltaPush:
+      name: FarmDeltaPush
+      title: "FarmDeltaPush"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 9000}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    PlayerDeltaPush:
+      name: PlayerDeltaPush
+      title: "PlayerDeltaPush"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 9002}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    MailNotifyPush:
+      name: MailNotifyPush
+      title: "MailNotifyPush"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 9004}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    SessionKickPush:
+      name: SessionKickPush
+      title: "SessionKickPush"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 9006}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+    TaskNotifyPush:
+      name: TaskNotifyPush
+      title: "TaskNotifyPush"
+      correlationId:
+        location: $message.payload#/client_seq
+      payload:
+        type: object
+        additionalProperties: false
+        required: [cmd, client_seq, err, payload]
+        properties:
+          cmd: {type: integer, const: 9008}
+          client_seq:
+            type: integer
+            description: 响应原样回带；推送通常为 0
+          err: {type: integer, format: int32}
+          payload:
+            type: object
+            description: 无请求字段，或响应/推送负载由对应命令处理器定义。
+  schemas:
+    DecimalUint64:
+      type: string
+      pattern: '^[0-9]+$'
+      description: 64 位无符号整数的十进制字符串，不得转为 JavaScript Number。

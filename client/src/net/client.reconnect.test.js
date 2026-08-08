@@ -8,6 +8,7 @@ import {
   CMD_PING,
   CLIENT_CONFIG_VER,
 } from './client.js'
+import { decodeBinaryBatch, encodeBinaryBatch } from './binaryWire.js'
 
 class FakeWebSocket {
   static CONNECTING = 0
@@ -40,11 +41,11 @@ class FakeWebSocket {
   }
 
   /**
-   * @param {string} data
+   * @param {ArrayBuffer|ArrayBufferView} data
    */
   send(data) {
     if (this.readyState !== FakeWebSocket.OPEN) throw new Error('FakeWebSocket: not open')
-    this.sent.push(JSON.parse(data))
+    this.sent.push(...decodeBinaryBatch(data))
   }
 
   close() {
@@ -57,7 +58,7 @@ class FakeWebSocket {
    * @param {object} envelope
    */
   respond(envelope) {
-    this.onmessage?.({ data: JSON.stringify(envelope) })
+    this.onmessage?.({ data: encodeBinaryBatch([envelope]) })
   }
 
   static reset() {
@@ -135,6 +136,7 @@ function createClient(opts = {}) {
     reconnectBaseMs: opts.reconnectBaseMs ?? 1_000,
     reconnectMaxMs: opts.reconnectMaxMs ?? 8_000,
     getResumeContext: opts.getResumeContext,
+    queueMicrotask: (fn) => fn(),
   })
   client.token = 'tok'
   client.uid = 42
@@ -383,8 +385,8 @@ test('重连打开后 Handshake 携带 resume_farm_uid/seq，再 EnterFarm 并�
   await Promise.resolve()
 
   assert.equal(restored.length, 1)
-  assert.equal(restored[0].payload.farm_seq, 8)
-  assert.equal(restored[0].payload.snapshot.owner_uid, 99)
+  assert.equal(restored[0].payload.farm_seq, '8')
+  assert.equal(restored[0].payload.snapshot.owner_uid, '99')
 })
 
 test('重连上下文保留 19 位好友 UID 字符串精度', () => {

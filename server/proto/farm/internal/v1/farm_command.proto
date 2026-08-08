@@ -12,6 +12,13 @@ import "farm/internal/v1/common.proto";
 // uses the separate typed CrossFarmService contract.
 service FarmCommandService {
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  // ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
+  // request_id correlates responses because commands for different farms may
+  // complete out of order; commands for one farm_uid remain ordered.
+  rpc ExecuteStream(stream StreamExecuteRequest) returns (stream StreamExecuteResponse);
+  // ExecuteBatchStream amortizes protobuf and HTTP/2 framing across unrelated
+  // client commands while preserving request_id correlation.
+  rpc ExecuteBatchStream(stream StreamExecuteBatchRequest) returns (stream StreamExecuteBatchResponse);
 }
 
 enum Operation {
@@ -40,6 +47,8 @@ message ExecuteRequest {
   ConnRef originator = 3;
   // Opaque JSON payload for the selected operation.
   bytes payload_json = 4;
+  // Gateway can consume a typed public payload directly for self read paths.
+  bool prefer_prepared = 5;
 }
 
 message ExecuteResponse {
@@ -47,4 +56,29 @@ message ExecuteResponse {
   int32 err = 1;
   // Opaque JSON response for the selected operation.
   bytes payload_json = 2;
+  // Authoritative aggregate sequence for room watermark maintenance. Zero for
+  // operations that do not expose or mutate a Farm aggregate.
+  uint64 farm_seq = 3;
+  // Pre-marshaled public Protobuf oneof body for opaque Gateway forwarding.
+  bytes prepared_payload = 4;
+  // WireEnvelope oneof field number (13=EnterFarmResponse, 14=SyncFarmResponse).
+  uint32 prepared_field = 5;
+}
+
+message StreamExecuteRequest {
+  uint64 request_id = 1;
+  ExecuteRequest request = 2;
+}
+
+message StreamExecuteResponse {
+  uint64 request_id = 1;
+  ExecuteResponse response = 2;
+}
+
+message StreamExecuteBatchRequest {
+  repeated StreamExecuteRequest requests = 1;
+}
+
+message StreamExecuteBatchResponse {
+  repeated StreamExecuteResponse responses = 1;
 }

@@ -46,6 +46,7 @@ func (s *batchRecordingStore) CommitFarms(_ context.Context, commits []outbox.Fa
 		cp[i] = outbox.FarmCommit{
 			Snapshot: commit.Snapshot.Clone(),
 			Outbox:   append([]outbox.Event(nil), commit.Outbox...),
+			Plan:     commit.Plan,
 		}
 	}
 	s.commits = append(s.commits, cp)
@@ -72,6 +73,15 @@ func (s *batchRecordingStore) lastOutboxCount() int {
 		return 0
 	}
 	return len(s.commits[len(s.commits)-1][0].Outbox)
+}
+
+func (s *batchRecordingStore) lastPlan() outbox.PersistPlan {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.commits) == 0 || len(s.commits[len(s.commits)-1]) == 0 {
+		return outbox.PersistPlan{}
+	}
+	return s.commits[len(s.commits)-1][0].Plan
 }
 
 func (s *batchRecordingStore) batchCount() int {
@@ -122,6 +132,26 @@ func TestCommitterBatchesAcrossUIDs(t *testing.T) {
 	}
 	if got := store.lastBatchSize(); got != 3 {
 		t.Fatalf("batch size = %d, want 3", got)
+	}
+	if err := committer.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestCommitterCarriesSpecializedPlan(t *testing.T) {
+	storage := &batchRecordingStore{}
+	committer := NewCommitter(storage, defaultCommitterConfig())
+	aggregate := farm.NewAggregate(7, "seven")
+	plan := outbox.PersistPlan{Mode: outbox.PersistCrossVisitor, IncludeItems: true}
+	result, err := committer.EnqueuePlan(7, 1, aggregate, nil, plan, true)
+	if err != nil {
+		t.Fatalf("EnqueuePlan: %v", err)
+	}
+	if committed := <-result; committed.Err != nil {
+		t.Fatalf("commit: %v", committed.Err)
+	}
+	if got := storage.lastPlan(); got != plan {
+		t.Fatalf("persist plan = %#v, want %#v", got, plan)
 	}
 	if err := committer.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)

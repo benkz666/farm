@@ -40,6 +40,11 @@ var (
 	// ErrBusy 表示 Actor 在 callTimeout 内没能接收这个请求。
 	// 请求未被接收，因此没有任何副作用，调用方可安全重试。
 	ErrBusy = errors.New("actor: actor is busy")
+
+	// ErrCapacity means the process reached its configured resident-Actor
+	// safety ceiling. Refusing a new cold load is preferable to letting the
+	// cgroup OOM killer terminate every resident farm on the instance.
+	ErrCapacity = errors.New("actor: resident capacity reached")
 )
 
 // FarmStore 是 Actor 所需的最小持久化边界。
@@ -62,6 +67,7 @@ type Runtime struct {
 	flushInterval time.Duration
 	callTimeout   time.Duration
 	ioTimeout     time.Duration
+	maxResident   int
 	hazardSalt    uint64
 	metrics       *telemetry.Metrics
 
@@ -71,6 +77,18 @@ type Runtime struct {
 	drainCtx    context.Context
 	drainFailed atomic.Bool
 	wg          sync.WaitGroup
+}
+
+// IsResident reports whether uid currently has an in-memory actor. Scheduled
+// time advancement uses it to avoid loading farms whose players are offline.
+func (r *Runtime) IsResident(uid uint64) bool {
+	if r == nil || uid == 0 {
+		return false
+	}
+	r.mu.Lock()
+	resident := r.actors[uid]
+	r.mu.Unlock()
+	return resident != nil
 }
 
 type residentActor struct {
@@ -143,6 +161,18 @@ func (r *Runtime) SetTimeouts(call, io time.Duration) {
 	r.callTimeout, r.ioTimeout = call, io
 }
 
+// SetMaxResident installs a hard admission ceiling for cold Actor loads.
+// A non-positive value disables the ceiling. Configure it before the first Do.
+func (r *Runtime) SetMaxResident(maxResident int) {
+	if r == nil {
+		return
+	}
+	if maxResident < 0 {
+		maxResident = 0
+	}
+	r.maxResident = maxResident
+}
+
 // SetHazardSalt 注入草/虫确定性哈希盐（由 FARM_HAZARD_SECRET 派生）。
 // 必须在首次 Do 之前调用；加载聚合时写入 Aggregate.HazardSalt（不落盘）。
 func (r *Runtime) SetHazardSalt(salt uint64) {
@@ -186,6 +216,11 @@ func (r *Runtime) Do(uid uint64, fn func(*FarmActor) error) error {
 	for {
 		resident, err := r.getOrStartActor(uid)
 		if err != nil {
+			if errors.Is(err, ErrCapacity) {
+				if m := r.metrics; m != nil {
+					m.ActorDoBusy.Inc()
+				}
+			}
 			return err
 		}
 		depth := int(resident.waiters.Add(1))
@@ -263,6 +298,9 @@ func (r *Runtime) getOrStartActor(uid uint64) (*residentActor, error) {
 	}
 	resident := r.actors[uid]
 	if resident == nil {
+		if r.maxResident > 0 && len(r.actors) >= r.maxResident {
+			return nil, ErrCapacity
+		}
 		resident = &residentActor{
 			mailbox: make(chan request),
 			done:    make(chan struct{}),
@@ -327,6 +365,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			}
 			generation++
 			actor.stampOutboxGeneration(generation)
+			actor.stampPersistGeneration(generation)
 			needSyncFlush := actor.syncFlush
 			if needSyncFlush {
 				actor.syncFlush = false
@@ -355,6 +394,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			if ack.generation > committedGen {
 				committedGen = ack.generation
 				actor.ackOutbox(committedGen)
+				actor.ackPersistPlan(committedGen)
 			}
 
 		case <-idle.C:
@@ -373,6 +413,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			}
 			committedGen = generation
 			actor.ackOutbox(committedGen)
+			actor.ackPersistPlan(committedGen)
 			return
 
 		case <-resident.drain:
@@ -412,6 +453,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				}
 				committedGen = generation
 				actor.ackOutbox(committedGen)
+				actor.ackPersistPlan(committedGen)
 			}
 			return
 		}
@@ -426,7 +468,7 @@ func (r *Runtime) enqueueSave(uid uint64, actor *FarmActor, generation uint64, d
 		return nil, errors.New("actor: aggregate is nil")
 	}
 	snapshot := actor.Aggregate.Clone()
-	return r.committer.Enqueue(uid, generation, snapshot, actor.pendingOutboxEvents(), durable)
+	return r.committer.EnqueuePlan(uid, generation, snapshot, actor.pendingOutboxEvents(), actor.pendingPersistPlan(), durable)
 }
 
 func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation uint64, commitAcks chan commitAck) {

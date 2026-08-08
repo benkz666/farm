@@ -2,6 +2,7 @@ package friendauth
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 const (
 	defaultTTL      = 2 * time.Second
 	defaultCapacity = 4096
+	friendListTTL   = 30 * time.Second
+	userSearchTTL   = 5 * time.Minute
+	searchMissTTL   = 30 * time.Second
+	cacheShardCount = 64
 )
 
 type cacheEntry struct {
@@ -20,13 +25,40 @@ type cacheEntry struct {
 	expiresAt time.Time
 }
 
+type friendListEntry struct {
+	value     []store.FriendRow
+	expiresAt time.Time
+}
+
+type userSearchEntry struct {
+	value     store.UserSearchRow
+	found     bool
+	expiresAt time.Time
+}
+
+type relationShard struct {
+	mu      sync.Mutex
+	entries map[pairKey]cacheEntry
+}
+
+type friendListShard struct {
+	mu      sync.Mutex
+	entries map[uint64]friendListEntry
+}
+
+type userSearchShard struct {
+	mu      sync.Mutex
+	entries map[string]userSearchEntry
+}
+
 // Cache wraps a FriendStore with a short TTL true-only AreFriends cache.
 type Cache struct {
-	inner    store.FriendStore
-	ttl      time.Duration
-	capacity int
-	mu       sync.Mutex
-	entries  map[pairKey]cacheEntry
+	inner     store.FriendStore
+	ttl       time.Duration
+	capacity  int
+	relations [cacheShardCount]relationShard
+	lists     [cacheShardCount]friendListShard
+	searches  [cacheShardCount]userSearchShard
 }
 
 type pairKey struct {
@@ -40,7 +72,6 @@ func NewCache(inner store.FriendStore) *Cache {
 		inner:    inner,
 		ttl:      defaultTTL,
 		capacity: defaultCapacity,
-		entries:  make(map[pairKey]cacheEntry, defaultCapacity),
 	}
 }
 
@@ -57,33 +88,44 @@ func (c *Cache) AreFriends(ctx context.Context, a, b uint64) (bool, error) {
 	}
 	key := pair(a, b)
 	now := time.Now()
-	c.mu.Lock()
-	if entry, ok := c.entries[key]; ok && entry.value && now.Before(entry.expiresAt) {
-		c.mu.Unlock()
+	shard := &c.relations[pairShardIndex(key)]
+	shard.mu.Lock()
+	if entry, ok := shard.entries[key]; ok && entry.value && now.Before(entry.expiresAt) {
+		shard.mu.Unlock()
 		return true, nil
 	}
-	c.mu.Unlock()
+	shard.mu.Unlock()
 
 	value, err := c.inner.AreFriends(ctx, a, b)
 	if err != nil || !value {
 		return value, err
 	}
-	c.mu.Lock()
-	c.ensureCapacityLocked(now)
-	c.entries[key] = cacheEntry{value: true, expiresAt: now.Add(c.ttl)}
-	c.mu.Unlock()
+	shard.mu.Lock()
+	if shard.entries == nil {
+		shard.entries = make(map[pairKey]cacheEntry, c.shardCapacity())
+	}
+	ensureRelationCapacityLocked(shard.entries, c.shardCapacity(), now)
+	shard.entries[key] = cacheEntry{value: true, expiresAt: now.Add(c.ttl)}
+	shard.mu.Unlock()
 	return true, nil
 }
 
-func (c *Cache) ensureCapacityLocked(now time.Time) {
-	if len(c.entries) < c.capacity {
+func ensureRelationCapacityLocked(entries map[pairKey]cacheEntry, capacity int, now time.Time) {
+	if len(entries) < capacity {
 		return
 	}
-	c.evictExpiredLocked(now)
-	if len(c.entries) < c.capacity {
+	for key, entry := range entries {
+		if now.After(entry.expiresAt) {
+			delete(entries, key)
+		}
+	}
+	if len(entries) < capacity {
 		return
 	}
-	c.evictOneLocked()
+	for key := range entries {
+		delete(entries, key)
+		return
+	}
 }
 
 func (c *Cache) Invalidate(a, b uint64) {
@@ -91,23 +133,13 @@ func (c *Cache) Invalidate(a, b uint64) {
 		return
 	}
 	key := pair(a, b)
-	c.mu.Lock()
-	delete(c.entries, key)
-	c.mu.Unlock()
-}
-
-func (c *Cache) evictExpiredLocked(now time.Time) {
-	for key, entry := range c.entries {
-		if now.After(entry.expiresAt) {
-			delete(c.entries, key)
-		}
-	}
-}
-
-func (c *Cache) evictOneLocked() {
-	for key := range c.entries {
-		delete(c.entries, key)
-		return
+	relation := &c.relations[pairShardIndex(key)]
+	relation.mu.Lock()
+	delete(relation.entries, key)
+	relation.mu.Unlock()
+	c.deleteFriendList(a)
+	if b != a {
+		c.deleteFriendList(b)
 	}
 }
 
@@ -128,7 +160,32 @@ func (c *Cache) RemoveFriends(ctx context.Context, a, b uint64) error {
 }
 
 func (c *Cache) ListFriends(ctx context.Context, uid uint64) ([]store.FriendRow, error) {
-	return c.inner.ListFriends(ctx, uid)
+	if c == nil || c.inner == nil {
+		return nil, nil
+	}
+	now := time.Now()
+	shard := &c.lists[uidShardIndex(uid)]
+	shard.mu.Lock()
+	if entry, ok := shard.entries[uid]; ok && now.Before(entry.expiresAt) {
+		result := cloneFriends(entry.value)
+		shard.mu.Unlock()
+		return result, nil
+	}
+	delete(shard.entries, uid)
+	shard.mu.Unlock()
+
+	result, err := c.inner.ListFriends(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	shard.mu.Lock()
+	if shard.entries == nil {
+		shard.entries = make(map[uint64]friendListEntry, c.shardCapacity())
+	}
+	ensureMapCapacityLocked(shard.entries, c.shardCapacity())
+	shard.entries[uid] = friendListEntry{value: cloneFriends(result), expiresAt: now.Add(friendListTTL)}
+	shard.mu.Unlock()
+	return result, nil
 }
 
 func (c *Cache) CountFriends(ctx context.Context, uid uint64) (int, error) {
@@ -136,7 +193,103 @@ func (c *Cache) CountFriends(ctx context.Context, uid uint64) (int, error) {
 }
 
 func (c *Cache) FindUserByUsername(ctx context.Context, username string) (store.UserSearchRow, error) {
-	return c.inner.FindUserByUsername(ctx, username)
+	if c == nil || c.inner == nil {
+		return store.UserSearchRow{}, store.ErrAccountNotFound
+	}
+	now := time.Now()
+	shard := &c.searches[stringShardIndex(username)]
+	shard.mu.Lock()
+	if entry, ok := shard.entries[username]; ok && now.Before(entry.expiresAt) {
+		shard.mu.Unlock()
+		if !entry.found {
+			return store.UserSearchRow{}, store.ErrAccountNotFound
+		}
+		return entry.value, nil
+	}
+	delete(shard.entries, username)
+	shard.mu.Unlock()
+
+	result, err := c.inner.FindUserByUsername(ctx, username)
+	if err != nil && !errors.Is(err, store.ErrAccountNotFound) {
+		return store.UserSearchRow{}, err
+	}
+	entry := userSearchEntry{value: result, found: err == nil, expiresAt: now.Add(userSearchTTL)}
+	if err != nil {
+		entry.expiresAt = now.Add(searchMissTTL)
+	}
+	shard.mu.Lock()
+	if shard.entries == nil {
+		shard.entries = make(map[string]userSearchEntry, c.shardCapacity())
+	}
+	ensureMapCapacityLocked(shard.entries, c.shardCapacity())
+	shard.entries[username] = entry
+	shard.mu.Unlock()
+	return result, err
+}
+
+func cloneFriends(friends []store.FriendRow) []store.FriendRow {
+	return append([]store.FriendRow(nil), friends...)
+}
+
+func ensureMapCapacityLocked[K comparable, V any](entries map[K]V, capacity int) {
+	if len(entries) < capacity {
+		return
+	}
+	for key := range entries {
+		delete(entries, key)
+		return
+	}
+}
+
+func (c *Cache) shardCapacity() int {
+	capacity := c.capacity
+	if capacity <= 0 {
+		capacity = defaultCapacity
+	}
+	capacity = (capacity + cacheShardCount - 1) / cacheShardCount
+	if capacity < 1 {
+		return 1
+	}
+	return capacity
+}
+
+func (c *Cache) deleteFriendList(uid uint64) {
+	shard := &c.lists[uidShardIndex(uid)]
+	shard.mu.Lock()
+	delete(shard.entries, uid)
+	shard.mu.Unlock()
+}
+
+func uidShardIndex(uid uint64) uint64 {
+	uid ^= uid >> 30
+	uid *= 0xbf58476d1ce4e5b9
+	uid ^= uid >> 27
+	uid *= 0x94d049bb133111eb
+	return (uid ^ (uid >> 31)) & (cacheShardCount - 1)
+}
+
+func pairShardIndex(key pairKey) uint64 {
+	return uidShardIndex(key.lo ^ key.hi*0x9e3779b97f4a7c15)
+}
+
+func stringShardIndex(value string) uint64 {
+	hash := uint64(1469598103934665603)
+	for index := 0; index < len(value); index++ {
+		hash ^= uint64(value[index])
+		hash *= 1099511628211
+	}
+	return hash & (cacheShardCount - 1)
+}
+
+func (c *Cache) entryCount() int {
+	total := 0
+	for index := range c.relations {
+		shard := &c.relations[index]
+		shard.mu.Lock()
+		total += len(shard.entries)
+		shard.mu.Unlock()
+	}
+	return total
 }
 
 func (c *Cache) CreateFriendRequest(ctx context.Context, fromUID, toUID uint64) error {

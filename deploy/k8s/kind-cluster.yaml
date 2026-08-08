@@ -1,0 +1,15 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: farm
+
+# Docker Desktop 双副本测试需要 ≥14 CPU / 24Gi（建议至少分配这些资源）。
+# 单副本基线通常可以使用更小的 Docker Desktop 资源。
+nodes:
+  - role: control-plane
+    # 配合 gateway-nodeport.yaml，可把网关 HTTP 暴露到宿主机 9002。
+    extraPortMappings:
+      - containerPort: 30002
+        hostPort: 9002
+        protocol: TCP
+  - role: worker
+  - role: worker

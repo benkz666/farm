@@ -23,7 +23,7 @@ func (connection *wsConnection) installPongHandler(gateway *Gateway, readTimeout
 		if err := connection.conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
 			return err
 		}
-		if gateway != nil && !gateway.renewConnectionLease(context.Background(), connection) {
+		if gateway != nil && !gateway.validateAuthenticatedConnection(context.Background(), connection) {
 			connection.kick(errcode.Kicked)
 		}
 		return nil
@@ -78,13 +78,11 @@ func (connection *wsConnection) runHeartbeat(interval time.Duration) {
 		case <-connection.heartbeatStop:
 			return
 		case <-ticker.C:
-			connection.writeMu.Lock()
 			err := connection.conn.WriteControl(
 				websocket.PingMessage,
 				nil,
 				time.Now().Add(wsWriteTimeout),
 			)
-			connection.writeMu.Unlock()
 			if err != nil {
 				return
 			}

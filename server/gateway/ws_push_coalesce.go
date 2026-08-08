@@ -15,14 +15,19 @@ const (
 	// pushCoalesceWindow gathers a short burst into one WebSocket WriteMessage.
 	pushCoalesceWindow = time.Millisecond
 	// pushBatchMax is the maximum number of push envelopes flushed in one write.
-	// Matches clientwire.MaxPushBatchEnvelopes so a full channel drain stays legal.
-	pushBatchMax = clientwire.MaxPushBatchEnvelopes
+	// Matches the public binary batch limit so a full channel drain stays legal.
+	pushBatchMax = clientwire.MaxBatchEnvelopes
 )
 
 var (
 	errPushClosed    = errors.New("gateway: push writer closed")
 	errPushQueueFull = errors.New("gateway: push queue full")
 )
+
+type wsWriteRequest struct {
+	frame []byte
+	done  chan error
+}
 
 // wsWireWriter is the gorilla WriteMessage seam used by tests to count physical
 // frames without a real WebSocket.
@@ -51,6 +56,10 @@ func (connection *wsConnection) startPushWriter() {
 	}
 	connection.pushStarted = true
 	connection.pushCh = make(chan []byte, pushQueueCapacity)
+	// The read loop has at most one synchronous response outstanding. A small
+	// buffer also admits an asynchronous SessionKick without competing for the
+	// socket write lock.
+	connection.responseCh = make(chan wsWriteRequest, 4)
 	connection.pushStop = make(chan struct{})
 	connection.pushDone = make(chan struct{})
 	if connection.pushCoalesce == 0 {
@@ -118,13 +127,14 @@ func (connection *wsConnection) dropSlowConnection() {
 // queue closed and closes the wire, but must not call closePushWriter (would
 // deadlock waiting on pushDone from inside the writer).
 func (connection *wsConnection) failPushWriter() {
+	connection.setDisconnectReason("push_write_error")
 	connection.markPushClosed()
 	if writer := connection.wire(); writer != nil {
 		_ = writer.Close()
 	}
 }
 
-// enqueuePush schedules one already-encoded push Envelope for coalesced write.
+// enqueuePush schedules one frame-ready binary record for coalesced write.
 // It is O(1) and never waits on WriteMessage / TLS.
 func (connection *wsConnection) enqueuePush(encoded []byte) error {
 	if connection == nil || len(encoded) == 0 {
@@ -148,9 +158,63 @@ func (connection *wsConnection) enqueuePush(encoded []byte) error {
 	case <-stop:
 		return errPushClosed
 	case ch <- encoded:
+		if connection.metrics != nil {
+			connection.metrics.ObserveWSWriteQueueDepth(len(ch) + len(connection.responseCh))
+		}
 		return nil
 	default:
+		connection.setDisconnectReason("push_queue_full")
+		if connection.metrics != nil {
+			connection.metrics.ObserveWSWriteQueueFull()
+		}
 		return errPushQueueFull
+	}
+}
+
+// writeResponse sends one already-framed response through the connection's
+// sole data writer and waits until it reaches the socket. Responses use a
+// priority channel so an old 1ms push coalesce window never inflates request
+// latency. Connections built by focused unit tests without a writer goroutine
+// retain the direct-write fallback.
+func (connection *wsConnection) writeResponse(frame []byte) error {
+	if connection == nil || len(frame) == 0 {
+		return errPushClosed
+	}
+	connection.pushMu.Lock()
+	closed := connection.pushClosed
+	started := connection.pushStarted
+	responses := connection.responseCh
+	stop := connection.pushStop
+	connection.pushMu.Unlock()
+	if !started {
+		connection.writeMu.Lock()
+		defer connection.writeMu.Unlock()
+		return connection.writeEncodedLocked(frame)
+	}
+	if closed || responses == nil {
+		return errPushClosed
+	}
+	request := wsWriteRequest{frame: frame, done: make(chan error, 1)}
+	select {
+	case responses <- request:
+		if connection.metrics != nil {
+			connection.metrics.ObserveWSWriteQueueDepth(len(responses) + len(connection.pushCh))
+		}
+	case <-stop:
+		return errPushClosed
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-stop:
+		// The writer reports a concrete write error before stopping whenever it
+		// accepted this request. Prefer it if already available.
+		select {
+		case err := <-request.done:
+			return err
+		default:
+			return errPushClosed
+		}
 	}
 }
 
@@ -183,17 +247,59 @@ func (connection *wsConnection) runPushWriter() {
 		pending = make([][]byte, 0, pushBatchMax)
 		stopTimer()
 		if err := connection.writePushBatch(batch); err != nil {
+			connection.setDisconnectReason("push_write_error")
+			if connection.metrics != nil {
+				connection.metrics.ObserveWSWriteFailure("push")
+			}
 			connection.failPushWriter()
 			return false
 		}
 		return true
 	}
+	writeResponse := func(request wsWriteRequest) bool {
+		if err := connection.writeEncodedLocked(request.frame); err != nil {
+			connection.setDisconnectReason("response_write_error")
+			if connection.metrics != nil {
+				connection.metrics.ObserveWSWriteFailure("response")
+			}
+			request.done <- err
+			connection.failPushWriter()
+			return false
+		}
+		request.done <- nil
+		return true
+	}
+	drainResponses := func(err error) {
+		for {
+			select {
+			case request := <-connection.responseCh:
+				request.done <- err
+			default:
+				return
+			}
+		}
+	}
+	defer drainResponses(errPushClosed)
 
 	for {
+		// Give request responses priority over push coalescing. This preserves
+		// the previous low-latency behavior while keeping one physical writer.
+		select {
+		case request := <-connection.responseCh:
+			if !writeResponse(request) {
+				return
+			}
+			continue
+		default:
+		}
 		select {
 		case <-connection.pushStop:
 			stopTimer()
 			return
+		case request := <-connection.responseCh:
+			if !writeResponse(request) {
+				return
+			}
 		case msg := <-connection.pushCh:
 			pending = append(pending, msg)
 			if len(pending) >= pushBatchMax {
@@ -214,26 +320,20 @@ func (connection *wsConnection) runPushWriter() {
 	}
 }
 
-// writePushBatch writes one physical WebSocket frame under writeMu.
-// Strategy: a lone envelope is written raw (no 9010 wrapper); two or more are
-// packed with EncodePushBatch so the client expands them in order.
-func (connection *wsConnection) writePushBatch(envelopes [][]byte) error {
-	if len(envelopes) == 0 {
+// writePushBatch writes one physical WebSocket frame under writeMu. Producers
+// already encoded records once, so a connection flush only concatenates bytes.
+func (connection *wsConnection) writePushBatch(records [][]byte) error {
+	if len(records) == 0 {
 		return nil
 	}
-	var (
-		data []byte
-		err  error
-	)
-	if len(envelopes) == 1 {
-		data = envelopes[0]
-	} else {
-		data, err = clientwire.EncodePushBatch(envelopes)
-		if err != nil {
-			return err
-		}
+	pooled := responseEnvelopePool.Get().(*[]byte)
+	buffer := (*pooled)[:0]
+	data, err := clientwire.AppendBinaryRecords(buffer, records)
+	if err != nil {
+		releaseResponseEnvelope(pooled, buffer)
+		return err
 	}
-	connection.writeMu.Lock()
-	defer connection.writeMu.Unlock()
-	return connection.writeEncodedLocked(data)
+	err = connection.writeEncodedLocked(data)
+	releaseResponseEnvelope(pooled, data)
+	return err
 }

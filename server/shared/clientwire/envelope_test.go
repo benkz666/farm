@@ -43,6 +43,46 @@ func TestEncodeFarmDeltaPublicEnvelopeShape(t *testing.T) {
 	}
 }
 
+func TestAppendTrustedEnvelopeMatchesStrictEncoding(t *testing.T) {
+	t.Parallel()
+
+	envelope := Envelope{
+		Cmd:       204,
+		ClientSeq: 17,
+		Err:       errcode.BadRequest,
+		Payload:   json.RawMessage(` {"farm_seq":"9007199254740993"} `),
+	}
+	want, err := EncodeEnvelope(envelope)
+	if err != nil {
+		t.Fatalf("EncodeEnvelope: %v", err)
+	}
+	buffer := make([]byte, 3, 128)
+	copy(buffer, "pre")
+	got, err := AppendTrustedEnvelope(buffer, envelope)
+	if err != nil {
+		t.Fatalf("AppendTrustedEnvelope: %v", err)
+	}
+	if string(got[:3]) != "pre" || !bytes.Equal(got[3:], want) {
+		t.Fatalf("trusted encoding = %q, want prefix + %q", got, want)
+	}
+	if string(want) != `{"cmd":204,"client_seq":17,"err":1002,"payload":{"farm_seq":"9007199254740993"}}` {
+		t.Fatalf("wire shape changed: %s", want)
+	}
+}
+
+func TestEncodeEnvelopeStillRejectsMalformedTrustedShape(t *testing.T) {
+	t.Parallel()
+
+	if _, err := EncodeEnvelope(Envelope{Payload: json.RawMessage(`{"broken":}`)}); err == nil {
+		t.Fatal("EncodeEnvelope accepted malformed JSON")
+	}
+	for _, payload := range []json.RawMessage{nil, json.RawMessage(`[]`), json.RawMessage(`"scalar"`)} {
+		if _, err := AppendTrustedEnvelope(nil, Envelope{Payload: payload}); err == nil {
+			t.Fatalf("AppendTrustedEnvelope accepted payload %q", payload)
+		}
+	}
+}
+
 func TestDecodeFarmDeltaRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -57,64 +97,5 @@ func TestDecodeFarmDeltaRoundTrip(t *testing.T) {
 	}
 	if got.OwnerUID != want.OwnerUID || got.FarmSeq != want.FarmSeq || got.Action != want.Action {
 		t.Fatalf("got %#v, want %#v", got, want)
-	}
-}
-
-func TestEncodePushBatchEmbedsRawEnvelopes(t *testing.T) {
-	t.Parallel()
-
-	first, err := EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
-	if err != nil {
-		t.Fatalf("EncodeFarmDelta first: %v", err)
-	}
-	second, err := EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 2})
-	if err != nil {
-		t.Fatalf("EncodeFarmDelta second: %v", err)
-	}
-	batched, err := EncodePushBatch([][]byte{first, second})
-	if err != nil {
-		t.Fatalf("EncodePushBatch: %v", err)
-	}
-
-	var envelope Envelope
-	if err := json.Unmarshal(batched, &envelope); err != nil {
-		t.Fatalf("unmarshal batch: %v", err)
-	}
-	if envelope.Cmd != CommandPushBatch || envelope.ClientSeq != 0 || envelope.Err != errcode.OK {
-		t.Fatalf("envelope = %#v", envelope)
-	}
-	var payload struct {
-		Envelopes []json.RawMessage `json:"envelopes"`
-	}
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if len(payload.Envelopes) != 2 {
-		t.Fatalf("envelopes len = %d", len(payload.Envelopes))
-	}
-	if !bytes.Equal(payload.Envelopes[0], first) {
-		t.Fatalf("first envelope mutated:\n got %s\nwant %s", payload.Envelopes[0], first)
-	}
-	if !bytes.Equal(payload.Envelopes[1], second) {
-		t.Fatalf("second envelope mutated:\n got %s\nwant %s", payload.Envelopes[1], second)
-	}
-}
-
-func TestEncodePushBatchRejectsSingleOrOverMax(t *testing.T) {
-	t.Parallel()
-
-	one, err := EncodeFarmDelta(farm.FarmDelta{OwnerUID: 1, FarmSeq: 1})
-	if err != nil {
-		t.Fatalf("EncodeFarmDelta: %v", err)
-	}
-	if _, err := EncodePushBatch([][]byte{one}); err == nil {
-		t.Fatal("EncodePushBatch accepted a single envelope")
-	}
-	tooMany := make([][]byte, MaxPushBatchEnvelopes+1)
-	for i := range tooMany {
-		tooMany[i] = one
-	}
-	if _, err := EncodePushBatch(tooMany); err == nil {
-		t.Fatal("EncodePushBatch accepted over-max envelopes")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -14,6 +15,7 @@ import (
 	"farm/server/farmsvr/crossfarm"
 	"farm/server/farmsvr/farmrpc"
 	"farm/server/gateway"
+	"farm/server/gateway/apidocs"
 	"farm/server/shared/friendauth"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
@@ -95,11 +97,12 @@ func run() error {
 	friends := friendauth.NewCache(socialClient)
 	go startFriendInvalidationWatch(ctx, friends, socialClient)
 	crossClient := crossfarm.NewGRPCClient(grpcPool, farmTargets, routes)
+	crossInFlight, err := nonNegativeIntSetting("FARM_CROSS_MAX_IN_FLIGHT", 1024)
+	if err != nil {
+		return err
+	}
 	pushClient := farmrpc.NewGatewayPushClient(grpcPool, gatewayTargets)
-	transport := gateway.New(
-		authService,
-		storage,
-		nil,
+	options := []gateway.Option{
 		gateway.WithFarmRPC(farmrpc.NewGRPCClient(grpcPool, farmTargets), routes),
 		gateway.WithFriendStore(friends),
 		gateway.WithStealHintStore(storage),
@@ -112,9 +115,17 @@ func run() error {
 		)),
 		gateway.WithDebugTimeFanout(grpcPool, farmTargets, gatewayTargets, instanceID),
 		gateway.WithCrossFarmClient(crossClient),
+		gateway.WithCrossInFlightLimit(crossInFlight),
 		gateway.WithMetrics(metrics),
 		gateway.WithTimeProfileSwitch(timeProfiles),
-	)
+	}
+	if servicehost.Getenv("FARM_DISABLE_WS_RATE_LIMIT", "0") == "1" {
+		options = append(options, gateway.WithWSRateLimitDisabled())
+	}
+	if apiDocsEnabled(config.Environment, os.Getenv) {
+		options = append(options, gateway.WithAPIDocs(apidocs.Handler()))
+	}
+	transport := gateway.New(authService, storage, nil, options...)
 	if servicehost.Getenv("FARM_ALLOW_DEBUG_TIME", "0") == "1" {
 		transport.EnableDebugTime()
 	}
@@ -141,6 +152,19 @@ func run() error {
 			return grpcPool.Ready(ctx, targets...)
 		},
 	}).Run(ctx)
+}
+
+func nonNegativeIntSetting(name string, fallback int) (int, error) {
+	raw := servicehost.Getenv(name, strconv.Itoa(fallback))
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("gateway: %s must be a non-negative integer, got %q", name, raw)
+	}
+	return value, nil
+}
+
+func apiDocsEnabled(environment string, getenv func(string) string) bool {
+	return environment == "dev" && strings.TrimSpace(getenv("FARM_ENABLE_API_DOCS")) == "1"
 }
 
 func startFriendInvalidationWatch(ctx context.Context, cache *friendauth.Cache, social *socialapi.GRPCClient) {

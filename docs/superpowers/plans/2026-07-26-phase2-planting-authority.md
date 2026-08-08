@@ -6,7 +6,7 @@
 
 **Architecture:** 在现有 Actor 串行模型上扩展 `farm` 动作 validate/commit；Gateway 增加 PlotAction/Buy/Sell cmd；`item` 表持久化背包仓库；客户端保留本地模式，登录进房后切 online，工具栏改发 WS，成功后再 `applyPatch`。
 
-**Tech Stack:** 现有 Go farm-server、MySQL/Redis、Vue3 + Vite、JSON Envelope（`farm.v1.json`）
+**Tech Stack:** 现有 Go farm-server、MySQL/Redis、Vue3 + Vite、二进制批 Envelope（`farm.v2.bin`）
 
 ## Global Constraints
 

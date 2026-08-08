@@ -88,6 +88,8 @@ func (s *Store) CreateFriendRequest(ctx context.Context, fromUID, toUID uint64) 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("store: commit mutual friend request: %w", err)
 		}
+		s.invalidateMailboxAfterCommit(fromUID)
+		s.invalidateMailboxAfterCommit(toUID)
 		return nil
 	}
 
@@ -197,6 +199,7 @@ func (s *Store) AcceptFriendRequest(ctx context.Context, toUID, fromUID uint64) 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit accept friend request: %w", err)
 	}
+	s.invalidateMailboxAfterCommit(fromUID)
 	return nil
 }
 
@@ -237,6 +240,7 @@ func (s *Store) RejectFriendRequest(ctx context.Context, toUID, fromUID uint64) 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: commit reject friend request: %w", err)
 	}
+	s.invalidateMailboxAfterCommit(fromUID)
 	return nil
 }
 

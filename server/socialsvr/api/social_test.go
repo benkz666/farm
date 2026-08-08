@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"testing"
+	"time"
 
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/grpcx"
@@ -34,6 +35,17 @@ func (stub *friendStoreStub) ListIncomingFriendRequests(context.Context, uint64)
 func (stub *friendStoreStub) AcceptFriendRequest(context.Context, uint64, uint64) error { return nil }
 func (stub *friendStoreStub) RejectFriendRequest(context.Context, uint64, uint64) error { return nil }
 
+type distributedFriendStoreStub struct {
+	*friendStoreStub
+	started chan struct{}
+}
+
+func (stub *distributedFriendStoreStub) WatchFriendInvalidations(ctx context.Context, notify func(uint64, uint64)) {
+	close(stub.started)
+	notify(101, 202)
+	<-ctx.Done()
+}
+
 func TestLargeFriendUIDsRemainDistinct(t *testing.T) {
 	backend := &friendStoreStub{rows: []store.FriendRow{
 		{UID: 9007199254740992, Nickname: "A"},
@@ -52,7 +64,7 @@ func TestLargeFriendUIDsRemainDistinct(t *testing.T) {
 	}
 }
 
-func TestWatchFriendInvalidationsUnimplemented(t *testing.T) {
+func TestWatchFriendInvalidationsStopsWhenContextIsCancelled(t *testing.T) {
 	pair := grpcx.NewBufconnPair(t, "secret", func(server *grpc.Server) {
 		RegisterGRPC(server, &friendStoreStub{})
 	})
@@ -60,11 +72,58 @@ func TestWatchFriendInvalidationsUnimplemented(t *testing.T) {
 	if err != nil {
 		t.Fatalf("conn: %v", err)
 	}
-	stream, err := farmv1.NewSocialServiceClient(conn).WatchFriendInvalidations(context.Background(), &farmv1.UidRequest{Uid: 1})
-	if err == nil {
-		_, recvErr := stream.Recv()
-		if recvErr == nil {
-			t.Fatal("expected unimplemented stream error")
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := farmv1.NewSocialServiceClient(conn).WatchFriendInvalidations(ctx, &farmv1.UidRequest{Uid: 1})
+	if err != nil {
+		t.Fatalf("WatchFriendInvalidations: %v", err)
+	}
+	cancel()
+	if _, recvErr := stream.Recv(); recvErr == nil {
+		t.Fatal("Recv after cancellation unexpectedly succeeded")
+	}
+}
+
+func TestCreateFriendRequestBroadcastsPossibleMutualAcceptInvalidation(t *testing.T) {
+	server := NewGRPCServer(&friendStoreStub{})
+	invalidations, unsubscribe := server.hub.subscribe(0)
+	defer unsubscribe()
+
+	if _, err := server.CreateFriendRequest(t.Context(), &farmv1.PairRequest{Uid: 11, PeerUid: 22}); err != nil {
+		t.Fatalf("CreateFriendRequest: %v", err)
+	}
+	select {
+	case invalidation := <-invalidations:
+		if invalidation.Uid != 11 || invalidation.PeerUid != 22 {
+			t.Fatalf("invalidation = %#v", invalidation)
 		}
+	case <-time.After(time.Second):
+		t.Fatal("CreateFriendRequest did not broadcast invalidation")
+	}
+}
+
+func TestDistributedInvalidationIsForwardedToLocalWatchers(t *testing.T) {
+	backend := &distributedFriendStoreStub{
+		friendStoreStub: &friendStoreStub{},
+		started:         make(chan struct{}),
+	}
+	server := NewGRPCServer(backend)
+	invalidations, unsubscribe := server.hub.subscribe(0)
+	defer unsubscribe()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	server.StartDistributedInvalidations(ctx)
+
+	select {
+	case <-backend.started:
+	case <-time.After(time.Second):
+		t.Fatal("distributed invalidation watcher did not start")
+	}
+	select {
+	case invalidation := <-invalidations:
+		if invalidation.Uid != 101 || invalidation.PeerUid != 202 {
+			t.Fatalf("invalidation = %#v", invalidation)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("distributed invalidation was not forwarded")
 	}
 }

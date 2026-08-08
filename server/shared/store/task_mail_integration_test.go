@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -112,6 +113,67 @@ func TestTaskStoreCreditsRewardsExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestConcurrentColdTaskListIsReadOnly(t *testing.T) {
+	const accountCount = 96
+
+	s := newTestStore(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	uidBase := testUID(t)
+	dayKey := gameconfig.LocalDayKey(time.Now().UnixMilli())
+
+	// Account creation is deliberately sequential and outside the concurrent
+	// section. The assertion targets ListTasks' cold daily-task transaction, not
+	// registration throughput.
+	for index := 0; index < accountCount; index++ {
+		uid := uidBase + uint64(index)
+		username := "ti_" + strconv.FormatUint(uid, 10)
+		if err := s.SaveAccount(ctx, uid, username, "hash"); err != nil {
+			t.Fatalf("SaveAccount(%d): %v", uid, err)
+		}
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, accountCount)
+	var wait sync.WaitGroup
+	for index := 0; index < accountCount; index++ {
+		uid := uidBase + uint64(index)
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			tasks, err := s.ListTasks(ctx, uid, dayKey)
+			if err != nil {
+				errs <- fmt.Errorf("ListTasks(%d): %w", uid, err)
+				return
+			}
+			if len(tasks) != 1+store.RandomDailyTaskCount {
+				errs <- fmt.Errorf("ListTasks(%d) returned %d tasks", uid, len(tasks))
+			}
+		}()
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Error(err)
+	}
+
+	db := openIntegrationMySQL(t)
+	var persisted int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM player_task
+		WHERE uid >= ? AND uid < ? AND logic_day = ?`,
+		uidBase, uidBase+accountCount, dayKey,
+	).Scan(&persisted); err != nil {
+		t.Fatalf("count cold task rows: %v", err)
+	}
+	if persisted != 0 {
+		t.Fatalf("cold ListTasks persisted %d rows, want zero writes", persisted)
+	}
+}
+
 func TestLegacyDailyLoginBlocksTaskAndLegacyClaims(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -158,11 +220,15 @@ func TestLegacyDailyLoginBlocksTaskAndLegacyClaims(t *testing.T) {
 }
 
 func TestTask4ResetsOnNextLocalDayAndSharesClaimState(t *testing.T) {
+	s := newTestStore(t)
+
+	// Open the database before installing a synthetic fixed-zone clock. The
+	// MySQL driver's loc=Local parser expects an IANA location name, while the
+	// fixed zone is intentionally named only for this business-day assertion.
 	originalLocal := time.Local
 	time.Local = time.FixedZone("UTC+8", 8*60*60)
 	t.Cleanup(func() { time.Local = originalLocal })
 
-	s := newTestStore(t)
 	ctx := context.Background()
 	uid := testUID(t)
 	if err := s.SaveAccount(ctx, uid, "day_"+strconv.FormatUint(uid, 10), "hash"); err != nil {
@@ -386,8 +452,10 @@ func TestLegacyFourTaskBoardIsReconciledToLatestDefinition(t *testing.T) {
 	).Scan(&persistedCount); err != nil {
 		t.Fatalf("count reconciled task rows: %v", err)
 	}
-	if persistedCount != 1+store.RandomDailyTaskCount {
-		t.Fatalf("persisted reconciled task count = %d, want %d", persistedCount, 1+store.RandomDailyTaskCount)
+	// ListTasks 只返回按当前配置合成的规范视图，不在读取路径改写旧数据。
+	// 下一次 Advance/Claim 会经 ensureDailyTasks 幂等完成物化与清理。
+	if persistedCount != 4 {
+		t.Fatalf("persisted task count after read = %d, want unchanged legacy rows", persistedCount)
 	}
 }
 

@@ -94,7 +94,7 @@ farm/
 | --- | --- |
 | Go | 1.22+ |
 | 前端 | **Vite** 打包；**Vue 3** 作为 UI 框架；three.js 场景继续由独立模块承载（可从现有 `farm3d.js` 迁入） |
-| 序列化 | Schema 用 Protobuf；期 1 传输 **JSON**（`farm.v1.json`） |
+| 序列化 | `farm.v2.bin` 二进制批帧，payload 使用严格 JSON 对象 |
 | 本地依赖 | `docker compose` 启动 Redis 7、MySQL 8 |
 | 配置 | 环境变量，见第 8 节 |
 
