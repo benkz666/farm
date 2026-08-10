@@ -268,7 +268,7 @@ func runPlanting(baseURL string) error {
 		return fmt.Errorf("harvest: %w", err)
 	}
 	fruitKey := string(farm.FruitItem(1))
-	yield := harvest.Patch.Warehouse[fruitKey]
+	yield := harvest.Patch.WarehouseChanges[fruitKey]
 	if yield == 0 {
 		return fmt.Errorf("harvest yielded 0 fruit")
 	}
@@ -289,7 +289,7 @@ func runPlanting(baseURL string) error {
 	if sell.Patch.Coin != wantCoin {
 		return fmt.Errorf("coin after sell = %d, want %d", sell.Patch.Coin, wantCoin)
 	}
-	if sell.Patch.Warehouse[fruitKey] != 0 {
+	if sell.Patch.WarehouseChanges[fruitKey] != 0 {
 		return fmt.Errorf("warehouse still has fruit after sell")
 	}
 	return nil

@@ -101,6 +101,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	writeInFlight, err := nonNegativeIntSetting("FARM_WRITE_MAX_IN_FLIGHT", 512)
+	if err != nil {
+		return err
+	}
 	pushClient := farmrpc.NewGatewayPushClient(grpcPool, gatewayTargets)
 	options := []gateway.Option{
 		gateway.WithFarmRPC(farmrpc.NewGRPCClient(grpcPool, farmTargets), routes),
@@ -116,6 +120,7 @@ func run() error {
 		gateway.WithDebugTimeFanout(grpcPool, farmTargets, gatewayTargets, instanceID),
 		gateway.WithCrossFarmClient(crossClient),
 		gateway.WithCrossInFlightLimit(crossInFlight),
+		gateway.WithWriteInFlightLimit(writeInFlight),
 		gateway.WithMetrics(metrics),
 		gateway.WithTimeProfileSwitch(timeProfiles),
 	}

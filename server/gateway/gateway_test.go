@@ -1405,18 +1405,23 @@ func TestSearchUserIsLimitedByConnectionLimiter(t *testing.T) {
 			Payload:   json.RawMessage(`{"client_time":0}`),
 		})
 	}
-	writeEnvelopes(t, conn, requests)
-	for range requests {
-		if got := readEnvelope(t, conn); got.Err != errcode.OK {
-			t.Fatalf("Ping response = %#v", got)
-		}
-	}
-
-	writeEnvelope(t, conn, Envelope{
+	// Put the limited request in the same frame as the burst. Reading all ping
+	// responses first gives the real-time token bucket enough time to refill
+	// under -race, making the assertion scheduler-dependent.
+	requests = append(requests, Envelope{
 		Cmd:       CommandSearchUser,
 		ClientSeq: connectionBurst + 1,
 		Payload:   json.RawMessage(`{"username":"alice"}`),
 	})
+	writeEnvelopes(t, conn, requests)
+	for index := range requests {
+		if index == len(requests)-1 {
+			break
+		}
+		if got := readEnvelope(t, conn); got.Err != errcode.OK {
+			t.Fatalf("Ping response = %#v", got)
+		}
+	}
 	if got := readEnvelope(t, conn); got.Cmd != CommandSearchUser || got.ClientSeq != connectionBurst+1 || got.Err != errcode.RateLimited {
 		t.Fatalf("SearchUser rate-limit response = %#v", got)
 	}
@@ -1706,7 +1711,7 @@ func TestGatewayFarmRPCSharesTask4ClaimsAcrossLocalDays(t *testing.T) {
 	}
 }
 
-func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
+func TestGatewayReservesCrossActionThroughTypedCrossRPC(t *testing.T) {
 	routes, err := sharding.ParseRouteTable([]byte(`{
 		"logical_shards": 1024,
 		"routes": [{"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}]
@@ -1714,7 +1719,7 @@ func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse route table: %v", err)
 	}
-	eventBus := noopCrossClient{}
+	eventBus := &recordingCrossClient{}
 	friends := newFriendStoreStub()
 	friends.add(7, 42)
 	client := &farmRPCStub{responses: []farmrpc.CommandResponse{{Err: errcode.OK}}}
@@ -1736,8 +1741,11 @@ func TestGatewayReservesCrossActionThroughVisitorFarmRPC(t *testing.T) {
 	if response.Cmd != 0 {
 		t.Fatalf("cross response = %#v, want deferred response", response)
 	}
-	if len(client.calls) != 1 || client.calls[0].request.Operation != farmrpc.OperationCrossReserve {
-		t.Fatalf("RPC calls = %#v, want CrossReserve", client.calls)
+	if eventBus.reserveCalls != 1 {
+		t.Fatalf("typed cross reserve calls = %d, want 1", eventBus.reserveCalls)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("generic Farm RPC calls = %#v, want none", client.calls)
 	}
 	gateway.crossPending.Range(func(key, value any) bool {
 		value.(*crossPending).timer.Stop()
@@ -3009,6 +3017,10 @@ type crossOwnerBridge struct {
 	owner *crossfarm.Owner
 }
 
+func (bridge *crossOwnerBridge) ReserveCrossVisitor(context.Context, crossfarm.CrossAction, uint32) (errcode.Code, error) {
+	return errcode.OK, nil
+}
+
 func (bridge *crossOwnerBridge) ApplyCrossAction(ctx context.Context, action crossfarm.CrossAction) (crossfarm.CrossResult, error) {
 	if bridge == nil || bridge.owner == nil {
 		return crossfarm.CrossResult{}, errors.New("cross owner bridge is nil")
@@ -3020,12 +3032,45 @@ func (bridge *crossOwnerBridge) AcknowledgeCrossResult(context.Context, uint64, 
 	return nil
 }
 
+func (bridge *crossOwnerBridge) DeliverCrossResult(context.Context, crossfarm.CrossResult) (crossfarm.VisitorReward, *farm.PlayerDelta, errcode.Code, error) {
+	return crossfarm.VisitorReward{}, nil, errcode.Internal, errors.New("cross bridge settle is unavailable")
+}
+
 type noopCrossClient struct{}
+
+func (noopCrossClient) ReserveCrossVisitor(context.Context, crossfarm.CrossAction, uint32) (errcode.Code, error) {
+	return errcode.OK, nil
+}
 
 func (noopCrossClient) ApplyCrossAction(context.Context, crossfarm.CrossAction) (crossfarm.CrossResult, error) {
 	return crossfarm.CrossResult{}, errors.New("noop cross apply")
 }
 
 func (noopCrossClient) AcknowledgeCrossResult(context.Context, uint64, uint64, uint64) error {
+	return nil
+}
+
+func (noopCrossClient) DeliverCrossResult(context.Context, crossfarm.CrossResult) (crossfarm.VisitorReward, *farm.PlayerDelta, errcode.Code, error) {
+	return crossfarm.VisitorReward{}, nil, errcode.Internal, errors.New("noop cross settle")
+}
+
+type recordingCrossClient struct {
+	reserveCalls int
+}
+
+func (client *recordingCrossClient) ReserveCrossVisitor(context.Context, crossfarm.CrossAction, uint32) (errcode.Code, error) {
+	client.reserveCalls++
+	return errcode.OK, nil
+}
+
+func (*recordingCrossClient) ApplyCrossAction(context.Context, crossfarm.CrossAction) (crossfarm.CrossResult, error) {
+	return crossfarm.CrossResult{}, errors.New("stop after reserve")
+}
+
+func (*recordingCrossClient) DeliverCrossResult(context.Context, crossfarm.CrossResult) (crossfarm.VisitorReward, *farm.PlayerDelta, errcode.Code, error) {
+	return crossfarm.VisitorReward{}, nil, errcode.Internal, errors.New("unused")
+}
+
+func (*recordingCrossClient) AcknowledgeCrossResult(context.Context, uint64, uint64, uint64) error {
 	return nil
 }

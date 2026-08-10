@@ -544,8 +544,9 @@ func (s *benchScenario) replant() error {
 		if err != nil {
 			return fmt.Errorf("收获地块 %d: %w", idx, err)
 		}
-		// Patch 里的 warehouse 是全量快照，最后一次收获的那份即为总数。
-		fruitOnHand = patch.Patch.Warehouse[fruitKey]
+		// warehouse_changes carries the authoritative final count for the
+		// harvested key, so the last harvest still yields the current total.
+		fruitOnHand = patch.Patch.WarehouseChanges[fruitKey]
 		harvested = true
 	}
 	if harvested && fruitOnHand > 0 {

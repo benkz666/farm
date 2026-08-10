@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 
@@ -123,6 +126,44 @@ func TestGRPCClientExecute(t *testing.T) {
 	}
 	if response.Err != errcode.Internal {
 		t.Fatalf("response.Err = %d, want %d", response.Err, errcode.Internal)
+	}
+}
+
+func TestGRPCActionReturnsPreparedPublicProtobuf(t *testing.T) {
+	handler := NewHandler(
+		runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+	)
+	client := newCommandTestClient(t, handler, func(uid uint64) bool { return uid == 42 })
+	response, err := client.Execute(t.Context(), "farm-0", CommandRequest{
+		Operation:     OperationPlotAction,
+		FarmUID:       42,
+		ClientCommand: 206,
+		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0},
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if response.Err != errcode.OK || response.PreparedField != clientwire.PreparedCommandResponse || len(response.PreparedPayload) == 0 {
+		t.Fatalf("response=%#v", response)
+	}
+	if response.ClientResponse != nil || len(response.Payload) != 0 {
+		t.Fatalf("prepared response carried duplicate representations: %#v", response)
+	}
+	frame, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{{
+		Cmd:             206,
+		ClientSeq:       9,
+		PreparedPayload: response.PreparedPayload,
+		PreparedField:   response.PreparedField,
+	}})
+	if err != nil {
+		t.Fatalf("encode public frame: %v", err)
+	}
+	decoded, err := clientwire.DecodeBinaryBatch(frame)
+	if err != nil || len(decoded) != 1 || decoded[0].CommandResponse == nil || decoded[0].CommandResponse.Action == nil {
+		t.Fatalf("decoded=%#v err=%v", decoded, err)
 	}
 }
 
@@ -288,10 +329,12 @@ func TestGRPCDeltaPusherDeliverBatch(t *testing.T) {
 		farmv1.RegisterGatewayPushServiceServer(server, stub)
 	})
 	pusher := NewGRPCDeltaPusher(NewGatewayPushClient(pair.Pool, map[string]string{"gateway-0": "bufconn"}))
-	envelope := []byte(`{"cmd":9000,"client_seq":0,"err":0,"payload":{"owner_uid":"42","farm_seq":"1","plots":[]}}`)
 	if err := pusher.PushBatch(context.Background(), "gateway-0", PushBatch{
-		ConnIDs:  []uint64{7, 8},
-		Envelope: envelope,
+		ConnIDs: []uint64{7, 8},
+		Delta: clientwire.FarmDeltaToProto(farm.FarmDelta{
+			OwnerUID: 42,
+			FarmSeq:  1,
+		}),
 	}); err != nil {
 		t.Fatalf("PushBatch: %v", err)
 	}

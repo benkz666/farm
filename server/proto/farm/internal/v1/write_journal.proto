@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package farm.internal.v1;
+
+option go_package = "farm/server/gen/farm/v1;farmv1";
+
+// FarmWriteMutation is the durable, incremental Farm write-ahead record.
+// It intentionally contains database projection fields instead of a JSON
+// Aggregate snapshot so gameplay acknowledgement does not clone or encode the
+// complete farm.
+message FarmWriteMutation {
+  uint64 uid = 1;
+  uint64 farm_seq = 2;
+  uint32 player_mask = 3;
+
+  string nickname = 4;
+  uint32 level = 5;
+  uint32 exp = 6;
+  int64 coin = 7;
+  uint32 unlocked_plots = 8;
+  bytes codex_bitmap = 9;
+  bytes daily_json = 10;
+  bytes pet_json = 11;
+  bytes cross_pending_json = 12;
+  bytes cross_receipt_json = 13;
+
+  repeated FarmWritePlot plots = 20;
+  repeated FarmWriteItem items = 21;
+  bool replace_items = 22;
+  repeated FarmWriteCodex codex = 23;
+  bool replace_codex = 24;
+
+  repeated FarmWriteOutbox outbox = 30;
+  repeated FarmWriteTaskAdvance task_advances = 31;
+  repeated FarmWriteCodexReward codex_rewards = 32;
+}
+
+message FarmWritePlot {
+  uint32 index = 1;
+  uint32 state = 2;
+  uint32 season_index = 3;
+  uint32 season_total = 4;
+  uint32 stage_count = 5;
+  uint32 fert_mask = 6;
+  uint32 weed_next_win = 7;
+  uint32 pest_next_win = 8;
+  uint32 crop_id = 9;
+  uint32 final_yield = 10;
+  uint32 stolen_count = 11;
+  uint32 plant_nonce = 12;
+  uint32 harvest_round = 13;
+  int64 season_start_at = 14;
+  int64 season_duration = 15;
+  int64 mature_at = 16;
+  int64 last_settle_at = 17;
+  int64 last_water_at = 18;
+  int64 weed_since = 19;
+  int64 pest_since = 20;
+  int64 accrued_weighted = 21;
+  repeated uint64 stealers = 22;
+}
+
+message FarmWriteItem {
+  string key = 1;
+  uint32 count = 2;
+}
+
+message FarmWriteCodex {
+  uint32 crop_id = 1;
+  uint32 harvest_count = 2;
+}
+
+message FarmWriteOutbox {
+  string event_id = 1;
+  uint64 producer_uid = 2;
+  uint64 target_uid = 3;
+  string kind = 4;
+  bytes payload = 5;
+}
+
+message FarmWriteTaskAdvance {
+  int64 day_key = 1;
+  uint32 task_id = 2;
+  uint32 amount = 3;
+}
+
+message FarmWriteCodexReward {
+  uint32 crop_id = 1;
+  uint32 harvest_count = 2;
+}

@@ -14,10 +14,12 @@ import (
 	"farm/server/farmsvr/crossfarm"
 	"farm/server/farmsvr/room"
 	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientjson"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
+	"farm/server/shared/outbox"
 	"farm/server/shared/store"
 	"farm/server/shared/telemetry"
 )
@@ -44,24 +46,28 @@ const (
 	OperationCodexList    Operation = "codex_list"
 )
 
-// CommandRequest is the HTTP JSON payload sent from a Gateway to the Farm
-// authoritative for FarmUID. The Gateway authenticates the player first.
+// CommandRequest is the transport-neutral command sent from Gateway to the
+// Farm authoritative for FarmUID. ClientRequest is the production typed path;
+// Payload remains for maintenance commands and in-process tests.
 type CommandRequest struct {
-	Operation      Operation        `json:"operation"`
-	FarmUID        uint64           `json:"farm_uid"`
-	Originator     presence.ConnRef `json:"originator,omitempty"`
-	Payload        json.RawMessage  `json:"payload,omitempty"`
-	PreferPrepared bool             `json:"-"`
+	Operation      Operation                `json:"operation"`
+	FarmUID        uint64                   `json:"farm_uid"`
+	Originator     presence.ConnRef         `json:"originator,omitempty"`
+	Payload        json.RawMessage          `json:"payload,omitempty"`
+	PreferPrepared bool                     `json:"-"`
+	ClientCommand  uint32                   `json:"-"`
+	ClientRequest  *publicv3.CommandRequest `json:"-"`
 }
 
 // CommandResponse preserves protocol-level errors inside a successful internal
 // request so a Gateway can return the same error code to its client.
 type CommandResponse struct {
-	Err             errcode.Code    `json:"err"`
-	Payload         json.RawMessage `json:"payload"`
-	FarmSeq         uint64          `json:"farm_seq,omitempty"`
-	PreparedPayload []byte          `json:"-"`
-	PreparedField   uint32          `json:"-"`
+	Err             errcode.Code              `json:"err"`
+	Payload         json.RawMessage           `json:"payload"`
+	FarmSeq         uint64                    `json:"farm_seq,omitempty"`
+	PreparedPayload []byte                    `json:"-"`
+	PreparedField   uint32                    `json:"-"`
+	ClientResponse  *publicv3.CommandResponse `json:"-"`
 }
 
 // EnterFarmResponse is the Farm-owned portion of an EnterFarm response.
@@ -209,6 +215,7 @@ type Handler struct {
 	mailClaimer          MailClaimer
 	codexRewards         store.CodexRewardStore
 	mailNotifyPublisher  MailNotifyPublisher
+	bundleJournalEffects bool
 	advanceScheduler     *farmAdvanceScheduler
 }
 
@@ -330,6 +337,15 @@ func WithMailClaimer(claimer MailClaimer) Option {
 func WithCodexRewardStore(rewards store.CodexRewardStore) Option {
 	return func(handler *Handler) {
 		handler.codexRewards = rewards
+	}
+}
+
+// WithBundledJournalSideEffects puts task/codex side effects in the same
+// durable Farm mutation record. Enable only when the configured Farm store is
+// backed by FarmWriteJournal; transactional test stores keep the legacy path.
+func WithBundledJournalSideEffects() Option {
+	return func(handler *Handler) {
+		handler.bundleJournalEffects = true
 	}
 }
 
@@ -555,7 +571,17 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 
 func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 	var request PlotActionRequest
-	if err := decodeJSON(bytes.NewReader(command.Payload), &request); err != nil ||
+	var decodeErr error
+	if command.ClientRequest != nil {
+		kind, ok := plotActionKindForCommand(command.ClientCommand)
+		if !ok {
+			return CommandResponse{Err: errcode.BadRequest}
+		}
+		request = PlotActionRequest{OwnerUID: command.ClientRequest.OwnerUid, PlotIndex: command.ClientRequest.PlotIndex, Arg: command.ClientRequest.Arg, Kind: kind, Command: command.ClientCommand}
+	} else {
+		decodeErr = decodeJSON(bytes.NewReader(command.Payload), &request)
+	}
+	if decodeErr != nil ||
 		(request.OwnerUID != 0 && request.OwnerUID != command.FarmUID) ||
 		request.PlotIndex > 255 || request.Arg > 0xFFFF ||
 		request.Kind < farm.Till || request.Kind > farm.Harvest {
@@ -585,26 +611,45 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			}
 		}
 		if farmActor.Aggregate.FarmSeq != beforeFarmSeq {
-			includeItems := request.Kind == farm.Till || request.Kind == farm.Clear ||
-				request.Kind == farm.Plant || request.Kind == farm.Fertilize ||
-				request.Kind == farm.Harvest
+			includeItems := len(result.Patch.Items) != 0
+			farmActor.RecordItemCounts(result.Patch.Items)
 			farmActor.MarkPlotDirty(
 				uint8(request.PlotIndex), includeItems, request.Kind == farm.Harvest,
 			)
+			plots := make([]farm.PlotChange, 0, 1)
+			if response.Patch.Plot != nil {
+				// Reuse the one authoritative plot projection produced for the
+				// response instead of projecting the same Aggregate row again.
+				plots = append(plots, farm.PlotChange(*response.Patch.Plot))
+			}
 			emitted := farm.FarmDelta{
 				OwnerUID: command.FarmUID,
 				FarmSeq:  farmActor.Aggregate.FarmSeq,
-				Plots: []farm.PlotChange{plotChange(
-					uint8(request.PlotIndex),
-					farmActor.Aggregate.Plots[request.PlotIndex],
-				)},
+				Plots:    plots,
 				ActorUID: command.FarmUID,
 				Action:   request.Command,
 			}
 			farmActor.Deltas.Append(emitted)
 			delta = &emitted
-			stealable = farmActor.Aggregate.HasStealable()
-			refreshHint = true
+			// Water/weed/pest/fertilize cannot change whether a mature crop is
+			// stealable. Only Harvest can remove that eligibility on this local
+			// action path; maturity transitions are handled by the scheduler.
+			if request.Kind == farm.Harvest {
+				stealable = farmActor.Aggregate.HasStealable()
+				refreshHint = true
+			}
+		}
+		if result.Err == errcode.OK && h.bundleJournalEffects {
+			if taskID := gameplayTaskID(request.Kind); taskID != 0 && h.taskProgress != nil {
+				farmActor.RecordTaskAdvance(outbox.TaskAdvance{
+					DayKey: gameconfig.LocalDayKey(h.now()), TaskID: taskID, Amount: 1,
+				})
+			}
+			if response.Patch.Codex != nil && h.codexRewards != nil {
+				farmActor.RecordCodexChange(response.Patch.Codex.CropID)
+				farmActor.RecordCodexReward(*response.Patch.Codex)
+				response.CodexRewards = store.PreviewCodexRewardNotices(*response.Patch.Codex)
+			}
 		}
 		h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
 		return nil
@@ -618,7 +663,7 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
-	if result.Err == errcode.OK {
+	if result.Err == errcode.OK && !h.bundleJournalEffects {
 		if response.Patch.Codex != nil && h.codexRewards != nil {
 			rewards, rewardErr := h.codexRewards.IssueCodexRewards(context.Background(), command.FarmUID, *response.Patch.Codex)
 			if rewardErr != nil {
@@ -647,7 +692,20 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			)
 		}
 	}
-	return CommandResponse{Err: result.Err, Payload: marshalPayload(response), FarmSeq: uint64(response.FarmSeq)}
+	resultResponse := CommandResponse{Err: result.Err, FarmSeq: uint64(response.FarmSeq)}
+	if command.ClientRequest != nil {
+		clientResponse := clientwire.NewActionCommandResponse(uint64(response.FarmSeq), response.Patch, response.CodexRewards)
+		prepared, err := clientwire.MarshalCommandResponsePayload(clientResponse)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		resultResponse.ClientResponse = clientResponse
+		resultResponse.PreparedPayload = prepared
+		resultResponse.PreparedField = clientwire.PreparedCommandResponse
+	} else {
+		resultResponse.Payload = marshalPayload(response)
+	}
+	return resultResponse
 }
 
 func (h *Handler) codexList(command CommandRequest) CommandResponse {
@@ -675,7 +733,16 @@ func (h *Handler) codexList(command CommandRequest) CommandResponse {
 
 func (h *Handler) shop(command CommandRequest) CommandResponse {
 	var request ShopRequest
-	if err := decodeJSON(bytes.NewReader(command.Payload), &request); err != nil ||
+	var decodeErr error
+	if command.ClientRequest != nil {
+		if command.ClientCommand != 302 && command.ClientCommand != 304 {
+			return CommandResponse{Err: errcode.BadRequest}
+		}
+		request = ShopRequest{Buy: command.ClientCommand == 302, ItemID: command.ClientRequest.ItemId, Quantity: command.ClientRequest.Quantity, Command: command.ClientCommand}
+	} else {
+		decodeErr = decodeJSON(bytes.NewReader(command.Payload), &request)
+	}
+	if decodeErr != nil ||
 		request.ItemID > 0xFFFF {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
@@ -701,6 +768,12 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			// The committer preserves per-UID ordering and batches this reduced
 			// economy write with other shop operations.
 			farmActor.RequireEconomyFlush()
+			farmActor.RecordItemCounts(result.Patch.Items)
+			if !request.Buy && h.bundleJournalEffects && h.taskProgress != nil {
+				farmActor.RecordTaskAdvance(outbox.TaskAdvance{
+					DayKey: gameconfig.LocalDayKey(h.now()), TaskID: store.TaskSellID, Amount: 1,
+				})
+			}
 			response = ActionResponse{
 				FarmSeq: clientjson.Uint64(farmActor.Aggregate.FarmSeq),
 				Patch:   farmActor.Aggregate.PatchFromAction(result),
@@ -724,7 +797,7 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: result.Err}
 	}
 	h.publishDelta(delta, command.Originator)
-	if !request.Buy {
+	if !request.Buy && !h.bundleJournalEffects {
 		if err := h.advanceSellTask(command.FarmUID); err != nil {
 			telemetry.L().Error("farmrpc advance sell task failed",
 				"component", "farmrpc",
@@ -733,7 +806,43 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			)
 		}
 	}
-	return CommandResponse{Err: errcode.OK, Payload: marshalPayload(response), FarmSeq: uint64(response.FarmSeq)}
+	resultResponse := CommandResponse{Err: errcode.OK, FarmSeq: uint64(response.FarmSeq)}
+	if command.ClientRequest != nil {
+		clientResponse := clientwire.NewActionCommandResponse(uint64(response.FarmSeq), response.Patch, response.CodexRewards)
+		prepared, err := clientwire.MarshalCommandResponsePayload(clientResponse)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		resultResponse.ClientResponse = clientResponse
+		resultResponse.PreparedPayload = prepared
+		resultResponse.PreparedField = clientwire.PreparedCommandResponse
+	} else {
+		resultResponse.Payload = marshalPayload(response)
+	}
+	return resultResponse
+}
+
+func plotActionKindForCommand(command uint32) (farm.PlotActionKind, bool) {
+	switch command {
+	case 206:
+		return farm.Till, true
+	case 208:
+		return farm.Clear, true
+	case 210:
+		return farm.Plant, true
+	case 212:
+		return farm.Water, true
+	case 214:
+		return farm.Weed, true
+	case 216:
+		return farm.Pest, true
+	case 218:
+		return farm.Fertilize, true
+	case 220:
+		return farm.Harvest, true
+	default:
+		return 0, false
+	}
 }
 
 func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
@@ -883,7 +992,8 @@ func (h *Handler) pet(command CommandRequest) CommandResponse {
 			result.Err = errcode.BadRequest
 		}
 		if farmActor.Aggregate.FarmSeq != beforeFarmSeq {
-			farmActor.MarkDirty()
+			farmActor.RecordItemCounts(result.Patch.Items)
+			farmActor.RequireEconomyFlush()
 			guardDog := farm.GuardDogSnapshotOf(farmActor.Aggregate.Pet)
 			emitted := farm.FarmDelta{
 				OwnerUID: command.FarmUID,
@@ -956,6 +1066,10 @@ func (h *Handler) crossSettle(command CommandRequest) CommandResponse {
 		}
 		now := h.now()
 		response.Reward, response.PlayerDelta, code = crossfarm.SettleVisitor(farmActor.Aggregate, result, now)
+		if result.CropID != 0 {
+			key := farm.FruitItem(result.CropID)
+			farmActor.RecordItemCounts(map[farm.ItemKey]uint32{key: farmActor.Aggregate.Items[key]})
+		}
 		// 重投看到 Timeout 也可能只是前一次 commit 结果不确定，仍需 durable barrier。
 		farmActor.RequireCrossVisitorFlush(true)
 		telemetry.L().Debug("farmrpc cross settle",
@@ -1131,7 +1245,7 @@ func (h *Handler) claimTask(command CommandRequest, taskID uint32, dailyLoginCom
 		// 低频例外：ClaimTask 在 Actor 锁内先写 MySQL 再同步内存，保证「DB 已增、内存随后一致」。
 		// 移出 Actor 需独立 outbox/saga，与跨农场热路径 QPS 无关，本轮保留。
 		farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp)
-		farmActor.MarkDirty()
+		farmActor.RequireFlush()
 		playerDelta = farmActor.Aggregate.PlayerDelta()
 		return nil
 	}); err != nil {
@@ -1170,7 +1284,7 @@ func (h *Handler) dailyLoginClaim(command CommandRequest) CommandResponse {
 			return nil
 		}
 		farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp)
-		farmActor.MarkDirty()
+		farmActor.RequireFlush()
 		playerDelta = farmActor.Aggregate.PlayerDelta()
 		return nil
 	}); err != nil {
@@ -1204,7 +1318,7 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 		}
 		// 低频例外：ClaimMail 在 Actor 锁内先写 MySQL 再同步内存，保证附件入账一致。
 		farmActor.Aggregate.CreditMailReward(mail.AttachmentCoin)
-		farmActor.MarkDirty()
+		farmActor.RequireFlush()
 		playerDelta = farmActor.Aggregate.PlayerDelta()
 		return nil
 	}); err != nil {
@@ -1241,23 +1355,8 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 	if h.taskProgress == nil {
 		return nil
 	}
-	var taskID uint32
-	switch kind {
-	case farm.Plant:
-		taskID = store.TaskPlantID
-	case farm.Harvest:
-		taskID = store.TaskHarvestID
-	case farm.Water:
-		taskID = store.TaskWaterID
-	case farm.Fertilize:
-		taskID = store.TaskFertilizeID
-	case farm.Till:
-		taskID = store.TaskTillID
-	case farm.Weed:
-		taskID = store.TaskWeedID
-	case farm.Pest:
-		taskID = store.TaskPestID
-	default:
+	taskID := gameplayTaskID(kind)
+	if taskID == 0 {
 		return nil
 	}
 	dayKey := gameconfig.LocalDayKey(h.now())
@@ -1269,6 +1368,27 @@ func (h *Handler) advanceGameplayTask(uid uint64, kind farm.PlotActionKind) erro
 		h.publishTaskNotify(uid, result.Task)
 	}
 	return nil
+}
+
+func gameplayTaskID(kind farm.PlotActionKind) uint32 {
+	switch kind {
+	case farm.Plant:
+		return store.TaskPlantID
+	case farm.Harvest:
+		return store.TaskHarvestID
+	case farm.Water:
+		return store.TaskWaterID
+	case farm.Fertilize:
+		return store.TaskFertilizeID
+	case farm.Till:
+		return store.TaskTillID
+	case farm.Weed:
+		return store.TaskWeedID
+	case farm.Pest:
+		return store.TaskPestID
+	default:
+		return 0
+	}
 }
 
 func (h *Handler) advanceSellTask(uid uint64) error {
@@ -1362,18 +1482,23 @@ func (h *Handler) publishDelta(delta *farm.FarmDelta, originator presence.ConnRe
 	if delta == nil || h.deltaPublisher == nil {
 		return
 	}
-	publisher := h.deltaPublisher
-	emitted := *delta
-	go func() {
-		// Delta delivery is best effort; SyncFarm recovers a missed callback.
-		if err := publisher.Publish(context.Background(), emitted, originator); err != nil {
+	publish := func() {
+		if err := h.deltaPublisher.Publish(context.Background(), *delta, originator); err != nil {
 			telemetry.L().Error("farmrpc delta publish failed",
 				"component", "farmrpc",
 				"op", "publish_delta",
 				"err", err.Error(),
 			)
 		}
-	}()
+	}
+	// Production installs AsyncDeltaPublisher, so the direct call only queues
+	// a detached value. Compatibility publishers may perform network I/O and
+	// retain the old fire-and-forget behavior.
+	if _, ok := h.deltaPublisher.(interface{ publishesAsynchronously() }); ok {
+		publish()
+		return
+	}
+	go publish()
 }
 
 func (h *Handler) writeStealHint(uid uint64, hasStealable bool) {

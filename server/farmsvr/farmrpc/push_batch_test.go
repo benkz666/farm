@@ -1,6 +1,7 @@
 package farmrpc
 
 import (
+	"reflect"
 	"sort"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/gateway/presence"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/telemetry"
 )
 
@@ -44,7 +46,9 @@ func TestFanoutPublisherBatchesSameGatewayOnce(t *testing.T) {
 	if !equalUint64(gotIDs, []uint64{1, 2, 3}) {
 		t.Fatalf("conn_ids = %#v, want [1 2 3]", gotIDs)
 	}
-	assertFarmDeltaEnvelope(t, batches[0].batch.Envelope, delta)
+	if got := clientwire.FarmDeltaFromProto(batches[0].batch.Delta); !reflect.DeepEqual(got, delta) {
+		t.Fatalf("typed FarmDelta = %#v, want %#v", got, delta)
+	}
 }
 
 func TestFanoutPublisherBatchesAcrossTwoGateways(t *testing.T) {

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"farm/server/domain/farm"
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/outbox"
 	"farm/server/shared/telemetry"
@@ -26,19 +28,74 @@ func (s *Store) SaveFarms(ctx context.Context, snapshots []*farm.Aggregate) erro
 
 // CommitFarms persists snapshots and outbox rows atomically.
 func (s *Store) CommitFarms(ctx context.Context, commits []outbox.FarmCommit) error {
+	if err := s.MaterializeFarmCommits(ctx, commits); err != nil {
+		return err
+	}
+	snapshots := make([]*farm.Aggregate, 0, len(commits))
+	for _, commit := range commits {
+		if commit.Snapshot != nil {
+			snapshots = append(snapshots, commit.Snapshot)
+		}
+	}
+	if err := s.cacheFarmsPipeline(ctx, snapshots); err != nil {
+		logFarmCacheFailure("cache_committed_farms_pipeline", snapshots, err)
+		s.invalidateFarmCaches(snapshots)
+	}
+	return nil
+}
+
+// MaterializeFarmCommits writes journaled farm state to MySQL without touching
+// the Redis read cache. The write-journal projector calls this method and only
+// publishes a cache snapshot after the MySQL transaction succeeds. Keeping the
+// cache update outside the transaction prevents an older projected event from
+// overwriting a newer snapshot that is already present in the journal.
+func (s *Store) MaterializeFarmCommits(ctx context.Context, commits []outbox.FarmCommit) error {
 	if s == nil {
 		return errors.New("store: nil store")
 	}
 	if len(commits) == 0 {
 		return nil
 	}
+	for _, commit := range commits {
+		if commit.Mutation != nil {
+			if commit.Mutation.Uid == 0 {
+				return errors.New("store: invalid farm mutation")
+			}
+			continue
+		}
+		if commit.Snapshot == nil || commit.Snapshot.UID == 0 {
+			return errors.New("store: invalid farm commit")
+		}
+	}
+	mutations := make([]*farmv1.FarmWriteMutation, 0, len(commits))
+	legacy := make([]outbox.FarmCommit, 0, len(commits))
+	for _, commit := range commits {
+		if commit.Mutation != nil {
+			mutations = append(mutations, commit.Mutation)
+		} else {
+			legacy = append(legacy, commit)
+		}
+	}
+	if len(mutations) > 0 {
+		if err := s.MaterializeFarmMutations(ctx, mutations); err != nil {
+			return err
+		}
+	}
+	if len(legacy) == 0 {
+		return nil
+	}
+	commits = legacy
+	// Every projector transaction acquires row locks in the same UID order.
+	// Without this, concurrent journal shards can lock adjacent player/item rows
+	// in opposite orders and turn a high-throughput batch into repeated 1213s.
+	commits = append([]outbox.FarmCommit(nil), commits...)
+	sort.Slice(commits, func(left, right int) bool {
+		return commits[left].Snapshot.UID < commits[right].Snapshot.UID
+	})
 	fullSnapshots := make([]*farm.Aggregate, 0, len(commits))
 	var fullOutbox []outbox.Event
 	specialized := make([]outbox.FarmCommit, 0, len(commits))
 	for _, commit := range commits {
-		if commit.Snapshot == nil {
-			return errors.New("store: invalid farm commit")
-		}
 		if commit.Plan.Mode == outbox.PersistFull ||
 			(commit.Plan.Mode != outbox.PersistCrossOwner && len(commit.Outbox) > 0) {
 			fullSnapshots = append(fullSnapshots, commit.Snapshot)
@@ -51,21 +108,10 @@ func (s *Store) CommitFarms(ctx context.Context, commits []outbox.FarmCommit) er
 		if err := s.saveFarmsToMySQL(ctx, fullSnapshots, fullOutbox); err != nil {
 			return err
 		}
-		if err := s.cacheFarmsPipeline(ctx, fullSnapshots); err != nil {
-			logFarmCacheFailure("cache_farms_pipeline", fullSnapshots, err)
-		}
 	}
 	if len(specialized) > 0 {
 		if err := s.saveSpecializedFarmCommits(ctx, specialized); err != nil {
 			return err
-		}
-		snapshots := make([]*farm.Aggregate, 0, len(specialized))
-		for _, commit := range specialized {
-			snapshots = append(snapshots, commit.Snapshot)
-		}
-		if err := s.cacheFarmsPipeline(ctx, snapshots); err != nil {
-			logFarmCacheFailure("cache_specialized_farms_pipeline", snapshots, err)
-			s.invalidateFarmCaches(snapshots)
 		}
 	}
 	return nil
@@ -92,6 +138,26 @@ func (s *Store) invalidateFarmCaches(snapshots []*farm.Aggregate) {
 		telemetry.L().Error("store farm cache invalidation failed",
 			"component", "store", "op", "invalidate_specialized_farms", "err", err.Error())
 	}
+}
+
+func (s *Store) invalidateFarmCacheUIDs(ctx context.Context, uids []uint64) error {
+	if s == nil || s.rdb == nil || len(uids) == 0 {
+		return nil
+	}
+	pipe := s.rdb.Pipeline()
+	seen := make(map[uint64]struct{}, len(uids))
+	for _, uid := range uids {
+		if uid == 0 {
+			continue
+		}
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		pipe.Del(ctx, farmKey(uid))
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // SaveEconomy persists the subset mutated by Buy/Sell. It deliberately avoids
@@ -258,7 +324,11 @@ func (s *Store) saveSpecializedFarmCommits(ctx context.Context, commits []outbox
 		}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	// Projectors update current materialized state and never depend on a
+	// repeatable snapshot. READ COMMITTED avoids InnoDB next-key/gap locks for
+	// absent inventory rows, which otherwise deadlock concurrent UID batches
+	// even after every transaction sorts its explicit row locks identically.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return fmt.Errorf("store: begin specialized farm tx: %w", err)
 	}
@@ -329,7 +399,7 @@ func (s *Store) saveSpecializedFarmCommits(ctx context.Context, commits []outbox
 }
 
 func (s *Store) saveFarmsToMySQL(ctx context.Context, snapshots []*farm.Aggregate, outboxEvents []outbox.Event) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return fmt.Errorf("store: begin save farms tx: %w", err)
 	}
@@ -503,40 +573,24 @@ func batchReplaceItemsTx(ctx context.Context, tx *sql.Tx, uids []uint64, snapsho
 	if len(uids) == 0 {
 		return nil
 	}
-	placeholders := make([]string, len(uids))
-	args := make([]any, len(uids))
-	for i, uid := range uids {
-		placeholders[i] = "?"
-		args[i] = uid
-	}
-	deleteQuery := "DELETE FROM item WHERE uid IN (" + strings.Join(placeholders, ",") + ")"
-	if _, err := tx.ExecContext(ctx, deleteQuery, args...); err != nil {
-		return fmt.Errorf("store: batch delete item: %w", err)
-	}
-
-	insertValues := make([]string, 0)
-	insertArgs := make([]any, 0)
-	for _, agg := range snapshots {
-		for key, count := range agg.Items {
-			if count == 0 {
-				continue
-			}
-			kind, itemID, err := ParseItemKey(key)
-			if err != nil {
-				return fmt.Errorf("store: parse item key %q uid %d: %w", key, agg.UID, err)
-			}
-			insertValues = append(insertValues, "(?, ?, ?, ?)")
-			insertArgs = append(insertArgs, agg.UID, kind, itemID, count)
+	mutations := make([]*farmv1.FarmWriteMutation, 0, len(uids))
+	for index, uid := range uids {
+		if index >= len(snapshots) || snapshots[index] == nil || snapshots[index].UID != uid {
+			return errors.New("store: item snapshot count does not match UID count")
 		}
+		agg := snapshots[index]
+		mutation := &farmv1.FarmWriteMutation{Uid: uid, ReplaceItems: true}
+		keys := make([]farm.ItemKey, 0, len(agg.Items))
+		for key := range agg.Items {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
+		for _, key := range keys {
+			mutation.Items = append(mutation.Items, &farmv1.FarmWriteItem{Key: string(key), Count: agg.Items[key]})
+		}
+		mutations = append(mutations, mutation)
 	}
-	if len(insertValues) == 0 {
-		return nil
-	}
-	insertQuery := "INSERT INTO item (uid, kind, item_id, count) VALUES " + strings.Join(insertValues, ",")
-	if _, err := tx.ExecContext(ctx, insertQuery, insertArgs...); err != nil {
-		return fmt.Errorf("store: batch insert item: %w", err)
-	}
-	return nil
+	return materializeMutationItems(ctx, tx, mutations)
 }
 
 func (s *Store) cacheFarmsPipeline(ctx context.Context, snapshots []*farm.Aggregate) error {

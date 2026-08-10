@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
+	"farm/server/domain/farm"
 	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 
 	"google.golang.org/grpc/codes"
@@ -281,21 +285,62 @@ func (server *CommandServer) execute(request *farmv1.ExecuteRequest) *farmv1.Exe
 	if !ok {
 		return &farmv1.ExecuteResponse{Err: int32(errcode.BadRequest)}
 	}
-	response := server.handler.Execute(CommandRequest{
+	command := CommandRequest{
 		Operation:      operation,
 		FarmUID:        request.FarmUid,
 		Originator:     connRefFromProto(request.Originator),
 		Payload:        json.RawMessage(request.PayloadJson),
 		PreferPrepared: request.PreferPrepared,
-	})
+	}
+	if request.ClientCommand != nil {
+		if request.ClientCommand.Command == 0 || request.ClientCommand.Request == nil {
+			return &farmv1.ExecuteResponse{Err: int32(errcode.BadRequest)}
+		}
+		if !clientCommandMatchesOperation(operation, request.ClientCommand.Command) ||
+			clientwire.ValidateCommandRequest(request.ClientCommand.Command, request.ClientCommand.Request) != nil {
+			return &farmv1.ExecuteResponse{Err: int32(errcode.BadRequest)}
+		}
+		command.ClientCommand = request.ClientCommand.Command
+		command.ClientRequest = request.ClientCommand.Request
+		if !isHotActionCommand(command.ClientCommand) {
+			payload, err := legacyClientPayload(operation, command.ClientCommand, command.ClientRequest)
+			if err != nil {
+				return &farmv1.ExecuteResponse{Err: int32(errcode.BadRequest)}
+			}
+			command.Payload = payload
+		}
+	}
+	response := server.handler.Execute(command)
 	payloadJSON := response.Payload
 	preparedPayload := response.PreparedPayload
 	preparedField := response.PreparedField
-	if request.PreferPrepared && len(preparedPayload) > 0 {
+	preparedCommand := len(preparedPayload) > 0 && preparedField == clientwire.PreparedCommandResponse
+	if preparedCommand {
+		payloadJSON = nil
+	} else if request.PreferPrepared && len(preparedPayload) > 0 {
 		payloadJSON = nil
 	} else {
 		preparedPayload = nil
 		preparedField = 0
+	}
+	clientResponse := response.ClientResponse
+	if request.ClientCommand != nil && operation != OperationEnterFarm && operation != OperationSyncFarm {
+		if preparedCommand {
+			// The public CommandResponse has already been encoded exactly once by
+			// the Farm handler; do not make gRPC decode and Gateway re-encode it.
+			clientResponse = nil
+		} else if clientResponse == nil {
+			if response.Err != errcode.OK {
+				clientResponse = &publicv3.CommandResponse{}
+			} else {
+				var err error
+				clientResponse, err = clientwire.CommandResponseFromJSON(request.ClientCommand.Command, response.Payload)
+				if err != nil {
+					return &farmv1.ExecuteResponse{Err: int32(errcode.Internal)}
+				}
+			}
+		}
+		payloadJSON = nil
 	}
 	return &farmv1.ExecuteResponse{
 		Err:             int32(response.Err),
@@ -303,6 +348,73 @@ func (server *CommandServer) execute(request *farmv1.ExecuteRequest) *farmv1.Exe
 		FarmSeq:         response.FarmSeq,
 		PreparedPayload: preparedPayload,
 		PreparedField:   preparedField,
+		ClientResponse:  clientResponse,
+	}
+}
+
+func clientCommandMatchesOperation(operation Operation, command uint32) bool {
+	switch operation {
+	case OperationEnterFarm:
+		return command == 200
+	case OperationSyncFarm:
+		return command == 204
+	case OperationPlotAction:
+		return command >= 206 && command <= 220 && command%2 == 0
+	case OperationShop:
+		return command == 302 || command == 304
+	case OperationPet:
+		return command == 500 || command == 502 || command == 504
+	case OperationTaskList:
+		return command == 600
+	case OperationTaskClaim:
+		return command == 602
+	case OperationMailList:
+		return command == 604
+	case OperationMailRead:
+		return command == 606
+	case OperationMailClaim:
+		return command == 608
+	case OperationMailDelete:
+		return command == 610
+	case OperationCodexList:
+		return command == 612
+	case OperationDailyLogin:
+		return command == 614
+	default:
+		return false
+	}
+}
+
+func legacyClientPayload(operation Operation, command uint32, request *publicv3.CommandRequest) (json.RawMessage, error) {
+	if request == nil {
+		return nil, errors.New("farmrpc: nil typed request")
+	}
+	switch operation {
+	case OperationEnterFarm, OperationTaskList, OperationMailList, OperationDailyLogin, OperationCodexList:
+		return json.RawMessage(`{}`), nil
+	case OperationSyncFarm:
+		return marshalPayload(SyncFarmRequest{FromSeq: request.FromSeq}), nil
+	case OperationPet:
+		value := PetRequest{}
+		switch command {
+		case 500:
+			value.Kind = PetStatus
+		case 502:
+			value.Kind, value.DogType = PetActivate, farm.DogType(request.DogType)
+		case 504:
+			value.Kind, value.Grams = PetFeed, request.Grams
+		default:
+			return nil, errors.New("farmrpc: invalid pet command")
+		}
+		return marshalPayload(value), nil
+	case OperationTaskClaim:
+		return marshalPayload(TaskClaimRequest{TaskID: request.TaskId}), nil
+	case OperationMailRead, OperationMailDelete:
+		return marshalPayload(MailMutationRequest{MailID: request.MailId, All: request.All}), nil
+	case OperationMailClaim:
+		return marshalPayload(MailClaimRequest{MailID: request.MailId}), nil
+	default:
+		return nil, fmt.Errorf("farmrpc: operation %s has no typed public payload", operation)
 	}
 }
 

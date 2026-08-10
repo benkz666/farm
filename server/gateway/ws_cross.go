@@ -9,9 +9,9 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/crossfarm"
-	"farm/server/farmsvr/farmrpc"
 	"farm/server/farmsvr/room"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/telemetry"
@@ -22,7 +22,9 @@ import (
 
 // CrossFarmClient applies owner adjudication and acknowledges outbox over typed gRPC.
 type CrossFarmClient interface {
+	ReserveCrossVisitor(ctx context.Context, action crossfarm.CrossAction, dayID uint32) (errcode.Code, error)
 	ApplyCrossAction(ctx context.Context, action crossfarm.CrossAction) (crossfarm.CrossResult, error)
+	DeliverCrossResult(ctx context.Context, result crossfarm.CrossResult) (crossfarm.VisitorReward, *farm.PlayerDelta, errcode.Code, error)
 	AcknowledgeCrossResult(ctx context.Context, ownerUID, visitorUID, reqID uint64) error
 }
 
@@ -116,7 +118,13 @@ func (g *Gateway) handleVisitorMutualAid(connection *wsConnection, request Envel
 	}
 
 	var payload plotActionRequest
-	if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PlotIndex > 255 || payload.Arg != 0 {
+	var decodeErr error
+	if request.CommandRequest != nil {
+		payload = plotActionRequest{OwnerUID: clientjson.UID(request.CommandRequest.OwnerUid), PlotIndex: request.CommandRequest.PlotIndex, Arg: request.CommandRequest.Arg}
+	} else {
+		decodeErr = unmarshalPayload(request.Payload, &payload)
+	}
+	if decodeErr != nil || payload.PlotIndex > 255 || payload.Arg != 0 {
 		response.Err = errcode.BadRequest
 		return response
 	}
@@ -153,7 +161,13 @@ func (g *Gateway) handleVisitorSteal(connection *wsConnection, request Envelope)
 	}
 
 	var payload stealRequest
-	if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PlotIndex > 255 || payload.CropID > 0xFFFF {
+	var decodeErr error
+	if request.CommandRequest != nil {
+		payload = stealRequest{OwnerUID: clientjson.UID(request.CommandRequest.OwnerUid), PlotIndex: request.CommandRequest.PlotIndex, CropID: request.CommandRequest.CropId}
+	} else {
+		decodeErr = unmarshalPayload(request.Payload, &payload)
+	}
+	if decodeErr != nil || payload.PlotIndex > 255 || payload.CropID > 0xFFFF {
 		response.Err = errcode.BadRequest
 		return response
 	}
@@ -321,7 +335,10 @@ func (g *Gateway) finishCrossResult(result crossfarm.CrossResult) {
 		Payload:   emptyPayload,
 	}
 	if code == errcode.OK || (pending.steal && code == errcode.StealIntercepted) {
-		response.Payload = marshalPayload(reward)
+		response.CommandResponse = clientwire.NewVisitorRewardCommandResponse(
+			reward.ReqID, reward.ExpGained, reward.CoinGained, uint32(reward.CropID),
+			uint32(reward.Amount), reward.Compensation, uint32(reward.DogType),
+		)
 	}
 	_ = pending.connection.respond(response)
 }
@@ -344,14 +361,14 @@ func (g *Gateway) reserveCrossVisitor(action crossfarm.CrossAction, dayID uint32
 		}
 		return code
 	}
-	remote, err := g.executeFarmRPC(context.Background(), action.VisitorUID, farmrpc.CommandRequest{
-		Operation: farmrpc.OperationCrossReserve,
-		Payload:   marshalPayload(reservation),
-	})
+	if g.crossClient == nil {
+		return errcode.Internal
+	}
+	code, err := g.crossClient.ReserveCrossVisitor(context.Background(), action, dayID)
 	if err != nil {
 		return errcode.Internal
 	}
-	return remote.Err
+	return code
 }
 
 func (g *Gateway) settleCrossVisitor(
@@ -374,20 +391,14 @@ func (g *Gateway) settleCrossVisitor(
 		}
 		return reward, playerDelta, code
 	}
-	remote, err := g.executeFarmRPC(context.Background(), result.VisitorUID, farmrpc.CommandRequest{
-		Operation: farmrpc.OperationCrossSettle,
-		Payload:   marshalPayload(result),
-	})
+	if g.crossClient == nil {
+		return crossfarm.VisitorReward{ReqID: result.ReqID}, nil, errcode.Internal
+	}
+	reward, playerDelta, code, err := g.crossClient.DeliverCrossResult(context.Background(), result)
 	if err != nil {
 		return crossfarm.VisitorReward{ReqID: result.ReqID}, nil, errcode.Internal
 	}
-	var response farmrpc.CrossSettleResponse
-	if len(remote.Payload) > 0 {
-		if err := unmarshalPayload(remote.Payload, &response); err != nil {
-			return crossfarm.VisitorReward{ReqID: result.ReqID}, nil, errcode.Internal
-		}
-	}
-	return response.Reward, response.PlayerDelta, remote.Err
+	return reward, playerDelta, code
 }
 
 func (g *Gateway) ackCrossResult(result crossfarm.CrossResult) {

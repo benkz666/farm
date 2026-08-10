@@ -28,9 +28,25 @@ type Event struct {
 // FarmCommit bundles one immutable snapshot with durable outbox events that must
 // land in the same MySQL transaction.
 type FarmCommit struct {
-	Snapshot *farm.Aggregate
-	Outbox   []Event
-	Plan     PersistPlan
+	Snapshot     *farm.Aggregate
+	Mutation     *farmv1.FarmWriteMutation
+	Outbox       []Event
+	TaskAdvances []TaskAdvance
+	CodexRewards []CodexReward
+	Plan         PersistPlan
+}
+
+// TaskAdvance and CodexReward ride in the same durable Redis record as the
+// authoritative Farm mutation. This keeps one gameplay command at one XADD
+// barrier while the MySQL projector still applies each side effect idempotently.
+type TaskAdvance struct {
+	DayKey int64  `json:"day_key"`
+	TaskID uint32 `json:"task_id"`
+	Amount uint32 `json:"amount"`
+}
+
+type CodexReward struct {
+	Progress farm.CodexProgress `json:"progress"`
 }
 
 // PersistMode identifies the smallest safe row set for one aggregate commit.
@@ -48,11 +64,17 @@ const (
 // PersistPlan travels through the Actor committer so reduced writes preserve
 // the same per-UID ordering and batching guarantees as full snapshots.
 type PersistPlan struct {
-	Mode         PersistMode
+	Mode PersistMode
+	// Modes retains the exact union when legacy plan.Mode has to fall back to
+	// PersistFull. Incremental Protobuf projection can still update only the
+	// combined row set.
+	Modes        uint32
 	PlotIndex    uint8
 	IncludeItems bool
 	IncludeCodex bool
 }
+
+func PersistModeMask(mode PersistMode) uint32 { return 1 << uint32(mode) }
 
 func CrossResultEventID(ownerUID, visitorUID, reqID uint64) string {
 	return fmt.Sprintf("cross_result:%d:%d:%d", ownerUID, visitorUID, reqID)

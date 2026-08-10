@@ -11,6 +11,7 @@ import (
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/farmrpc"
 	"farm/server/farmsvr/room"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientjson"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
@@ -58,7 +59,9 @@ func (g *Gateway) handleEnterFarmCore(connection *wsConnection, request Envelope
 		Payload:   emptyPayload,
 	}
 	var payload enterFarmRequest
-	if err := unmarshalPayload(request.Payload, &payload); err != nil {
+	if request.EnterFarmRequest != nil {
+		payload.OwnerUID = clientjson.UID(request.EnterFarmRequest.OwnerUid)
+	} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
 		response.Err = errcode.BadRequest
 		return response
 	}
@@ -80,6 +83,8 @@ func (g *Gateway) handleEnterFarmCore(connection *wsConnection, request Envelope
 			Operation:      farmrpc.OperationEnterFarm,
 			Originator:     g.connectionRef(connection),
 			PreferPrepared: relation == "SELF" && wireFields != nil,
+			ClientCommand:  request.Cmd,
+			ClientRequest:  &publicv3.CommandRequest{},
 		})
 		if err != nil {
 			g.leaveFarm(connection)
@@ -239,7 +244,10 @@ func (g *Gateway) handleSyncFarmCore(connection *wsConnection, request Envelope,
 		Payload:   emptyPayload,
 	}
 	var payload syncFarmRequest
-	if err := unmarshalPayload(request.Payload, &payload); err != nil {
+	if request.SyncFarmRequest != nil {
+		payload.OwnerUID = clientjson.UID(request.SyncFarmRequest.OwnerUid)
+		payload.FromSeq = clientjson.Uint64(request.SyncFarmRequest.FromSeq)
+	} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
 		response.Err = errcode.BadRequest
 		return response
 	}
@@ -277,6 +285,8 @@ func (g *Gateway) handleSyncFarmCore(connection *wsConnection, request Envelope,
 			Originator:     g.connectionRef(connection),
 			Payload:        marshalPayload(farmrpc.SyncFarmRequest{FromSeq: uint64(payload.FromSeq)}),
 			PreferPrepared: relation == "SELF" && wireFields != nil,
+			ClientCommand:  request.Cmd,
+			ClientRequest:  &publicv3.CommandRequest{FromSeq: uint64(payload.FromSeq)},
 		})
 		if err != nil {
 			response.Err = errcode.Internal

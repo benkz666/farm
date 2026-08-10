@@ -73,11 +73,14 @@ type PlotAction struct {
 // 期 2 Gateway 再决定序列化字段；领域层先填齐内存可见变更。
 type ActionPatch struct {
 	PlotIndex uint8
-	Plot      Plot
+	Plot      *Plot
 	Coin      int64
 	Exp       uint32
-	Items     map[ItemKey]uint32
-	Codex     *CodexProgress
+	// Items contains authoritative final counts only for keys changed by this
+	// action. A zero count is an explicit deletion. It is not a full inventory
+	// snapshot, which keeps hot write responses proportional to the mutation.
+	Items map[ItemKey]uint32
+	Codex *CodexProgress
 }
 
 // ActionResult 是 validate/commit 的统一返回。
@@ -337,18 +340,18 @@ func (a *Aggregate) commitTill(idx uint8, work *Plot) ActionResult {
 	a.Plots[idx] = Plot{State: StateTilled}
 	a.Exp += 3
 	a.RecalcLevel()
-	a.grantHiddenSeed()
+	itemKey := a.grantHiddenSeed()
 	a.FarmSeq++
-	return a.okPatch(idx)
+	return a.withItemCounts(a.okPatch(idx), itemKey)
 }
 
 func (a *Aggregate) commitClear(idx uint8, work *Plot) ActionResult {
 	a.Plots[idx] = Plot{State: StateTilled}
 	a.Exp += 3
 	a.RecalcLevel()
-	a.grantHiddenSeed()
+	itemKey := a.grantHiddenSeed()
 	a.FarmSeq++
-	return a.okPatch(idx)
+	return a.withItemCounts(a.okPatch(idx), itemKey)
 }
 
 // commitUproot removes a growing crop without refunding its seed or awarding
@@ -394,7 +397,7 @@ func (a *Aggregate) commitPlant(idx uint8, work *Plot, cropID uint16, now int64,
 	a.Exp += 2
 	a.RecalcLevel()
 	a.FarmSeq++
-	return a.okPatch(idx)
+	return a.withItemCounts(a.okPatch(idx), seedKey)
 }
 
 func (a *Aggregate) commitWater(idx uint8, work *Plot, now int64) ActionResult {
@@ -517,7 +520,7 @@ func (a *Aggregate) commitFertilize(idx uint8, work *Plot, fertilizerID uint16, 
 	a.advancePlot(work, now, idx)
 	a.Plots[idx] = *work
 	a.FarmSeq++
-	return a.okPatch(idx)
+	return a.withItemCounts(a.okPatch(idx), key)
 }
 
 func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64, timeProfile string) ActionResult {
@@ -533,8 +536,10 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64, timeProfile 
 	} else {
 		yield -= work.StolenCount
 	}
+	var itemKey ItemKey
 	if yield > 0 {
-		a.Items[FruitItem(cropID)] += uint32(yield)
+		itemKey = FruitItem(cropID)
+		a.Items[itemKey] += uint32(yield)
 	}
 	a.Exp += crop.HarvestExp
 	a.RecalcLevel()
@@ -551,7 +556,7 @@ func (a *Aggregate) commitHarvest(idx uint8, work *Plot, now int64, timeProfile 
 		}
 	}
 	a.FarmSeq++
-	result := a.okPatch(idx)
+	result := a.withItemCounts(a.okPatch(idx), itemKey)
 	result.Patch.Codex = &codex
 	return result
 }
@@ -628,10 +633,10 @@ func secureRandomBelow(limit uint32) (uint32, error) {
 // grantHiddenSeed performs the documented 3% roll after a successful till or
 // clear. Failure to obtain entropy degrades to no drop; the completed farm
 // action remains valid and, importantly, never awards an unverified item.
-func (a *Aggregate) grantHiddenSeed() {
+func (a *Aggregate) grantHiddenSeed() ItemKey {
 	roll, err := hiddenSeedRandom(hiddenSeedDropChanceDenominator)
 	if err != nil || roll >= hiddenSeedDropThreshold {
-		return
+		return ""
 	}
 
 	eligible := make([]uint16, 0, 3)
@@ -642,28 +647,43 @@ func (a *Aggregate) grantHiddenSeed() {
 		}
 	}
 	if len(eligible) == 0 {
-		return
+		return ""
 	}
 
 	choice, err := hiddenSeedRandom(uint32(len(eligible)))
 	if err != nil {
-		return
+		return ""
 	}
-	a.AddItem(SeedItem(eligible[choice]), 1)
+	key := SeedItem(eligible[choice])
+	a.AddItem(key, 1)
+	return key
 }
 
 func (a *Aggregate) patchOf(idx uint8) ActionPatch {
-	items := make(map[ItemKey]uint32, len(a.Items))
-	for k, v := range a.Items {
-		items[k] = v
-	}
+	plot := clonePlot(a.Plots[idx])
 	return ActionPatch{
 		PlotIndex: idx,
-		Plot:      clonePlot(a.Plots[idx]),
+		Plot:      &plot,
 		Coin:      a.Coin,
 		Exp:       a.Exp,
-		Items:     items,
 	}
+}
+
+func (a *Aggregate) resourcePatch() ActionPatch {
+	return ActionPatch{Coin: a.Coin, Exp: a.Exp}
+}
+
+func (a *Aggregate) withItemCounts(result ActionResult, keys ...ItemKey) ActionResult {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if result.Patch.Items == nil {
+			result.Patch.Items = make(map[ItemKey]uint32, len(keys))
+		}
+		result.Patch.Items[key] = a.Items[key]
+	}
+	return result
 }
 
 // clonePlot 深拷贝可变切片，避免 ActionPatch 逃出 Actor 串行区后与地块共享底层数组。

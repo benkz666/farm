@@ -45,6 +45,10 @@ var (
 	// safety ceiling. Refusing a new cold load is preferable to letting the
 	// cgroup OOM killer terminate every resident farm on the instance.
 	ErrCapacity = errors.New("actor: resident capacity reached")
+
+	requestResultPool = sync.Pool{New: func() any {
+		return make(chan error, 1)
+	}}
 )
 
 // FarmStore 是 Actor 所需的最小持久化边界。
@@ -52,6 +56,10 @@ var (
 type FarmStore interface {
 	LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, error)
 	SaveFarm(ctx context.Context, aggregate *farm.Aggregate) error
+}
+
+type incrementalFarmStore interface {
+	SupportsIncrementalFarmCommits() bool
 }
 
 type commitAck struct {
@@ -62,7 +70,7 @@ type commitAck struct {
 // Runtime 管理本进程驻留的玩家 Actor。
 type Runtime struct {
 	store         FarmStore
-	committer     *Committer
+	committers    []*Committer
 	idleTTL       time.Duration
 	flushInterval time.Duration
 	callTimeout   time.Duration
@@ -117,21 +125,47 @@ func NewRuntime(store FarmStore, idleTTL time.Duration) *Runtime {
 		ioTimeout:     DefaultIOTimeout,
 		actors:        make(map[uint64]*residentActor),
 	}
-	r.committer = NewCommitter(asBatchStore(store), defaultCommitterConfig())
+	r.committers = []*Committer{NewCommitter(asBatchStore(store), defaultCommitterConfig())}
 	return r
 }
 
 // SetCommitter 注入组提交器，供测试使用。必须在首次 Do 之前调用。
 func (r *Runtime) SetCommitter(c *Committer) {
-	if r == nil || r.committer == c {
+	if r == nil || len(r.committers) == 1 && r.committers[0] == c {
 		return
 	}
-	if r.committer != nil {
-		// 该方法约定在首次 Do 前调用，此时旧 committer 没有业务队列，
-		// 可以同步关闭，避免测试注入时泄漏构造函数启动的 goroutine。
-		_ = r.committer.Shutdown(context.Background())
+	for _, committer := range r.committers {
+		if committer != nil {
+			// 该方法约定在首次 Do 前调用，此时旧 committer 没有业务队列，
+			// 可以同步关闭，避免测试注入时泄漏构造函数启动的 goroutine。
+			_ = committer.Shutdown(context.Background())
+		}
 	}
-	r.committer = c
+	r.committers = []*Committer{c}
+}
+
+// SetCommitterShards replaces the single global durable queue with independent
+// UID-affine queues. Per-UID ordering is preserved while Redis pipeline waits
+// on one shard no longer stall unrelated actors. Call before the first Do.
+func (r *Runtime) SetCommitterShards(shards int) {
+	if r == nil {
+		return
+	}
+	if shards <= 0 {
+		shards = 1
+	}
+	for _, committer := range r.committers {
+		if committer != nil {
+			_ = committer.Shutdown(context.Background())
+		}
+	}
+	r.committers = make([]*Committer, shards)
+	for shard := range r.committers {
+		r.committers[shard] = NewCommitter(asBatchStore(r.store), defaultCommitterConfig())
+		if r.metrics != nil {
+			r.committers[shard].SetMetrics(r.metrics)
+		}
+	}
 }
 
 // SetFlushInterval 覆盖写回间隔，供测试与压测调参使用。非正值恢复默认。
@@ -188,8 +222,10 @@ func (r *Runtime) SetMetrics(m *telemetry.Metrics) {
 		return
 	}
 	r.metrics = m
-	if r.committer != nil {
-		r.committer.SetMetrics(m)
+	for _, committer := range r.committers {
+		if committer != nil {
+			committer.SetMetrics(m)
+		}
 	}
 }
 
@@ -206,10 +242,15 @@ func (r *Runtime) Do(uid uint64, fn func(*FarmActor) error) error {
 		return errors.New("actor: callback is nil")
 	}
 
-	req := request{
-		fn:     fn,
-		result: make(chan error, 1),
+	resultCh := requestResultPool.Get().(chan error)
+	// A pooled channel is returned only after its sole response was received;
+	// drain defensively so future refactors cannot leak a stale result.
+	select {
+	case <-resultCh:
+	default:
 	}
+	defer requestResultPool.Put(resultCh)
+	req := request{fn: fn, result: resultCh}
 	deadline := time.NewTimer(r.callTimeout)
 	defer deadline.Stop()
 
@@ -230,7 +271,7 @@ func (r *Runtime) Do(uid uint64, fn func(*FarmActor) error) error {
 		select {
 		case resident.mailbox <- req:
 			resident.waiters.Add(-1)
-			return <-req.result
+			return <-resultCh
 		case <-resident.done:
 			resident.waiters.Add(-1)
 		case <-deadline.C:
@@ -277,12 +318,15 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("actor: shutdown incomplete: %w", ctx.Err())
 	}
 
-	if r.committer != nil {
-		if err := r.committer.Shutdown(ctx); err != nil {
-			return err
+	var shutdownErrors []error
+	for _, committer := range r.committers {
+		if committer != nil {
+			if err := committer.Shutdown(ctx); err != nil {
+				shutdownErrors = append(shutdownErrors, err)
+			}
 		}
 	}
-	return nil
+	return errors.Join(shutdownErrors...)
 }
 
 func (a *residentActor) stop() {
@@ -365,6 +409,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			}
 			generation++
 			actor.stampOutboxGeneration(generation)
+			actor.stampSideEffectGeneration(generation)
 			actor.stampPersistGeneration(generation)
 			needSyncFlush := actor.syncFlush
 			if needSyncFlush {
@@ -394,6 +439,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			if ack.generation > committedGen {
 				committedGen = ack.generation
 				actor.ackOutbox(committedGen)
+				actor.ackSideEffects(committedGen)
 				actor.ackPersistPlan(committedGen)
 			}
 
@@ -413,6 +459,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			}
 			committedGen = generation
 			actor.ackOutbox(committedGen)
+			actor.ackSideEffects(committedGen)
 			actor.ackPersistPlan(committedGen)
 			return
 
@@ -453,6 +500,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				}
 				committedGen = generation
 				actor.ackOutbox(committedGen)
+				actor.ackSideEffects(committedGen)
 				actor.ackPersistPlan(committedGen)
 			}
 			return
@@ -461,14 +509,27 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 }
 
 func (r *Runtime) enqueueSave(uid uint64, actor *FarmActor, generation uint64, durable bool) (<-chan CommitResult, error) {
-	if r.committer == nil {
+	if len(r.committers) == 0 {
 		return nil, errors.New("actor: committer is nil")
 	}
 	if actor == nil || actor.Aggregate == nil {
 		return nil, errors.New("actor: aggregate is nil")
 	}
+	committer := r.committers[uid%uint64(len(r.committers))]
+	if committer == nil {
+		return nil, errors.New("actor: committer shard is nil")
+	}
+	if incremental, ok := r.store.(incrementalFarmStore); ok && incremental.SupportsIncrementalFarmCommits() {
+		mutation, err := actor.pendingWriteMutation()
+		if err != nil {
+			return nil, err
+		}
+		return committer.EnqueueIncrementalPlan(uid, generation, mutation, actor.pendingPersistPlan(), durable)
+	}
 	snapshot := actor.Aggregate.Clone()
-	return r.committer.EnqueuePlan(uid, generation, snapshot, actor.pendingOutboxEvents(), actor.pendingPersistPlan(), durable)
+	return committer.EnqueueMutationPlan(uid, generation, snapshot,
+		actor.pendingOutboxEvents(), actor.pendingTaskAdvances(), actor.pendingCodexRewards(),
+		actor.pendingPersistPlan(), durable)
 }
 
 func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation uint64, commitAcks chan commitAck) {

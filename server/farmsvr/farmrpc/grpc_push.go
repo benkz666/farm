@@ -2,13 +2,13 @@ package farmrpc
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"farm/server/domain/farm"
 	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 	"farm/server/shared/store"
@@ -57,7 +57,7 @@ func NewGRPCDeltaPusher(client *GatewayPushClient) *GRPCDeltaPusher {
 	return &GRPCDeltaPusher{client: client}
 }
 
-// PushBatch sends one pre-encoded Envelope to many connections on one Gateway.
+// PushBatch sends one typed FarmDelta to many connections on one Gateway.
 func (pusher *GRPCDeltaPusher) PushBatch(ctx context.Context, gatewayID string, batch PushBatch) error {
 	if pusher == nil || pusher.client == nil {
 		return fmt.Errorf("farmrpc: gRPC Delta pusher is nil")
@@ -68,9 +68,17 @@ func (pusher *GRPCDeltaPusher) PushBatch(ctx context.Context, gatewayID string, 
 	}
 	var lastErr error
 	for attempt := 1; attempt <= deltaPushMaxAttempts; attempt++ {
+		delta := batch.Delta
+		if delta == nil && len(batch.Envelope) != 0 {
+			decoded, decodeErr := clientwire.DecodeFarmDelta(batch.Envelope)
+			if decodeErr != nil {
+				return fmt.Errorf("farmrpc: decode FarmDelta batch: %w", decodeErr)
+			}
+			delta = clientwire.FarmDeltaToProto(decoded)
+		}
 		_, pushErr := service.PushFarmDeltaBatch(ctx, &farmv1.PushFarmDeltaBatchRequest{
-			ConnIds:  batch.ConnIDs,
-			Envelope: batch.Envelope,
+			ConnIds: batch.ConnIDs,
+			Delta:   delta,
 		})
 		if pushErr == nil {
 			return nil
@@ -111,10 +119,6 @@ func (pusher *GRPCPlayerDeltaPusher) PushPlayerDelta(ctx context.Context, ref pr
 	if pusher == nil || pusher.client == nil {
 		return fmt.Errorf("farmrpc: gRPC PlayerDelta pusher is nil")
 	}
-	body, err := json.Marshal(delta)
-	if err != nil {
-		return fmt.Errorf("farmrpc: encode PlayerDelta: %w", err)
-	}
 	service, err := pusher.client.service(ctx, ref.GatewayID)
 	if err != nil {
 		return err
@@ -122,7 +126,7 @@ func (pusher *GRPCPlayerDeltaPusher) PushPlayerDelta(ctx context.Context, ref pr
 	_, err = service.PushPlayerDelta(ctx, &farmv1.PushPlayerDeltaRequest{
 		ConnectionId: ref.ConnID,
 		Uid:          uid,
-		DeltaJson:    body,
+		Delta:        clientwire.PlayerDeltaToProto(delta),
 	})
 	if err != nil {
 		return fmt.Errorf("farmrpc: push PlayerDelta: %w", err)

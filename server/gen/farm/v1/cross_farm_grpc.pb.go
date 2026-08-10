@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	CrossFarmService_ReserveCrossAction_FullMethodName     = "/farm.internal.v1.CrossFarmService/ReserveCrossAction"
 	CrossFarmService_ApplyCrossAction_FullMethodName       = "/farm.internal.v1.CrossFarmService/ApplyCrossAction"
 	CrossFarmService_DeliverCrossResult_FullMethodName     = "/farm.internal.v1.CrossFarmService/DeliverCrossResult"
 	CrossFarmService_AcknowledgeCrossResult_FullMethodName = "/farm.internal.v1.CrossFarmService/AcknowledgeCrossResult"
@@ -31,6 +32,7 @@ const (
 // CrossFarmService routes owner adjudication and visitor settlement across Farm
 // instances. Gateway may call Apply directly; owner outbox may call Deliver.
 type CrossFarmServiceClient interface {
+	ReserveCrossAction(ctx context.Context, in *ReserveCrossActionRequest, opts ...grpc.CallOption) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(ctx context.Context, in *ApplyCrossActionRequest, opts ...grpc.CallOption) (*ApplyCrossActionResponse, error)
 	DeliverCrossResult(ctx context.Context, in *DeliverCrossResultRequest, opts ...grpc.CallOption) (*DeliverCrossResultResponse, error)
 	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
@@ -43,6 +45,16 @@ type crossFarmServiceClient struct {
 
 func NewCrossFarmServiceClient(cc grpc.ClientConnInterface) CrossFarmServiceClient {
 	return &crossFarmServiceClient{cc}
+}
+
+func (c *crossFarmServiceClient) ReserveCrossAction(ctx context.Context, in *ReserveCrossActionRequest, opts ...grpc.CallOption) (*ReserveCrossActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReserveCrossActionResponse)
+	err := c.cc.Invoke(ctx, CrossFarmService_ReserveCrossAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *crossFarmServiceClient) ApplyCrossAction(ctx context.Context, in *ApplyCrossActionRequest, opts ...grpc.CallOption) (*ApplyCrossActionResponse, error) {
@@ -82,6 +94,7 @@ func (c *crossFarmServiceClient) AcknowledgeCrossResult(ctx context.Context, in 
 // CrossFarmService routes owner adjudication and visitor settlement across Farm
 // instances. Gateway may call Apply directly; owner outbox may call Deliver.
 type CrossFarmServiceServer interface {
+	ReserveCrossAction(context.Context, *ReserveCrossActionRequest) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(context.Context, *ApplyCrossActionRequest) (*ApplyCrossActionResponse, error)
 	DeliverCrossResult(context.Context, *DeliverCrossResultRequest) (*DeliverCrossResultResponse, error)
 	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
@@ -96,6 +109,9 @@ type CrossFarmServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedCrossFarmServiceServer struct{}
 
+func (UnimplementedCrossFarmServiceServer) ReserveCrossAction(context.Context, *ReserveCrossActionRequest) (*ReserveCrossActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReserveCrossAction not implemented")
+}
 func (UnimplementedCrossFarmServiceServer) ApplyCrossAction(context.Context, *ApplyCrossActionRequest) (*ApplyCrossActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApplyCrossAction not implemented")
 }
@@ -124,6 +140,24 @@ func RegisterCrossFarmServiceServer(s grpc.ServiceRegistrar, srv CrossFarmServic
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&CrossFarmService_ServiceDesc, srv)
+}
+
+func _CrossFarmService_ReserveCrossAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReserveCrossActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CrossFarmServiceServer).ReserveCrossAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CrossFarmService_ReserveCrossAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CrossFarmServiceServer).ReserveCrossAction(ctx, req.(*ReserveCrossActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _CrossFarmService_ApplyCrossAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -187,6 +221,10 @@ var CrossFarmService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "farm.internal.v1.CrossFarmService",
 	HandlerType: (*CrossFarmServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ReserveCrossAction",
+			Handler:    _CrossFarmService_ReserveCrossAction_Handler,
+		},
 		{
 			MethodName: "ApplyCrossAction",
 			Handler:    _CrossFarmService_ApplyCrossAction_Handler,

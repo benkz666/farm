@@ -1,6 +1,10 @@
+name: benkz
+
 services:
   mysql:
     image: mysql:8.4
+    cpus: 2.0
+    mem_limit: 4g
     environment:
       MYSQL_ROOT_PASSWORD: farm
       MYSQL_DATABASE: farm
@@ -9,7 +13,11 @@ services:
     ports: ["3306:3306"]
     volumes:
       - farm_mysql_data:/var/lib/mysql
-    command: ["--character-set-server=utf8mb4"]
+    command:
+      - --character-set-server=utf8mb4
+      - --max-connections=1000
+      - --innodb-buffer-pool-size=3G
+      - --innodb-flush-log-at-trx-commit=1
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ufarm", "-pfarm"]
       interval: 5s
@@ -18,10 +26,31 @@ services:
 
   redis:
     image: redis:7-alpine
+    cpus: 1.0
+    mem_limit: 1g
     command: ["redis-server", "--appendonly", "yes"]
-    ports: ["6379:6379"]
     volumes:
       - farm_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  event-redis:
+    image: redis:7-alpine
+    cpus: 1.0
+    mem_limit: 1g
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - farm_event_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -44,6 +73,8 @@ services:
 
   social:
     profiles: ["app"]
+    cpus: 1.0
+    mem_limit: 1g
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
@@ -71,6 +102,7 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      event-redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
     environment:
@@ -79,11 +111,20 @@ services:
       GOMEMLIMIT: 800MiB
       FARM_ACTOR_IDLE_TTL: ${FARM_ACTOR_IDLE_TTL:-2m}
       FARM_ACTOR_MAX_RESIDENT: ${FARM_ACTOR_MAX_RESIDENT:-20000}
+      FARM_COMMITTER_SHARDS: ${FARM_COMMITTER_SHARDS:-4}
+      FARM_EVENT_REDIS_ADDR: event-redis:6379
+      FARM_WRITE_JOURNAL_SHARDS: ${FARM_WRITE_JOURNAL_SHARDS:-32}
+      FARM_WRITE_JOURNAL_PROJECTORS: ${FARM_WRITE_JOURNAL_PROJECTORS:-4}
+      FARM_WRITE_JOURNAL_BATCH: ${FARM_WRITE_JOURNAL_BATCH:-512}
+      FARM_WRITE_JOURNAL_BLOCK: ${FARM_WRITE_JOURNAL_BLOCK:-50ms}
+      FARM_WRITE_JOURNAL_LATEST_TTL: ${FARM_WRITE_JOURNAL_LATEST_TTL:-24h}
+      FARM_WRITE_JOURNAL_CLAIM_IDLE: ${FARM_WRITE_JOURNAL_CLAIM_IDLE:-5s}
+      FARM_WRITE_JOURNAL_REPLICAS: ${FARM_WRITE_JOURNAL_REPLICAS:-0}
       FARM_FARM_HTTP_ADDR: ":9100"
       FARM_FARM_INSTANCE_ID: farm-0
       FARM_ROUTE_TABLE: deploy/route-table.local.json
       FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
-      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-0":"gateway:9202"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
       FARM_SOCIAL_GRPC_TARGET: social:9204
       FARM_FARM_GRPC_ADDR: ":9210"
       FARM_FARM_ADMIN_ADDR: ":9310"
@@ -94,8 +135,10 @@ services:
       FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9100:9100", "9210:9210", "9310:9310"]
 
-  gateway:
+  gateway-1:
     profiles: ["app"]
+    cpus: 1.0
+    mem_limit: 1g
     build:
       context: ..
       dockerfile: deploy/Dockerfile.server
@@ -109,18 +152,84 @@ services:
     environment:
       <<: *common-environment
       FARM_GATEWAY_HTTP_ADDR: ":9002"
-      FARM_GATEWAY_INSTANCE_ID: gateway-0
+      FARM_GATEWAY_INSTANCE_ID: gateway-1
       FARM_ROUTE_TABLE: deploy/route-table.local.json
       FARM_SOCIAL_GRPC_TARGET: social:9204
       FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
-      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-0":"gateway:9202"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
       FARM_GATEWAY_ADMIN_ADDR: ":9302"
       FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
+      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
+      FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
       FARM_ENABLE_API_DOCS: "1"
       FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9002:9002", "9202:9202", "9302:9302"]
+
+  gateway-2:
+    profiles: ["app"]
+    cpus: 1.0
+    mem_limit: 1g
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {PACKAGE: ./cmd/gateway}
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      social: {condition: service_started}
+      farm: {condition: service_started}
+    environment:
+      <<: *common-environment
+      FARM_GATEWAY_HTTP_ADDR: ":9002"
+      FARM_GATEWAY_INSTANCE_ID: gateway-2
+      FARM_ROUTE_TABLE: deploy/route-table.local.json
+      FARM_SOCIAL_GRPC_TARGET: social:9204
+      FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
+      FARM_GATEWAY_ADMIN_ADDR: ":9302"
+      FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
+      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
+      FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
+      FARM_ENABLE_API_DOCS: "1"
+      FARM_INVITE_SECRET: dev-only-invite-change-me
+      FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
+      FARM_ALLOW_DEBUG_TIME: "1"
+    ports: ["9003:9002", "9203:9202", "9303:9302"]
+
+  gateway-3:
+    profiles: ["app"]
+    cpus: 1.0
+    mem_limit: 1g
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {PACKAGE: ./cmd/gateway}
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+      social: {condition: service_started}
+      farm: {condition: service_started}
+    environment:
+      <<: *common-environment
+      FARM_GATEWAY_HTTP_ADDR: ":9002"
+      FARM_GATEWAY_INSTANCE_ID: gateway-3
+      FARM_ROUTE_TABLE: deploy/route-table.local.json
+      FARM_SOCIAL_GRPC_TARGET: social:9204
+      FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
+      FARM_GATEWAY_ADMIN_ADDR: ":9302"
+      FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
+      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
+      FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
+      FARM_ENABLE_API_DOCS: "1"
+      FARM_INVITE_SECRET: dev-only-invite-change-me
+      FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
+      FARM_ALLOW_DEBUG_TIME: "1"
+    ports: ["9005:9002", "9205:9202", "9305:9302"]
 
   web:
     profiles: ["app"]
@@ -128,37 +237,90 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.client
     depends_on:
-      gateway: {condition: service_started}
+      gateway-1: {condition: service_started}
+      gateway-2: {condition: service_started}
+      gateway-3: {condition: service_started}
     ports: ["9001:80"]
+
+  k6:
+    profiles: ["bench"]
+    cpus: 24.0
+    mem_limit: 16g
+    build:
+      context: ..
+      dockerfile: bench/k6/Dockerfile
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do sleep 3600; done"]
+    depends_on:
+      web: {condition: service_started}
+    volumes:
+      - bench_data:/fixtures
+      - bench_results:/results
+
+  benchfixture:
+    profiles: ["fixture"]
+    cpus: 4.0
+    mem_limit: 4g
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {PACKAGE: ./cmd/benchfixture}
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
+    environment:
+      FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
+    volumes:
+      - bench_data:/fixtures
+
+  servicebench:
+    profiles: ["loadtool"]
+    cpus: 24.0
+    mem_limit: 16g
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+      args: {PACKAGE: ./cmd/servicebench}
+    depends_on:
+      gateway-1: {condition: service_started}
+      gateway-2: {condition: service_started}
+      gateway-3: {condition: service_started}
+      farm: {condition: service_started}
+      social: {condition: service_started}
+    volumes:
+      - bench_data:/fixtures
+      - bench_results:/results
 
   prometheus:
     profiles: ["obs"]
-    image: prom/prometheus:v2.54.1
+    build:
+      context: ..
+      dockerfile: deploy/observability/Dockerfile.prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --web.enable-remote-write-receiver
-    ports: ["9090:9090"]
+    ports: ["39090:9090"]
     volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - farm_prometheus_data:/prometheus
 
   grafana:
     profiles: ["obs"]
-    image: grafana/grafana:11.2.0
+    build:
+      context: ..
+      dockerfile: deploy/observability/Dockerfile.grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
-    ports: ["3000:3000"]
+    ports: ["33000:3000"]
     volumes:
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-      # 先挂数据卷，再挂子目录看板，避免父路径覆盖掉 dashboards 绑定。
       - farm_grafana_data:/var/lib/grafana
-      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
   mysqld-exporter:
     profiles: ["obs"]
-    image: prom/mysqld-exporter:v0.15.1
+    image: prom/mysqld-exporter:v0.14.0
     environment:
       DATA_SOURCE_NAME: farm:farm@tcp(mysql:3306)/
     depends_on:
@@ -171,6 +333,14 @@ services:
       REDIS_ADDR: redis://redis:6379
     depends_on:
       redis: {condition: service_healthy}
+
+  event-redis-exporter:
+    profiles: ["obs"]
+    image: oliver006/redis_exporter:v1.62.0
+    environment:
+      REDIS_ADDR: redis://event-redis:6379
+    depends_on:
+      event-redis: {condition: service_healthy}
 
   cadvisor:
     profiles: ["obs"]
@@ -186,10 +356,16 @@ services:
 
 volumes:
   farm_mysql_data:
-    name: farm_mysql_data
+    name: benkz_mysql_data
   farm_redis_data:
-    name: farm_redis_data
+    name: benkz_redis_data
+  farm_event_redis_data:
+    name: benkz_event_redis_data
   farm_prometheus_data:
-    name: farm_prometheus_data
+    name: benkz_prometheus_data
   farm_grafana_data:
-    name: farm_grafana_data
+    name: benkz_grafana_data
+  bench_data:
+    name: benkz_bench_data
+  bench_results:
+    name: benkz_bench_results

@@ -1,8 +1,8 @@
 asyncapi: 3.0.0
 info:
   title: 经典农场 WebSocket API
-  version: 2.0.0
-  description: 浏览器游戏通信契约；仅支持 farm.v3.pb，每帧携带 1~64 个 Protobuf WireEnvelope。
+  version: 3.0.0
+  description: 浏览器游戏通信契约；仅支持 farm.v3.pb，每帧携带 1~64 个全类型化 Protobuf WireEnvelope，不含 JSON payload 兼容分支。
 defaultContentType: application/octet-stream
 servers:
   development:

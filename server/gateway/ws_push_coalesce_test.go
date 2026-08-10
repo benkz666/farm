@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -75,7 +74,10 @@ func expandPhysicalPushFrames(frames [][]byte) ([]json.RawMessage, error) {
 			return nil, err
 		}
 		for _, envelope := range envelopes {
-			encoded, err := clientwire.EncodeEnvelope(envelope)
+			if envelope.FarmDelta == nil {
+				return nil, errors.New("missing typed FarmDelta")
+			}
+			encoded, err := clientwire.EncodeFarmDelta(clientwire.FarmDeltaFromProto(envelope.FarmDelta))
 			if err != nil {
 				return nil, err
 			}
@@ -160,7 +162,7 @@ func TestPushCoalesceBatchesMultipleWrites(t *testing.T) {
 		t.Fatalf("WriteMessage count = %d, want <= %d", writes, n/2)
 	}
 	for i, envelope := range all {
-		if !bytes.Equal(envelope, raw[i]) {
+		if string(envelope) != string(raw[i]) {
 			t.Fatalf("envelope %d mutated or reordered", i)
 		}
 		delta, err := clientwire.DecodeFarmDelta(envelope)

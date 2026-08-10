@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,24 @@ type batchRecordingStore struct {
 	commits   [][]outbox.FarmCommit
 	saveDelay time.Duration
 	saveErr   error
+}
+
+type pressureRecordingStore struct {
+	*batchRecordingStore
+	pressure atomic.Int64
+	observed chan int64
+}
+
+func (s *pressureRecordingStore) AdjustForegroundPressure(delta int) {
+	s.pressure.Add(int64(delta))
+}
+
+func (s *pressureRecordingStore) CommitFarms(ctx context.Context, commits []outbox.FarmCommit) error {
+	select {
+	case s.observed <- s.pressure.Load():
+	default:
+	}
+	return s.batchRecordingStore.CommitFarms(ctx, commits)
 }
 
 func (s *batchRecordingStore) LoadFarm(_ context.Context, uid uint64) (*farm.Aggregate, error) {
@@ -44,9 +63,11 @@ func (s *batchRecordingStore) CommitFarms(_ context.Context, commits []outbox.Fa
 	cp := make([]outbox.FarmCommit, len(commits))
 	for i, commit := range commits {
 		cp[i] = outbox.FarmCommit{
-			Snapshot: commit.Snapshot.Clone(),
-			Outbox:   append([]outbox.Event(nil), commit.Outbox...),
-			Plan:     commit.Plan,
+			Snapshot:     commit.Snapshot.Clone(),
+			Outbox:       append([]outbox.Event(nil), commit.Outbox...),
+			TaskAdvances: append([]outbox.TaskAdvance(nil), commit.TaskAdvances...),
+			CodexRewards: append([]outbox.CodexReward(nil), commit.CodexRewards...),
+			Plan:         commit.Plan,
 		}
 	}
 	s.commits = append(s.commits, cp)
@@ -82,6 +103,15 @@ func (s *batchRecordingStore) lastPlan() outbox.PersistPlan {
 		return outbox.PersistPlan{}
 	}
 	return s.commits[len(s.commits)-1][0].Plan
+}
+
+func (s *batchRecordingStore) lastCommit() outbox.FarmCommit {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.commits) == 0 || len(s.commits[len(s.commits)-1]) == 0 {
+		return outbox.FarmCommit{}
+	}
+	return s.commits[len(s.commits)-1][0]
 }
 
 func (s *batchRecordingStore) batchCount() int {
@@ -138,6 +168,35 @@ func TestCommitterBatchesAcrossUIDs(t *testing.T) {
 	}
 }
 
+func TestCommitterKeepsPressureUntilDurableAppendCompletes(t *testing.T) {
+	storage := &pressureRecordingStore{
+		batchRecordingStore: &batchRecordingStore{},
+		observed:            make(chan int64, 1),
+	}
+	committer := NewCommitter(storage, defaultCommitterConfig())
+	defer committer.Shutdown(context.Background())
+
+	aggregate := farm.NewAggregate(77, "pressure")
+	result, err := committer.Enqueue(77, 1, aggregate, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case pressure := <-storage.observed:
+		if pressure < 1 {
+			t.Fatalf("pressure during CommitFarms = %d, want at least 1", pressure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CommitFarms was not observed")
+	}
+	if committed := <-result; committed.Err != nil {
+		t.Fatal(committed.Err)
+	}
+	if pressure := storage.pressure.Load(); pressure != 0 {
+		t.Fatalf("pressure after CommitFarms = %d, want 0", pressure)
+	}
+}
+
 func TestCommitterCarriesSpecializedPlan(t *testing.T) {
 	storage := &batchRecordingStore{}
 	committer := NewCommitter(storage, defaultCommitterConfig())
@@ -155,6 +214,27 @@ func TestCommitterCarriesSpecializedPlan(t *testing.T) {
 	}
 	if err := committer.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestCommitterUsesShortWindowForForegroundAck(t *testing.T) {
+	storage := &batchRecordingStore{}
+	cfg := defaultCommitterConfig()
+	cfg.Window = 100 * time.Millisecond
+	cfg.ForegroundWindow = time.Millisecond
+	committer := NewCommitter(storage, cfg)
+	defer committer.Shutdown(context.Background())
+
+	started := time.Now()
+	result, err := committer.Enqueue(7, 1, farm.NewAggregate(7, "seven"), nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed := <-result; committed.Err != nil {
+		t.Fatal(committed.Err)
+	}
+	if elapsed := time.Since(started); elapsed >= 50*time.Millisecond {
+		t.Fatalf("foreground commit waited %s, expected short adaptive window", elapsed)
 	}
 }
 
@@ -251,6 +331,44 @@ func TestCommitterCarriesOutboxEventsInBatch(t *testing.T) {
 	}
 	if err := committer.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
+func TestCommitterNewGenerationSupersedesCumulativeSideEffects(t *testing.T) {
+	storage := &batchRecordingStore{}
+	cfg := defaultCommitterConfig()
+	cfg.Window = 20 * time.Millisecond
+	committer := NewCommitter(storage, cfg)
+	aggregate := farm.NewAggregate(11, "eleven")
+	first := outbox.TaskAdvance{DayKey: 20260808, TaskID: 3, Amount: 1}
+	second := outbox.TaskAdvance{DayKey: 20260808, TaskID: 4, Amount: 1}
+
+	result1, err := committer.EnqueueMutationPlan(
+		11, 1, aggregate.Clone(), nil, []outbox.TaskAdvance{first}, nil,
+		outbox.PersistPlan{Mode: outbox.PersistPlot}, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result2, err := committer.EnqueueMutationPlan(
+		11, 2, aggregate.Clone(), nil, []outbox.TaskAdvance{first, second}, nil,
+		outbox.PersistPlan{Mode: outbox.PersistPlot}, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := <-result1; result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	if result := <-result2; result.Err != nil {
+		t.Fatal(result.Err)
+	}
+	commit := storage.lastCommit()
+	if len(commit.TaskAdvances) != 2 || commit.TaskAdvances[0] != first || commit.TaskAdvances[1] != second {
+		t.Fatalf("task advances = %#v", commit.TaskAdvances)
+	}
+	if err := committer.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -152,6 +152,46 @@ export function warehouseFromServer(warehouse) {
   return out
 }
 
+/** Apply authoritative final counts for only the changed bag keys. */
+function applyBagChanges(state, changes) {
+  if (!changes || typeof changes !== 'object') return
+  if (!state.inventory) state.inventory = { seeds: {}, fertilizers: {}, dogFood: 0 }
+  if (!state.inventory.seeds) state.inventory.seeds = {}
+  if (!state.inventory.fertilizers) state.inventory.fertilizers = {}
+  for (const [itemKey, rawCount] of Object.entries(changes)) {
+    const count = Math.max(0, Math.floor(Number(rawCount) || 0))
+    if (itemKey.startsWith('seed:')) {
+      const cropKey = cropIdToKey(Number(itemKey.slice(5)))
+      if (!cropKey) continue
+      if (count === 0) delete state.inventory.seeds[cropKey]
+      else state.inventory.seeds[cropKey] = count
+      continue
+    }
+    if (itemKey.startsWith('fert:')) {
+      const fertilizerKey = FERTILIZER_ID_TO_KEY[Number(itemKey.slice(5))]
+      if (!fertilizerKey) continue
+      if (count === 0) delete state.inventory.fertilizers[fertilizerKey]
+      else state.inventory.fertilizers[fertilizerKey] = count
+      continue
+    }
+    if (itemKey === 'dogfood:1') state.inventory.dogFood = count
+  }
+}
+
+/** Apply authoritative final counts for only the changed warehouse keys. */
+function applyWarehouseChanges(state, changes) {
+  if (!changes || typeof changes !== 'object') return
+  if (!state.warehouse) state.warehouse = {}
+  for (const [itemKey, rawCount] of Object.entries(changes)) {
+    if (!itemKey.startsWith('fruit:')) continue
+    const cropKey = cropIdToKey(Number(itemKey.slice(6)))
+    if (!cropKey) continue
+    const count = Math.max(0, Math.floor(Number(rawCount) || 0))
+    if (count === 0) delete state.warehouse[cropKey]
+    else state.warehouse[cropKey] = count
+  }
+}
+
 /**
  * 将单地块服务端快照写入本地 plot 对象（原地修改）。
  * @param {object} plot
@@ -271,6 +311,8 @@ function applyActionPatch(state, patch) {
   if (patch.warehouse) {
     state.warehouse = warehouseFromServer(patch.warehouse)
   }
+  applyBagChanges(state, patch.bag_changes)
+  applyWarehouseChanges(state, patch.warehouse_changes)
   if (patch.codex_progress) {
     applyCodexProgress(state, patch.codex_progress)
   }
@@ -352,7 +394,7 @@ export function applyPatch(state, source, opts = {}) {
     return state
   }
   // 单地块 / 商店补丁（无外层包装）
-  if (source.plot || source.bag || source.warehouse || wireUint64(source.coin) != null) {
+  if (source.plot || source.bag || source.warehouse || source.bag_changes || source.warehouse_changes || wireUint64(source.coin) != null) {
     applyActionPatch(state, source)
   }
   return state

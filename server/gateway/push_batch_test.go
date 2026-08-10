@@ -1,10 +1,10 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -195,10 +195,11 @@ func TestReceiveFarmDeltaBatchWritesIdenticalEncodedBytes(t *testing.T) {
 	frame8 := readRawFrame(t, v8)
 	batch7, err7 := clientwire.DecodeBinaryBatch(frame7)
 	batch8, err8 := clientwire.DecodeBinaryBatch(frame8)
-	want, wantErr := clientwire.DecodeEnvelope(envelope)
+	want, wantErr := clientwire.DecodeFarmDelta(envelope)
 	if err7 != nil || err8 != nil || wantErr != nil || len(batch7) != 1 || len(batch8) != 1 ||
-		batch7[0].Cmd != want.Cmd || batch8[0].Cmd != want.Cmd ||
-		!bytes.Equal(batch7[0].Payload, want.Payload) || !bytes.Equal(batch8[0].Payload, want.Payload) {
+		batch7[0].FarmDelta == nil || batch8[0].FarmDelta == nil ||
+		!reflect.DeepEqual(clientwire.FarmDeltaFromProto(batch7[0].FarmDelta), want) ||
+		!reflect.DeepEqual(clientwire.FarmDeltaFromProto(batch8[0].FarmDelta), want) {
 		t.Fatalf("binary frames differ: err7=%v err8=%v wantErr=%v", err7, err8, wantErr)
 	}
 }
@@ -314,8 +315,8 @@ func TestReceiveFarmDeltaBatchDedupesConnIDs(t *testing.T) {
 
 	frame := readRawFrame(t, viewer)
 	batch, decodeErr := clientwire.DecodeBinaryBatch(frame)
-	want, wantErr := clientwire.DecodeEnvelope(envelope)
-	if decodeErr != nil || wantErr != nil || len(batch) != 1 || batch[0].Cmd != want.Cmd || !bytes.Equal(batch[0].Payload, want.Payload) {
+	want, wantErr := clientwire.DecodeFarmDelta(envelope)
+	if decodeErr != nil || wantErr != nil || len(batch) != 1 || batch[0].FarmDelta == nil || !reflect.DeepEqual(clientwire.FarmDeltaFromProto(batch[0].FarmDelta), want) {
 		t.Fatalf("binary frame = %#v decodeErr=%v wantErr=%v", batch, decodeErr, wantErr)
 	}
 	_ = viewer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))

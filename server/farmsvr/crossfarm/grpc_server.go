@@ -3,12 +3,12 @@ package crossfarm
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/outbox"
 	"farm/server/shared/store"
@@ -29,6 +29,28 @@ func NewVisitorSettler(runtime Runtime, now func() int64) *VisitorSettler {
 	return &VisitorSettler{runtime: runtime, now: now}
 }
 
+// Reserve durably records visitor-side cost/quota before owner adjudication.
+func (s *VisitorSettler) Reserve(ctx context.Context, action CrossAction, dayID uint32) (errcode.Code, error) {
+	if s == nil || s.runtime == nil {
+		return errcode.Internal, errors.New("cross: visitor settler is nil")
+	}
+	var code errcode.Code
+	err := s.runtime.Do(action.VisitorUID, func(visitor *room.FarmActor) error {
+		if visitor == nil || visitor.Aggregate == nil {
+			return errors.New("cross: visitor actor aggregate is nil")
+		}
+		code = ReserveVisitor(visitor.Aggregate, VisitorReservation{Action: action, DayID: dayID}, s.now())
+		if code == errcode.OK {
+			visitor.RequireCrossVisitorFlush(false)
+		}
+		return nil
+	})
+	if err != nil {
+		return errcode.Internal, err
+	}
+	return code, nil
+}
+
 // Settle applies an owner result to the visitor aggregate.
 func (s *VisitorSettler) Settle(ctx context.Context, result CrossResult) (VisitorReward, *farm.PlayerDelta, errcode.Code, error) {
 	if s == nil || s.runtime == nil {
@@ -42,6 +64,10 @@ func (s *VisitorSettler) Settle(ctx context.Context, result CrossResult) (Visito
 			return errors.New("cross: visitor actor aggregate is nil")
 		}
 		reward, playerDelta, code = SettleVisitor(visitor.Aggregate, result, s.now())
+		if result.CropID != 0 {
+			key := farm.FruitItem(result.CropID)
+			visitor.RecordItemCounts(map[farm.ItemKey]uint32{key: visitor.Aggregate.Items[key]})
+		}
 		// Timeout 也必须形成 durable barrier：它可能是前一次结算已修改内存、
 		// 但 Commit 返回不确定错误后的重投。只有再次落盘成功，outbox 才能 ack。
 		visitor.RequireCrossVisitorFlush(true)
@@ -79,6 +105,21 @@ func RegisterCrossFarmService(server *grpc.Server, handler *GRPCServer) {
 	farmv1.RegisterCrossFarmServiceServer(server, handler)
 }
 
+func (server *GRPCServer) ReserveCrossAction(ctx context.Context, request *farmv1.ReserveCrossActionRequest) (*farmv1.ReserveCrossActionResponse, error) {
+	if server == nil || server.visitor == nil || request == nil || request.Action == nil {
+		return nil, status.Error(codes.InvalidArgument, "bad_request")
+	}
+	action, ok := actionFromProto(request.Action)
+	if !ok || server.owns != nil && !server.owns(action.VisitorUID) {
+		return nil, status.Error(codes.InvalidArgument, "bad_request")
+	}
+	code, err := server.visitor.Reserve(ctx, action, request.DayId)
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "commit_unavailable")
+	}
+	return &farmv1.ReserveCrossActionResponse{Err: int32(code)}, nil
+}
+
 func (server *GRPCServer) ApplyCrossAction(ctx context.Context, request *farmv1.ApplyCrossActionRequest) (*farmv1.ApplyCrossActionResponse, error) {
 	if server == nil || server.owner == nil || request == nil || request.Action == nil {
 		return nil, status.Error(codes.InvalidArgument, "bad_request")
@@ -114,10 +155,7 @@ func (server *GRPCServer) DeliverCrossResult(ctx context.Context, request *farmv
 		Err:    int32(code),
 	}
 	if playerDelta != nil {
-		payload, marshalErr := json.Marshal(playerDelta)
-		if marshalErr == nil {
-			response.PlayerDeltaJson = payload
-		}
+		response.PlayerDelta = clientwire.PlayerDeltaToProto(*playerDelta)
 	}
 	if code == errcode.Timeout {
 		response.Err = int32(errcode.OK)

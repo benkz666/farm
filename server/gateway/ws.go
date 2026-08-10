@@ -16,6 +16,7 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientjson"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
@@ -223,6 +224,10 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 		enableAfterHandshake := false
 		disconnectAfterWrite := false
 		for _, request := range requests {
+			if request.ServerPayload {
+				responses = append(responses, Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.BadRequest, Payload: emptyPayload})
+				continue
+			}
 			if !g.disableWSRateLimit && !connection.limiter.Allow() {
 				responses = append(responses, Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.RateLimited, Payload: emptyPayload})
 				if connection.limiter.ShouldDisconnect() {
@@ -389,7 +394,18 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 			return response
 		}
 		var payload handshakeRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.Token == "" {
+		if request.CommandRequest != nil {
+			payload = handshakeRequest{
+				Token:           request.CommandRequest.AuthToken,
+				ResumeFarmUID:   clientjson.UID(request.CommandRequest.ResumeFarmUid),
+				ResumeFarmSeq:   clientjson.Uint64(request.CommandRequest.ResumeFarmSeq),
+				ClientConfigVer: request.CommandRequest.ClientConfigVer,
+			}
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.Token == "" {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -422,27 +438,35 @@ func (g *Gateway) handleWSRequest(connection *wsConnection, request Envelope) En
 		}
 		connection.scheduleNextAuthValidation(time.Now())
 		response.Payload = marshalPayload(handshakeResponse{UID: clientjson.UID(uid)})
+		response.CommandResponse = &publicv3.CommandResponse{Uid: uid}
 		return response
 	}
 
 	switch request.Cmd {
 	case CommandPing:
 		var payload pingRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil {
+		if request.CommandRequest != nil {
+			payload.ClientTime = request.CommandRequest.ClientTime
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
-		response.Payload = marshalPayload(pongResponse{
+		pong := pongResponse{
 			ClientTime: payload.ClientTime,
 			ServerTime: g.Now(),
-		})
+		}
+		response.Payload = marshalPayload(pong)
+		response.CommandResponse = &publicv3.CommandResponse{ClientTime: pong.ClientTime, ServerTime: pong.ServerTime}
 	case CommandEnterFarm:
 		return g.handleEnterFarm(connection, request)
 	case CommandLeaveFarm:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-			response.Err = errcode.BadRequest
-			return response
+		if request.CommandRequest == nil {
+			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+				response.Err = errcode.BadRequest
+				return response
+			}
 		}
+		response.CommandResponse = &publicv3.CommandResponse{}
 		g.leaveFarm(connection)
 	case CommandSyncFarm:
 		return g.handleSyncFarm(connection, request)
@@ -473,6 +497,11 @@ func (connection *wsConnection) respond(envelope Envelope) error {
 }
 
 func (connection *wsConnection) respondBatch(envelopes []Envelope) error {
+	for index := range envelopes {
+		if err := clientwire.PrepareCommandResponse(&envelopes[index]); err != nil {
+			return err
+		}
+	}
 	pooled := responseEnvelopePool.Get().(*[]byte)
 	buffer := (*pooled)[:0]
 	data, err := clientwire.AppendBinaryBatch(buffer, envelopes)
@@ -506,10 +535,11 @@ func (connection *wsConnection) kick(reason errcode.Code) {
 			Reason errcode.Code `json:"reason"`
 		}{Reason: reason})
 		_ = connection.respond(Envelope{
-			Cmd:       CommandSessionKick,
-			ClientSeq: 0,
-			Err:       errcode.OK,
-			Payload:   payload,
+			Cmd:         CommandSessionKick,
+			ClientSeq:   0,
+			Err:         errcode.OK,
+			Payload:     payload,
+			SessionKick: &publicv3.SessionKick{Reason: int32(reason)},
 		})
 		connection.markPushClosed()
 		_ = connection.conn.Close()
@@ -588,6 +618,9 @@ func (connection *wsConnection) respondWithGatewayFields(envelope Envelope, fiel
 // created without startPushWriter. Production responses use responseCh so the
 // connection has exactly one WebSocket data writer.
 func (connection *wsConnection) respondLocked(envelope Envelope) error {
+	if err := clientwire.PrepareCommandResponse(&envelope); err != nil {
+		return err
+	}
 	pooled := responseEnvelopePool.Get().(*[]byte)
 	buffer := (*pooled)[:0]
 	data, err := clientwire.AppendBinaryBatch(buffer, []Envelope{envelope})
@@ -640,10 +673,17 @@ func (connection *wsConnection) pushFarmDelta(ownerUID uint64, delta farm.FarmDe
 // pushPlayerDelta delivers state owned by this connection's authenticated
 // player. Unlike FarmDelta, it is independent of the farm room being viewed.
 func (connection *wsConnection) pushPlayerDelta(delta farm.PlayerDelta) error {
+	return connection.pushPlayerDeltaProto(clientwire.PlayerDeltaToProto(delta))
+}
+
+func (connection *wsConnection) pushPlayerDeltaProto(delta *publicv3.PlayerDelta) error {
+	if delta == nil {
+		return errors.New("gateway: nil PlayerDelta")
+	}
 	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
-		Cmd:       CommandPlayerDelta,
-		ClientSeq: 0,
-		Payload:   marshalPayload(delta),
+		Cmd:         CommandPlayerDelta,
+		ClientSeq:   0,
+		PlayerDelta: delta,
 	})
 	if err != nil {
 		return err
@@ -656,11 +696,9 @@ func (connection *wsConnection) pushMailNotify(kind string) error {
 		return errors.New("gateway: nil MailNotify connection")
 	}
 	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
-		Cmd:       CommandMailNotify,
-		ClientSeq: 0,
-		Payload: marshalPayload(struct {
-			Kind string `json:"kind"`
-		}{Kind: kind}),
+		Cmd:        CommandMailNotify,
+		ClientSeq:  0,
+		MailNotify: &publicv3.MailNotify{Kind: kind},
 	})
 	if err != nil {
 		return err
@@ -782,9 +820,9 @@ func (connection *wsConnection) pushTaskNotify(task store.Task) error {
 		return errors.New("gateway: nil TaskNotify connection")
 	}
 	data, err := clientwire.EncodeTrustedBinaryRecord(Envelope{
-		Cmd:       CommandTaskNotify,
-		ClientSeq: 0,
-		Payload:   marshalPayload(task),
+		Cmd:        CommandTaskNotify,
+		ClientSeq:  0,
+		TaskNotify: clientwire.TaskToProto(task),
 	})
 	if err != nil {
 		return err

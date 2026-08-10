@@ -60,8 +60,9 @@ K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write \
   缺省时从 `BASE_URL` 推导 `/ws`。
 - `client_seq` 始终是安全范围内的数字；`uid` 和 `farm_seq` 原样保留，
   避免 JavaScript 数字精度损失。
-- EnterFarm、SyncFarm 与 FarmDelta 使用类型化 Protobuf；k6 仅提取热路径
-  校验所需的序号/关系元数据，完整快照正确性由 Go 和浏览器契约测试覆盖。
+- 所有 WebSocket 请求、响应和推送都使用类型化 Protobuf，不再发送 JSON
+  payload；k6 仅提取压测校验所需的序号/关系元数据，完整业务对象由 Go
+  和浏览器契约测试覆盖。
 - 注册用户名必须 ≤32 字符（`account.username VARCHAR(32)`）。
   脚本已用短前缀 + `Date.now().toString(36)` 生成。
 

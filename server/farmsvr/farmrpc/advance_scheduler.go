@@ -9,6 +9,10 @@ import (
 const (
 	advanceWorkerLimit = 32
 	advanceRetryDelay  = 2 * time.Second
+	// Deadline updates use lazy invalidation on the normal O(log n) path. Once
+	// stale nodes materially outnumber live farms, rebuild the heap so a burst
+	// of Water/Harvest reschedules cannot leave an unbounded future scan.
+	advanceHeapCompactSlack = 1024
 )
 
 type scheduledAdvance struct {
@@ -77,11 +81,25 @@ func (scheduler *farmAdvanceScheduler) Schedule(uid uint64, due int64) {
 		scheduler.deadline[uid] = due
 		heap.Push(&scheduler.items, scheduledAdvance{uid: uid, due: due})
 	}
+	scheduler.compactLocked()
 	scheduler.mu.Unlock()
 	select {
 	case scheduler.wake <- struct{}{}:
 	default:
 	}
+}
+
+func (scheduler *farmAdvanceScheduler) compactLocked() {
+	live := len(scheduler.deadline)
+	if scheduler.items.Len() <= live*2+advanceHeapCompactSlack {
+		return
+	}
+	items := make(advanceHeap, 0, live)
+	for uid, due := range scheduler.deadline {
+		items = append(items, scheduledAdvance{uid: uid, due: due})
+	}
+	scheduler.items = items
+	heap.Init(&scheduler.items)
 }
 
 func (scheduler *farmAdvanceScheduler) Close() {

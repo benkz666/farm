@@ -16,7 +16,7 @@ import (
 
 const (
 	mailLocalCacheTTL       = 45 * time.Second
-	mailLocalCacheCapacity  = 8_192
+	mailLocalCacheCapacity  = defaultReadCacheCapacity
 	mailRedisCacheMinTTL    = 5 * time.Minute
 	mailRedisCacheJitter    = 5 * time.Minute
 	mailRedisVersionTTL     = 24 * time.Hour

@@ -616,7 +616,7 @@ func ownerEarnForDog(owner *smokePlayer, baseURL string, crop gameconfig.CropCon
 		if err := json.Unmarshal(env.Payload, &harvest); err != nil {
 			return err
 		}
-		if qty := harvest.Patch.Warehouse[fruitKey]; qty > 0 {
+		if qty := harvest.Patch.WarehouseChanges[fruitKey]; qty > 0 {
 			sell, err := mustOwnerAction(owner, gateway.CommandSell, map[string]any{
 				"item_id": stealCropID, "quantity": qty,
 			})
@@ -652,7 +652,7 @@ func ownerEarnForDog(owner *smokePlayer, baseURL string, crop gameconfig.CropCon
 		if err != nil {
 			return fmt.Errorf("earn harvest plot%d: %w", plot, err)
 		}
-		qty := harvest.Patch.Warehouse[fruitKey]
+		qty := harvest.Patch.WarehouseChanges[fruitKey]
 		if qty == 0 {
 			qty = uint32(crop.Yield)
 		}

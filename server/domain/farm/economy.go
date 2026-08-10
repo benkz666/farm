@@ -31,9 +31,10 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 			return ActionResult{Err: errcode.NotEnoughCoin}
 		}
 		a.Coin -= cost
-		a.Items[DogFoodItem()] += req.Quantity
+		key := DogFoodItem()
+		a.Items[key] += req.Quantity
 		a.FarmSeq++
-		return a.okPatch(0)
+		return a.withItemCounts(ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}, key)
 	}
 	if dog, price, unlockLevel, ok := dogPurchaseByItem(req.ItemID); ok {
 		if req.Quantity != 1 {
@@ -52,7 +53,7 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 		a.Coin -= price
 		a.Pet.Owned |= 1 << uint(index)
 		a.FarmSeq++
-		return a.okPatch(0)
+		return ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}
 	}
 	crop, ok := gameconfig.CropByID(req.ItemID)
 	if ok {
@@ -72,7 +73,7 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 		key := SeedItem(req.ItemID)
 		a.Items[key] += req.Quantity
 		a.FarmSeq++
-		return a.okPatch(0)
+		return a.withItemCounts(ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}, key)
 	}
 	fertilizer, ok := gameconfig.FertilizerByShopItemID(req.ItemID)
 	if !ok {
@@ -84,9 +85,10 @@ func (a *Aggregate) Buy(req BuyReq) ActionResult {
 	}
 
 	a.Coin -= cost
-	a.Items[FertilizerItem(fertilizer.ID)] += req.Quantity
+	key := FertilizerItem(fertilizer.ID)
+	a.Items[key] += req.Quantity
 	a.FarmSeq++
-	return a.okPatch(0)
+	return a.withItemCounts(ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}, key)
 }
 
 func dogPurchaseByItem(itemID uint16) (dog DogType, price int64, unlockLevel uint16, ok bool) {
@@ -126,5 +128,5 @@ func (a *Aggregate) Sell(req SellReq) ActionResult {
 	}
 	a.Coin += int64(crop.FruitPrice) * int64(req.Quantity)
 	a.FarmSeq++
-	return a.okPatch(0)
+	return a.withItemCounts(ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}, key)
 }

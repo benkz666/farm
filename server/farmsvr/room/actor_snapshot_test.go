@@ -7,6 +7,8 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/shared/outbox"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestPersistPlanKeepsReducedModeUntilMixedMutation(t *testing.T) {
@@ -25,6 +27,62 @@ func TestPersistPlanKeepsReducedModeUntilMixedMutation(t *testing.T) {
 	}
 }
 
+func TestPendingWriteMutationContainsOnlyExactDirtyRows(t *testing.T) {
+	agg := farm.NewAggregate(42, "alice")
+	agg.Items[farm.SeedItem(1)] = 10
+	actor := &FarmActor{Aggregate: agg}
+	before := actor.SnapshotItems()
+	agg.Items[farm.SeedItem(1)] = 9
+	agg.CodexHarvests[1] = 3
+	agg.FarmSeq = 7
+	actor.RecordItemChanges(before)
+	actor.RecordCodexChange(1)
+	actor.MarkPlotDirty(2, true, true)
+	actor.stampPersistGeneration(1)
+
+	mutation, err := actor.pendingWriteMutation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation.Uid != 42 || mutation.FarmSeq != 7 || mutation.ReplaceItems || len(mutation.Items) != 1 || mutation.Items[0].Count != 9 {
+		t.Fatalf("mutation = %#v", mutation)
+	}
+	if len(mutation.Plots) != 1 || mutation.Plots[0].Index != 2 || len(mutation.Codex) != 1 || mutation.Codex[0].CropId != 1 {
+		t.Fatalf("incremental rows = %#v", mutation)
+	}
+	body, err := proto.Marshal(mutation)
+	if err != nil || bytes.Contains(body, []byte(`"owner_uid"`)) {
+		t.Fatalf("mutation is not protobuf-only: err=%v body=%q", err, body)
+	}
+}
+
+func TestMixedPendingPlansRemainIncremental(t *testing.T) {
+	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
+	actor.MarkPlotDirty(1, false, false)
+	actor.RequireEconomyFlush()
+	actor.stampPersistGeneration(1)
+	mutation, err := actor.pendingWriteMutation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation.PlayerMask == outbox.PlayerAll || mutation.ReplaceItems || len(mutation.Plots) != 1 {
+		t.Fatalf("mixed mutation fell back to full snapshot: %#v", mutation)
+	}
+}
+
+func TestFullMutationEncodesEmptyNotNullCrossBlobs(t *testing.T) {
+	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
+	actor.MarkDirty()
+	actor.stampPersistGeneration(1)
+	mutation, err := actor.pendingWriteMutation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mutation.CrossPendingJson == nil || mutation.CrossReceiptJson == nil {
+		t.Fatalf("empty NOT NULL blobs encoded as nil: pending=%#v receipts=%#v", mutation.CrossPendingJson, mutation.CrossReceiptJson)
+	}
+}
+
 func TestCrossOwnerPlanKeepsOutboxAtomic(t *testing.T) {
 	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
 	event := outbox.Event{EventID: "event-1", Payload: []byte{1}}
@@ -36,6 +94,28 @@ func TestCrossOwnerPlanKeepsOutboxAtomic(t *testing.T) {
 	}
 	if events := actor.pendingOutboxEvents(); len(events) != 1 || events[0].EventID != event.EventID {
 		t.Fatalf("pending outbox = %#v", events)
+	}
+}
+
+func TestSideEffectsAreStampedAndAcknowledgedByGeneration(t *testing.T) {
+	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
+	actor.RecordTaskAdvance(outbox.TaskAdvance{DayKey: 20260808, TaskID: 3, Amount: 1})
+	actor.RecordCodexReward(farm.CodexProgress{CropID: 1, HarvestCount: 10})
+	actor.stampSideEffectGeneration(7)
+
+	if got := actor.pendingTaskAdvances(); len(got) != 1 || got[0].TaskID != 3 {
+		t.Fatalf("pending tasks = %#v", got)
+	}
+	if got := actor.pendingCodexRewards(); len(got) != 1 || got[0].Progress.HarvestCount != 10 {
+		t.Fatalf("pending codex rewards = %#v", got)
+	}
+	actor.ackSideEffects(6)
+	if len(actor.pendingTaskAdvances()) != 1 || len(actor.pendingCodexRewards()) != 1 {
+		t.Fatal("an older acknowledgement removed newer side effects")
+	}
+	actor.ackSideEffects(7)
+	if len(actor.pendingTaskAdvances()) != 0 || len(actor.pendingCodexRewards()) != 0 {
+		t.Fatal("committed side effects were not removed")
 	}
 }
 

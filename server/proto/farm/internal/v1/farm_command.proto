@@ -2,14 +2,14 @@ syntax = "proto3";
 
 package farm.internal.v1;
 
-option go_package = "gen/farm/v1;farmv1";
+option go_package = "farm/server/gen/farm/v1;farmv1";
 
 import "farm/internal/v1/common.proto";
+import "farm/public/v3/client.proto";
 
 // FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Complex client-visible payloads remain
-// JSON inside payload_json for legacy command payloads; cross-farm settlement
-// uses the separate typed CrossFarmService contract.
+// Farm instance that owns FarmUID. Client-originated commands use the same
+// typed payload as the public WebSocket boundary.
 service FarmCommandService {
   rpc Execute(ExecuteRequest) returns (ExecuteResponse);
   // ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
@@ -45,16 +45,17 @@ message ExecuteRequest {
   Operation operation = 1;
   uint64 farm_uid = 2;
   ConnRef originator = 3;
-  // Opaque JSON payload for the selected operation.
+  // Retained only for internal maintenance commands that have no public cmd.
   bytes payload_json = 4;
   // Gateway can consume a typed public payload directly for self read paths.
   bool prefer_prepared = 5;
+  ClientCommand client_command = 6;
 }
 
 message ExecuteResponse {
   // Protocol-level error code; 0 means success.
   int32 err = 1;
-  // Opaque JSON response for the selected operation.
+  // Retained only for internal maintenance commands that have no public cmd.
   bytes payload_json = 2;
   // Authoritative aggregate sequence for room watermark maintenance. Zero for
   // operations that do not expose or mutate a Farm aggregate.
@@ -63,6 +64,12 @@ message ExecuteResponse {
   bytes prepared_payload = 4;
   // WireEnvelope oneof field number (13=EnterFarmResponse, 14=SyncFarmResponse).
   uint32 prepared_field = 5;
+  farm.public.v3.CommandResponse client_response = 6;
+}
+
+message ClientCommand {
+  uint32 command = 1;
+  farm.public.v3.CommandRequest request = 2;
 }
 
 message StreamExecuteRequest {

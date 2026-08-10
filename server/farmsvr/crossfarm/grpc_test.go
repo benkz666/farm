@@ -71,21 +71,20 @@ func TestGRPCApplyAndDeliverDuplicateSettle(t *testing.T) {
 	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"}, routes)
 
 	action := CrossAction{ReqID: 11, Kind: Water, VisitorUID: 7, OwnerUID: 9, PlotIndex: 0}
+	reserveCode, err := client.ReserveCrossVisitor(context.Background(), action, 20260808)
+	if err != nil || reserveCode != errcode.OK {
+		t.Fatalf("reserve = %d err=%v", reserveCode, err)
+	}
 	result, err := client.ApplyCrossAction(context.Background(), action)
 	if err != nil || result.Code != errcode.OK {
 		t.Fatalf("apply = %#v err=%v", result, err)
 	}
-	visitorAgg.ReserveCross(farm.CrossReservation{
-		ReqID:        action.ReqID,
-		OwnerUID:     action.OwnerUID,
-		MaintainKind: farm.Water,
-	}, 40_000)
 
-	_, code, err := client.DeliverCrossResult(context.Background(), result)
+	_, _, code, err := client.DeliverCrossResult(context.Background(), result)
 	if err != nil || code != errcode.OK {
 		t.Fatalf("first deliver = %d err=%v", code, err)
 	}
-	_, code, err = client.DeliverCrossResult(context.Background(), result)
+	_, _, code, err = client.DeliverCrossResult(context.Background(), result)
 	if err != nil || code != errcode.OK {
 		t.Fatalf("duplicate deliver = %d err=%v", code, err)
 	}

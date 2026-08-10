@@ -64,6 +64,7 @@ type Gateway struct {
 	crossEnabled              bool
 	crossPending              sync.Map
 	crossSlots                chan struct{}
+	writeSlots                chan struct{}
 	nextCrossReqID            atomic.Uint64
 	stealHints                store.StealHintStore
 	taskMail                  store.TaskMailStore
@@ -205,6 +206,19 @@ func WithCrossInFlightLimit(limit int) Option {
 	}
 }
 
+// WithWriteInFlightLimit bounds local plot/shop commands admitted to Farm.
+// It sheds overload before requests accumulate in gRPC/Actor/committer queues,
+// protecting tail latency without changing per-player ordering.
+func WithWriteInFlightLimit(limit int) Option {
+	return func(gateway *Gateway) {
+		if limit <= 0 {
+			gateway.writeSlots = nil
+			return
+		}
+		gateway.writeSlots = make(chan struct{}, limit)
+	}
+}
+
 // WithAPIDocs mounts an already environment-gated, offline documentation handler.
 func WithAPIDocs(handler http.Handler) Option {
 	return func(gateway *Gateway) {
@@ -223,6 +237,7 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, o
 		timeProfiles:   gameconfig.NewTimeProfileSwitch(gameconfig.TimeProfileDemo),
 		friendPayloads: &friendPayloadCache{},
 		crossSlots:     make(chan struct{}, 1024),
+		writeSlots:     make(chan struct{}, 512),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -336,11 +351,11 @@ func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrp
 			return farmrpc.CommandResponse{}, fmt.Errorf("gateway: invalid Farm RPC response: %w", err)
 		}
 	}
+	if response.Err == errcode.OK && len(response.PreparedPayload) > 0 &&
+		!clientwire.IsPreparedResponseField(response.PreparedField) {
+		return farmrpc.CommandResponse{}, errors.New("gateway: invalid prepared Farm RPC response")
+	}
 	if response.Err == errcode.OK && command.PreferPrepared {
-		if len(response.PreparedPayload) > 0 &&
-			response.PreparedField != clientwire.PreparedEnterFarmResponse && response.PreparedField != clientwire.PreparedSyncFarmResponse {
-			return farmrpc.CommandResponse{}, errors.New("gateway: invalid prepared Farm RPC response")
-		}
 		if len(response.PreparedPayload) == 0 && len(response.Payload) == 0 {
 			return farmrpc.CommandResponse{}, errors.New("gateway: empty Farm RPC response")
 		}

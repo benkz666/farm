@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientjson"
 	"farm/server/shared/errcode"
 	"farm/server/shared/store"
@@ -65,9 +66,10 @@ type genShareLinkResponse struct {
 
 func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope) Envelope {
 	response := Envelope{
-		Cmd:       request.Cmd,
-		ClientSeq: request.ClientSeq,
-		Payload:   emptyPayload,
+		Cmd:             request.Cmd,
+		ClientSeq:       request.ClientSeq,
+		Payload:         emptyPayload,
+		CommandResponse: &publicv3.CommandResponse{},
 	}
 	if g.friends == nil {
 		response.Err = errcode.Internal
@@ -76,9 +78,11 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 
 	switch request.Cmd {
 	case CommandFriendList:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-			response.Err = errcode.BadRequest
-			return response
+		if request.CommandRequest == nil {
+			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+				response.Err = errcode.BadRequest
+				return response
+			}
 		}
 		friends, err := g.friends.ListFriends(context.Background(), connection.uid)
 		if err != nil {
@@ -104,13 +108,22 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 				Nickname:     friend.Nickname,
 				HasStealable: hints[friend.UID],
 			})
+			response.CommandResponse.Friends = append(response.CommandResponse.Friends, &publicv3.Friend{
+				Uid: friend.UID, Nickname: friend.Nickname, HasStealable: hints[friend.UID],
+			})
 		}
 		response.Payload = g.friendPayloads.friendList(connection.uid, list)
 		return response
 
 	case CommandSearchUser:
 		var payload searchUserRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.Username == "" {
+		if request.CommandRequest != nil {
+			payload.Username = request.CommandRequest.Username
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.Username == "" {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -127,11 +140,18 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			UID:      clientjson.UID(user.UID),
 			Nickname: user.Nickname,
 		})
+		response.CommandResponse.Users = []*publicv3.User{{Uid: user.UID, Nickname: user.Nickname}}
 		return response
 
 	case CommandRequestFriend:
 		var payload friendPeerRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PeerUID == 0 {
+		if request.CommandRequest != nil {
+			payload.PeerUID = clientjson.UID(request.CommandRequest.PeerUid)
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.PeerUID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -144,9 +164,11 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 		return response
 
 	case CommandListFriendRequests:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-			response.Err = errcode.BadRequest
-			return response
+		if request.CommandRequest == nil {
+			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+				response.Err = errcode.BadRequest
+				return response
+			}
 		}
 		rows, err := g.friends.ListIncomingFriendRequests(context.Background(), connection.uid)
 		if err != nil {
@@ -160,6 +182,9 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 				Nickname:  row.Nickname,
 				CreatedAt: row.CreatedAt,
 			})
+			response.CommandResponse.FriendRequests = append(response.CommandResponse.FriendRequests, &publicv3.FriendRequest{
+				FromUid: row.FromUID, Nickname: row.Nickname, CreatedAt: row.CreatedAt,
+			})
 		}
 		response.Payload = marshalPayload(listFriendRequestsResponse{Requests: list})
 		return response
@@ -168,7 +193,13 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 		var payload struct {
 			FromUID clientjson.UID `json:"from_uid"`
 		}
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.FromUID == 0 {
+		if request.CommandRequest != nil {
+			payload.FromUID = clientjson.UID(request.CommandRequest.FromUid)
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.FromUID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -183,7 +214,13 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 		var payload struct {
 			FromUID clientjson.UID `json:"from_uid"`
 		}
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.FromUID == 0 {
+		if request.CommandRequest != nil {
+			payload.FromUID = clientjson.UID(request.CommandRequest.FromUid)
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.FromUID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -200,9 +237,11 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 		return response
 
 	case CommandGenShareLink:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-			response.Err = errcode.BadRequest
-			return response
+		if request.CommandRequest == nil {
+			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+				response.Err = errcode.BadRequest
+				return response
+			}
 		}
 		if len(g.inviteSecret) == 0 {
 			response.Err = errcode.Internal
@@ -213,12 +252,20 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 			response.Err = errcode.Internal
 			return response
 		}
-		response.Payload = marshalPayload(genShareLinkResponse{Path: "/i/" + token})
+		path := "/i/" + token
+		response.Payload = marshalPayload(genShareLinkResponse{Path: path})
+		response.CommandResponse.Path = path
 		return response
 
 	case CommandAcceptInvite:
 		var payload acceptInviteRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.Token == "" {
+		if request.CommandRequest != nil {
+			payload.Token = request.CommandRequest.InviteToken
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.Token == "" {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -240,7 +287,13 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 
 	case CommandRemoveFriend:
 		var payload friendPeerRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PeerUID == 0 {
+		if request.CommandRequest != nil {
+			payload.PeerUID = clientjson.UID(request.CommandRequest.PeerUid)
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.PeerUID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -259,7 +312,13 @@ func (g *Gateway) handleFriendRequest(connection *wsConnection, request Envelope
 
 	case CommandAddFriendByUID:
 		var payload friendPeerRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.PeerUID == 0 {
+		if request.CommandRequest != nil {
+			payload.PeerUID = clientjson.UID(request.CommandRequest.PeerUid)
+		} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			response.Err = errcode.BadRequest
+			return response
+		}
+		if payload.PeerUID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}

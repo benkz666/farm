@@ -1,0 +1,3 @@
+ALTER TABLE player_task
+    ADD COLUMN journal_stream_ms BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    ADD COLUMN journal_stream_seq BIGINT UNSIGNED NOT NULL DEFAULT 0;

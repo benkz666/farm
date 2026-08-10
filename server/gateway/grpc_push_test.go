@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http/httptest"
@@ -96,10 +95,7 @@ func TestGRPCPushFarmDeltaBatch(t *testing.T) {
 	if err != nil || len(refs) != 1 {
 		t.Fatalf("LookupSubscribers = %#v err=%v", refs, err)
 	}
-	envelope, err := clientwire.EncodeFarmDelta(farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: 5})
-	if err != nil {
-		t.Fatalf("EncodeFarmDelta: %v", err)
-	}
+	delta := farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: 5}
 
 	pool := newTestPushPool(t, "push-token", gateway)
 	clientConn, err := pool.Conn(context.Background(), "bufconn")
@@ -107,8 +103,8 @@ func TestGRPCPushFarmDeltaBatch(t *testing.T) {
 		t.Fatalf("Conn: %v", err)
 	}
 	_, err = farmv1.NewGatewayPushServiceClient(clientConn).PushFarmDeltaBatch(context.Background(), &farmv1.PushFarmDeltaBatchRequest{
-		ConnIds:  []uint64{refs[0].ConnID},
-		Envelope: envelope,
+		ConnIds: []uint64{refs[0].ConnID},
+		Delta:   clientwire.FarmDeltaToProto(delta),
 	})
 	if err != nil {
 		t.Fatalf("PushFarmDeltaBatch: %v", err)
@@ -116,9 +112,8 @@ func TestGRPCPushFarmDeltaBatch(t *testing.T) {
 
 	frame := readRawFrame(t, viewer)
 	batch, decodeErr := clientwire.DecodeBinaryBatch(frame)
-	want, wantErr := clientwire.DecodeEnvelope(envelope)
-	if decodeErr != nil || wantErr != nil || len(batch) != 1 || batch[0].Cmd != want.Cmd || !bytes.Equal(batch[0].Payload, want.Payload) {
-		t.Fatalf("binary frame = %#v decodeErr=%v wantErr=%v", batch, decodeErr, wantErr)
+	if decodeErr != nil || len(batch) != 1 || batch[0].Cmd != CommandFarmDelta || batch[0].FarmDelta == nil || batch[0].FarmDelta.FarmSeq != delta.FarmSeq {
+		t.Fatalf("binary frame = %#v decodeErr=%v", batch, decodeErr)
 	}
 }
 
@@ -132,8 +127,7 @@ func TestGRPCPushFarmDeltaBatchRejectsMalformedEnvelope(t *testing.T) {
 		t.Fatalf("Conn: %v", err)
 	}
 	_, err = farmv1.NewGatewayPushServiceClient(clientConn).PushFarmDeltaBatch(context.Background(), &farmv1.PushFarmDeltaBatchRequest{
-		ConnIds:  []uint64{1},
-		Envelope: []byte(`not-json`),
+		ConnIds: []uint64{1},
 	})
 	if err == nil {
 		t.Fatal("expected malformed envelope error")

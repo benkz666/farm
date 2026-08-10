@@ -43,11 +43,17 @@ type fixture struct {
 	PeerUsername string `json:"peer_username"`
 	FromUID      string `json:"from_uid"`
 	PlotIndex    int    `json:"plot_index"`
+	PlotIndexes  []int  `json:"plot_indexes,omitempty"`
 	CropID       int    `json:"crop_id"`
 	ItemID       int    `json:"item_id"`
 	Quantity     int    `json:"quantity"`
 	TaskID       int    `json:"task_id"`
 	MailID       string `json:"mail_id"`
+}
+
+type fixtureFile struct {
+	TimeProfile string    `json:"time_profile,omitempty"`
+	Accounts    []fixture `json:"accounts"`
 }
 
 func main() {
@@ -59,12 +65,14 @@ func main() {
 	concurrency := flag.Int("concurrency", 32, "parallel account registrations")
 	mergeBase := flag.String("merge-base", "", "optional first fixture in merge-only mode")
 	mergeInput := flag.String("merge-input", "", "optional second fixture in merge-only mode")
+	resetInput := flag.String("reset-input", "", "reuse accounts from an existing fixture and reset their Farm state")
 	mysqlDSN := flag.String("mysql-dsn", "", "optional direct fixture MySQL DSN; skips password hashing and HTTP registration")
 	redisAddr := flag.String("redis-addr", "", "Redis address required with mysql-dsn")
 	uidBase := flag.Uint64("uid-base", 1_000_000, "first UID in direct fixture mode")
 	wsURL := flag.String("ws-url", "ws://gateway:9002/ws", "WebSocket URL written in direct fixture mode")
 	loginCapable := flag.Bool("login-capable", false, "store one reusable bcrypt hash for direct fixtures so /api/login can authenticate them")
-	profile := flag.String("profile", "default", "direct fixture state: default, water, water-visitor, harvest, sell, or steal")
+	profile := flag.String("profile", "default", "direct fixture state: default, water, water-visitor, harvest, sell, hot-economy, or steal")
+	timeProfile := flag.String("time-profile", fixtureTimeProfileDefault(), "Farm time profile used to build stateful fixtures; must match farmsvr")
 	flag.Parse()
 	if *mergeBase != "" || *mergeInput != "" {
 		if *mergeBase == "" || *mergeInput == "" {
@@ -75,6 +83,12 @@ func main() {
 		}
 		return
 	}
+	if *resetInput != "" && (*mysqlDSN == "" || *redisAddr == "") {
+		fatalf("reset-input requires mysql-dsn and redis-addr")
+	}
+	if *resetInput != "" && *profile == "default" {
+		fatalf("reset-input requires a stateful profile")
+	}
 	if *count < 2 || *concurrency < 1 {
 		fatalf("count must be at least 2")
 	}
@@ -83,6 +97,9 @@ func main() {
 	}
 	if !validFixtureProfile(*profile) {
 		fatalf("unknown profile %q", *profile)
+	}
+	if !gameconfig.ValidTimeProfile(*timeProfile) {
+		fatalf("unknown time profile %q", *timeProfile)
 	}
 	if *profile != "default" && *mysqlDSN == "" {
 		fatalf("stateful profile %q requires direct mysql-dsn/redis-addr mode", *profile)
@@ -105,6 +122,17 @@ func main() {
 			}
 			directPasswordHash = string(hash)
 		}
+	}
+	if *resetInput != "" {
+		fixtures, err := readFixtures(*resetInput)
+		if err != nil {
+			fatalf("read reset fixture: %v", err)
+		}
+		if err := resetFixtures(directStorage, fixtures, *profile, *timeProfile, *concurrency); err != nil {
+			fatalf("reset fixtures: %v", err)
+		}
+		fmt.Printf("benchfixture: reset %d existing accounts from %s with profile %s\n", len(fixtures), *resetInput, *profile)
+		return
 	}
 
 	runSuffix := time.Now().UTC().Format("150405")
@@ -137,10 +165,10 @@ func main() {
 					if err == nil {
 						if *profile != "default" {
 							statefulPrepareMu.Lock()
-							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile)
+							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile, *timeProfile)
 							statefulPrepareMu.Unlock()
 						} else {
-							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile)
+							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile, *timeProfile)
 						}
 					}
 				} else {
@@ -152,7 +180,8 @@ func main() {
 				}
 				fixtures[index] = fixture{
 					Username: username, Password: *password, UID: auth.UID, Token: auth.Token, WSURL: auth.WSURL,
-					OwnerUID: "0", PlotIndex: 0, CropID: 1, ItemID: 1, Quantity: 1, TaskID: 1, MailID: "1",
+					OwnerUID: "0", PlotIndex: 0, PlotIndexes: fixturePlotIndexes(*profile),
+					CropID: 1, ItemID: 1, Quantity: 1, TaskID: 1, MailID: "1",
 				}
 				if done := completed.Add(1); done%250 == 0 {
 					fmt.Printf("benchfixture: registered %d/%d\n", done, *count)
@@ -211,7 +240,7 @@ func main() {
 	}
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(map[string]any{"accounts": fixtures}); err != nil {
+	if err := encoder.Encode(fixtureFile{TimeProfile: *timeProfile, Accounts: fixtures}); err != nil {
 		_ = file.Close()
 		fatalf("encode output: %v", err)
 	}
@@ -223,14 +252,130 @@ func main() {
 
 func validFixtureProfile(profile string) bool {
 	switch profile {
-	case "default", "water", "water-visitor", "harvest", "sell", "steal":
+	case "default", "water", "water-visitor", "harvest", "sell", "hot-economy", "steal":
 		return true
 	default:
 		return false
 	}
 }
 
-func prepareDirectFixture(ctx context.Context, storage *store.Store, uid uint64, profile string) error {
+func fixtureTimeProfileDefault() string {
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("FARM_TIME_PROFILE")))
+	if !gameconfig.ValidTimeProfile(profile) {
+		return gameconfig.TimeProfileDemo
+	}
+	return profile
+}
+
+func fixturePlotIndexes(profile string) []int {
+	switch profile {
+	case "water", "water-visitor", "harvest", "steal":
+		indexes := make([]int, gameconfig.MaxPlots)
+		for index := range indexes {
+			indexes[index] = index
+		}
+		return indexes
+	default:
+		return nil
+	}
+}
+
+func readFixtures(path string) ([]fixture, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var decoded fixtureFile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return nil, err
+	}
+	if len(decoded.Accounts) < 2 {
+		return nil, errors.New("fixture requires at least two accounts")
+	}
+	return decoded.Accounts, nil
+}
+
+func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfile string, concurrency int) error {
+	if storage == nil {
+		return errors.New("reset fixture storage is nil")
+	}
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	concurrency = min(concurrency, len(fixtures))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobs := make(chan fixture)
+	errs := make(chan error, concurrency)
+	var completed atomic.Int64
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for item := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				uid, err := strconv.ParseUint(item.UID, 10, 64)
+				if err != nil || uid == 0 {
+					errs <- fmt.Errorf("invalid fixture uid %q", item.UID)
+					cancel()
+					return
+				}
+				if item.Token == "" {
+					errs <- fmt.Errorf("fixture uid %d has an empty token", uid)
+					cancel()
+					return
+				}
+				// The account pool is permanent; refreshing its existing session keeps
+				// repeated benchmark runs from needing account regeneration after the
+				// normal seven-day token TTL.
+				if err := storage.Put(ctx, item.Token, uid, 7*24*time.Hour); err != nil {
+					errs <- fmt.Errorf("refresh fixture session %d: %w", uid, err)
+					cancel()
+					return
+				}
+				if err := prepareDirectFixtureWithRetry(ctx, storage, uid, profile, timeProfile); err != nil {
+					errs <- err
+					cancel()
+					return
+				}
+				if (profile == "steal" || profile == "water-visitor") && item.PeerUID != "" {
+					peerUID, parseErr := strconv.ParseUint(item.PeerUID, 10, 64)
+					if parseErr != nil || peerUID == 0 {
+						errs <- fmt.Errorf("invalid fixture peer uid %q", item.PeerUID)
+						cancel()
+						return
+					}
+					if friendErr := storage.AddFriends(ctx, uid, peerUID); friendErr != nil && !errors.Is(friendErr, store.ErrAlreadyFriend) {
+						errs <- friendErr
+						cancel()
+						return
+					}
+				}
+				if done := completed.Add(1); done%250 == 0 {
+					fmt.Printf("benchfixture: reset %d/%d\n", done, len(fixtures))
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, item := range fixtures {
+			select {
+			case jobs <- item:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	workers.Wait()
+	close(errs)
+	return <-errs
+}
+
+func prepareDirectFixture(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {
 	if profile == "default" {
 		return nil
 	}
@@ -238,50 +383,9 @@ func prepareDirectFixture(ctx context.Context, storage *store.Store, uid uint64,
 	if err != nil {
 		return fmt.Errorf("load direct fixture farm: %w", err)
 	}
-	crop, ok := gameconfig.CropByID(1)
-	if !ok {
-		return errors.New("crop 1 is not configured")
-	}
-	now := time.Now().UnixMilli()
-	stageCount := uint8(3)
-	if crop.UnlockLevel >= 3 {
-		stageCount = 4
-	}
-	switch profile {
-	case "water", "water-visitor":
-		// Direct fixture creation can take tens of seconds for a large account
-		// pool, while the demo profile may mature a crop sooner than that. Keep
-		// the fixture growing until its first EnterFarm; Farm then reprofiles it
-		// to the authoritative server profile before the measured Water action.
-		duration := int64((15 * time.Minute) / time.Millisecond)
-		aggregate.Plots[0] = farm.Plot{
-			State:          farm.StateGrowing,
-			SeasonTotal:    crop.Seasons,
-			StageCount:     stageCount,
-			CropID:         crop.ID,
-			PlantNonce:     1,
-			SeasonStartAt:  now,
-			SeasonDuration: duration,
-			MatureAt:       now + duration,
-			LastSettleAt:   now,
-			LastWaterAt:    0,
-		}
-	case "harvest", "steal":
-		aggregate.Plots[0] = farm.Plot{
-			State:          farm.StateMature,
-			SeasonTotal:    crop.Seasons,
-			StageCount:     stageCount,
-			CropID:         crop.ID,
-			FinalYield:     crop.Yield,
-			PlantNonce:     1,
-			HarvestRound:   1,
-			SeasonStartAt:  now - 1,
-			SeasonDuration: 1,
-			MatureAt:       now - 1,
-			LastSettleAt:   now - 1,
-		}
-	case "sell":
-		aggregate.AddItem(farm.FruitItem(crop.ID), 100)
+	aggregate = farm.NewAggregate(uid, aggregate.Nickname)
+	if err := prepareAggregateProfile(aggregate, profile, timeProfile, time.Now().UnixMilli()); err != nil {
+		return err
 	}
 	aggregate.FarmSeq++
 	if err := storage.SaveFarm(ctx, aggregate); err != nil {
@@ -290,10 +394,77 @@ func prepareDirectFixture(ctx context.Context, storage *store.Store, uid uint64,
 	return nil
 }
 
-func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, uid uint64, profile string) error {
+func prepareAggregateProfile(aggregate *farm.Aggregate, profile, timeProfile string, now int64) error {
+	if aggregate == nil || aggregate.UID == 0 {
+		return errors.New("invalid fixture aggregate")
+	}
+	crop, ok := gameconfig.CropByID(1)
+	if !ok {
+		return errors.New("crop 1 is not configured")
+	}
+	stageCount := uint8(3)
+	if crop.UnlockLevel >= 3 {
+		stageCount = 4
+	}
+	switch profile {
+	case "water", "water-visitor":
+		// The duration must already match Farm's authoritative profile. Otherwise
+		// EnterFarm reprofiles every plot during warmup and injects unrelated
+		// journal/MySQL work into the measured Water window.
+		duration := gameconfig.SeasonDurationMs(crop, 0, timeProfile)
+		if duration <= 0 {
+			return fmt.Errorf("invalid fixture time profile %q", timeProfile)
+		}
+		aggregate.UnlockedPlots = uint8(gameconfig.MaxPlots)
+		for index := range aggregate.Plots {
+			aggregate.Plots[index] = farm.Plot{
+				State:          farm.StateGrowing,
+				SeasonTotal:    crop.Seasons,
+				StageCount:     stageCount,
+				CropID:         crop.ID,
+				PlantNonce:     uint32(index + 1),
+				SeasonStartAt:  now,
+				SeasonDuration: duration,
+				MatureAt:       now + duration,
+				LastSettleAt:   now,
+				LastWaterAt:    0,
+			}
+		}
+	case "harvest", "steal":
+		aggregate.UnlockedPlots = uint8(gameconfig.MaxPlots)
+		for index := range aggregate.Plots {
+			aggregate.Plots[index] = farm.Plot{
+				State:          farm.StateMature,
+				SeasonTotal:    crop.Seasons,
+				StageCount:     stageCount,
+				CropID:         crop.ID,
+				FinalYield:     crop.Yield,
+				PlantNonce:     uint32(index + 1),
+				HarvestRound:   1,
+				SeasonStartAt:  now - 1,
+				SeasonDuration: 1,
+				MatureAt:       now - 1,
+				LastSettleAt:   now - 1,
+			}
+		}
+	case "sell":
+		aggregate.AddItem(farm.FruitItem(crop.ID), 100)
+	case "hot-economy":
+		// Buy/Sell hot-path tests keep the WebSocket and Actor resident while
+		// sending many commands. Seed enough assets outside the measurement
+		// window so business rejections cannot be mistaken for saturation.
+		aggregate.Coin = 1_000_000_000
+		aggregate.AddItem(farm.FruitItem(crop.ID), 1_000_000)
+	default:
+		return fmt.Errorf("unsupported stateful fixture profile %q", profile)
+	}
+	return nil
+}
+
+func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {
 	const attempts = 5
 	for attempt := 0; attempt < attempts; attempt++ {
-		err := prepareDirectFixture(ctx, storage, uid, profile)
+		err := prepareDirectFixture(ctx, storage, uid, profile, timeProfile)
 		if err == nil {
 			return nil
 		}
@@ -341,19 +512,21 @@ func createDirectFixture(storage *store.Store, uid uint64, username, wsURL, pass
 }
 
 func mergeFixtures(firstPath, secondPath, outputPath string) error {
-	var merged struct {
-		Accounts []fixture `json:"accounts"`
-	}
+	var merged fixtureFile
 	for _, path := range []string{firstPath, secondPath} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		var input struct {
-			Accounts []fixture `json:"accounts"`
-		}
+		var input fixtureFile
 		if err := json.Unmarshal(data, &input); err != nil {
 			return err
+		}
+		if input.TimeProfile != "" {
+			if merged.TimeProfile != "" && merged.TimeProfile != input.TimeProfile {
+				return fmt.Errorf("cannot merge fixture time profiles %q and %q", merged.TimeProfile, input.TimeProfile)
+			}
+			merged.TimeProfile = input.TimeProfile
 		}
 		merged.Accounts = append(merged.Accounts, input.Accounts...)
 	}

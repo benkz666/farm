@@ -30,8 +30,9 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GatewayPushService delivers pre-encoded client envelopes to local WebSocket
-// connections. Gateways must not decode and re-encode envelope bytes.
+// GatewayPushService delivers typed push payloads to the Gateway that owns the
+// target WebSocket connection. Gateway adds the public envelope and batches
+// records only at the final client boundary.
 type GatewayPushServiceClient interface {
 	PushFarmDeltaBatch(ctx context.Context, in *PushFarmDeltaBatchRequest, opts ...grpc.CallOption) (*Empty, error)
 	PushPlayerDelta(ctx context.Context, in *PushPlayerDeltaRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -102,8 +103,9 @@ func (c *gatewayPushServiceClient) PushSessionKick(ctx context.Context, in *Push
 // All implementations must embed UnimplementedGatewayPushServiceServer
 // for forward compatibility.
 //
-// GatewayPushService delivers pre-encoded client envelopes to local WebSocket
-// connections. Gateways must not decode and re-encode envelope bytes.
+// GatewayPushService delivers typed push payloads to the Gateway that owns the
+// target WebSocket connection. Gateway adds the public envelope and batches
+// records only at the final client boundary.
 type GatewayPushServiceServer interface {
 	PushFarmDeltaBatch(context.Context, *PushFarmDeltaBatchRequest) (*Empty, error)
 	PushPlayerDelta(context.Context, *PushPlayerDeltaRequest) (*Empty, error)

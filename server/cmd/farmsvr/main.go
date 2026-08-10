@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
 	"farm/server/shared/servicehost"
+	"farm/server/shared/store"
 	"farm/server/shared/telemetry"
 	"farm/server/shared/testclock"
 	socialapi "farm/server/socialsvr/api"
@@ -88,6 +90,55 @@ func run() error {
 		return err
 	}
 	defer closeStorage()
+	stealHints := store.NewAsyncStealHintStore(storage)
+	defer stealHints.Shutdown(context.Background())
+	metrics := telemetry.NewMetrics(nil)
+	journalConfig := store.DefaultFarmWriteJournalConfig(instanceID)
+	journalConfig.Shards, err = intSetting("FARM_WRITE_JOURNAL_SHARDS", journalConfig.Shards)
+	if err != nil || journalConfig.Shards == 0 {
+		return fmt.Errorf("farm: FARM_WRITE_JOURNAL_SHARDS must be positive")
+	}
+	journalConfig.Projectors, err = intSetting("FARM_WRITE_JOURNAL_PROJECTORS", journalConfig.Projectors)
+	if err != nil || journalConfig.Projectors == 0 {
+		return fmt.Errorf("farm: FARM_WRITE_JOURNAL_PROJECTORS must be positive")
+	}
+	journalConfig.BatchSize = int64Value("FARM_WRITE_JOURNAL_BATCH", journalConfig.BatchSize)
+	journalConfig.Block, err = durationSetting("FARM_WRITE_JOURNAL_BLOCK", journalConfig.Block.String())
+	if err != nil {
+		return err
+	}
+	journalConfig.LatestTTL, err = durationSetting("FARM_WRITE_JOURNAL_LATEST_TTL", journalConfig.LatestTTL.String())
+	if err != nil {
+		return err
+	}
+	journalConfig.ClaimIdle, err = durationSetting("FARM_WRITE_JOURNAL_CLAIM_IDLE", journalConfig.ClaimIdle.String())
+	if err != nil {
+		return err
+	}
+	journalConfig.ReplicaAcks, err = intSetting("FARM_WRITE_JOURNAL_REPLICAS", 0)
+	if err != nil {
+		return err
+	}
+	journal, closeJournalRedis, err := store.OpenFarmWriteJournal(
+		ctx,
+		storage,
+		servicehost.Getenv("FARM_EVENT_REDIS_ADDR", config.RedisAddr),
+		journalConfig,
+	)
+	if err != nil {
+		return err
+	}
+	defer closeJournalRedis()
+	journal.SetMetrics(metrics)
+	if err := journal.Start(ctx); err != nil {
+		return err
+	}
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
+	if err := journal.WaitIdle(recoveryContext); err != nil {
+		cancelRecovery()
+		return fmt.Errorf("farm: recover write journal before serving: %w", err)
+	}
+	cancelRecovery()
 
 	actorIdleTTL, err := durationSetting("FARM_ACTOR_IDLE_TTL", "2m")
 	if err != nil {
@@ -97,8 +148,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	metrics := telemetry.NewMetrics(nil)
-	runtime := room.NewRuntime(storage, actorIdleTTL)
+	committerShards, err := intSetting("FARM_COMMITTER_SHARDS", 4)
+	if err != nil || committerShards == 0 {
+		return fmt.Errorf("farm: FARM_COMMITTER_SHARDS must be positive")
+	}
+	runtime := room.NewRuntime(journal.WrapFarmStore(storage), actorIdleTTL)
+	runtime.SetCommitterShards(committerShards)
 	runtime.SetMaxResident(actorMaxResident)
 	runtime.SetHazardSalt(farm.DeriveHazardSalt(hazardSecret))
 	runtime.SetMetrics(metrics)
@@ -109,11 +164,12 @@ func run() error {
 
 	grpcPool := grpcx.NewPool(config.InternalToken)
 	pushClient := farmrpc.NewGatewayPushClient(grpcPool, gatewayTargets)
-	deltaPublisher := farmrpc.NewFanoutPublisher(
+	fanoutPublisher := farmrpc.NewFanoutPublisher(
 		storage.ConnectionRegistry(),
 		farmrpc.NewGRPCDeltaPusher(pushClient),
 	)
-	deltaPublisher.SetMetrics(metrics)
+	fanoutPublisher.SetMetrics(metrics)
+	deltaPublisher := farmrpc.NewAsyncDeltaPublisher(fanoutPublisher, 16, 1024)
 	playerDeltaPublisher := farmrpc.NewPlayerFanoutPublisher(
 		storage.ConnectionRegistry(),
 		farmrpc.NewGRPCPlayerDeltaPusher(pushClient),
@@ -126,12 +182,25 @@ func run() error {
 		storage.ConnectionRegistry(),
 		farmrpc.NewGRPCMailNotifyPusher(pushClient),
 	)
+	journal.SetTaskObserver(func(uid uint64, task store.Task) {
+		if err := taskNotifyPublisher.PublishTaskNotify(context.Background(), uid, task); err != nil {
+			telemetry.L().Error("write journal task notify failed",
+				"component", "write_journal", "uid", uid, "err", err.Error())
+		}
+	})
+	journal.SetMailObserver(func(uid uint64) {
+		if err := mailNotifyPublisher.PublishMailNotify(context.Background(), uid, "codex_reward"); err != nil {
+			telemetry.L().Error("write journal mail notify failed",
+				"component", "write_journal", "uid", uid, "err", err.Error())
+		}
+	})
+	directStore := journal.WrapDirectStore(storage)
 	socialClient := socialapi.NewGRPCClient(grpcPool, socialTarget)
 	friends := friendauth.NewCache(socialClient)
 	go startFriendInvalidationWatch(ctx, friends, socialClient)
 	clock := &testclock.Clock{}
 	owner := crossfarm.NewOwner(runtime, friends, clock.Now, deltaPublisher, owns)
-	owner.SetStealHintWriter(storage)
+	owner.SetStealHintWriter(stealHints)
 	owner.SetPlayerDeltaPublisher(playerDeltaPublisher)
 	visitor := crossfarm.NewVisitorSettler(runtime, clock.Now)
 	crossClient := crossfarm.NewGRPCClient(grpcPool, farmTargets, routes)
@@ -148,23 +217,31 @@ func run() error {
 		farmrpc.WithDeltaPublisher(deltaPublisher),
 		farmrpc.WithPlayerDeltaPublisher(playerDeltaPublisher),
 		farmrpc.WithTaskNotifyPublisher(taskNotifyPublisher),
-		farmrpc.WithStealHintWriter(storage),
+		farmrpc.WithStealHintWriter(stealHints),
 		farmrpc.WithTaskMailStore(storage),
-		farmrpc.WithTaskProgressWriter(storage),
-		farmrpc.WithTaskClaimer(storage),
-		farmrpc.WithDailyLoginClaimer(storage),
-		farmrpc.WithMailClaimer(storage),
-		farmrpc.WithCodexRewardStore(storage),
+		farmrpc.WithTaskProgressWriter(journal),
+		farmrpc.WithTaskClaimer(directStore),
+		farmrpc.WithDailyLoginClaimer(directStore),
+		farmrpc.WithMailClaimer(directStore),
+		farmrpc.WithCodexRewardStore(journal),
+		farmrpc.WithBundledJournalSideEffects(),
 		farmrpc.WithMailNotifyPublisher(mailNotifyPublisher),
 		farmrpc.WithTimeProfileSwitch(timeProfiles),
 	)
 	owner.SetAdvanceScheduler(commandHandler.ScheduleAdvanceAt)
-	crossServer := crossfarm.NewGRPCServer(owner, visitor, owns, playerDeltaPublisher, storage)
+	crossServer := crossfarm.NewGRPCServer(
+		owner, visitor, owns, playerDeltaPublisher, journal.WrapOutboxStore(storage),
+	)
 
 	return (servicehost.Host{
 		Config:  config,
 		Handler: http.NewServeMux(),
-		Checker: telemetry.FuncChecker("storage", storage.Ping),
+		Checker: telemetry.FuncChecker("storage_and_write_journal", func(ctx context.Context) error {
+			if err := storage.Ping(ctx); err != nil {
+				return err
+			}
+			return journal.Ping(ctx)
+		}),
 		Metrics: metrics,
 		GRPC: &servicehost.GRPC{
 			Addr: config.GRPCAddr,
@@ -183,9 +260,23 @@ func run() error {
 		BeforeShutdown: func(ctx context.Context) error {
 			_ = dispatcher.Shutdown(ctx)
 			commandHandler.Shutdown()
-			return runtime.Shutdown(ctx)
+			return errors.Join(
+				runtime.Shutdown(ctx),
+				deltaPublisher.Shutdown(ctx),
+				stealHints.Shutdown(ctx),
+				journal.Shutdown(ctx),
+			)
 		},
 	}).Run(ctx)
+}
+
+func int64Value(name string, fallback int64) int64 {
+	raw := servicehost.Getenv(name, strconv.FormatInt(fallback, 10))
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func durationSetting(name, fallback string) (time.Duration, error) {

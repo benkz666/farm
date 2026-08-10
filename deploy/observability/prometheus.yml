@@ -8,13 +8,8 @@ global:
 scrape_configs:
   - job_name: farm-gateway
     metrics_path: /metrics
-    # Compose 扩容时 gateway DNS 会返回每个副本的 A 记录；DNS SD 将每个
-    # 实例作为独立 target，避免静态 gateway:9302 只长期抓到其中一个 IP。
-    dns_sd_configs:
-      - names: ["gateway"]
-        type: A
-        port: 9302
-        refresh_interval: 15s
+    static_configs:
+      - targets: ["gateway-1:9302", "gateway-2:9302", "gateway-3:9302"]
 
   - job_name: farm
     metrics_path: /metrics
@@ -33,6 +28,10 @@ scrape_configs:
   - job_name: redis-exporter
     static_configs:
       - targets: ["redis-exporter:9121"]
+
+  - job_name: event-redis-exporter
+    static_configs:
+      - targets: ["event-redis-exporter:9121"]
 
   - job_name: cadvisor
     static_configs:

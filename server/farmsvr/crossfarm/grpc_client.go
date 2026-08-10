@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"farm/server/domain/farm"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 )
@@ -49,6 +51,22 @@ func (client *GRPCClient) service(ctx context.Context, uid uint64) (farmv1.Cross
 	return farmv1.NewCrossFarmServiceClient(conn), nil
 }
 
+// ReserveCrossVisitor durably reserves visitor resources through the typed
+// cross-farm boundary, avoiding the generic JSON Farm command hot path.
+func (client *GRPCClient) ReserveCrossVisitor(ctx context.Context, action CrossAction, dayID uint32) (errcode.Code, error) {
+	service, err := client.service(ctx, action.VisitorUID)
+	if err != nil {
+		return errcode.Internal, err
+	}
+	response, err := service.ReserveCrossAction(ctx, &farmv1.ReserveCrossActionRequest{
+		Action: actionToProto(action), DayId: dayID,
+	})
+	if err != nil {
+		return errcode.Internal, err
+	}
+	return errcode.Code(response.Err), nil
+}
+
 // ApplyCrossAction adjudicates an action on the owner farm.
 func (client *GRPCClient) ApplyCrossAction(ctx context.Context, action CrossAction) (CrossResult, error) {
 	service, err := client.service(ctx, action.OwnerUID)
@@ -71,18 +89,23 @@ func (client *GRPCClient) ApplyCrossAction(ctx context.Context, action CrossActi
 }
 
 // DeliverCrossResult settles a result on the visitor farm.
-func (client *GRPCClient) DeliverCrossResult(ctx context.Context, result CrossResult) (VisitorReward, errcode.Code, error) {
+func (client *GRPCClient) DeliverCrossResult(ctx context.Context, result CrossResult) (VisitorReward, *farm.PlayerDelta, errcode.Code, error) {
 	service, err := client.service(ctx, result.VisitorUID)
 	if err != nil {
-		return VisitorReward{}, errcode.Internal, err
+		return VisitorReward{}, nil, errcode.Internal, err
 	}
 	response, err := service.DeliverCrossResult(ctx, &farmv1.DeliverCrossResultRequest{
 		Result: resultToProto(result),
 	})
 	if err != nil {
-		return VisitorReward{}, errcode.Internal, err
+		return VisitorReward{}, nil, errcode.Internal, err
 	}
-	return rewardFromProto(response.Reward), errcode.Code(response.Err), nil
+	var playerDelta *farm.PlayerDelta
+	if response.PlayerDelta != nil {
+		decoded := clientwire.PlayerDeltaFromProto(response.PlayerDelta)
+		playerDelta = &decoded
+	}
+	return rewardFromProto(response.Reward), playerDelta, errcode.Code(response.Err), nil
 }
 
 // AcknowledgeCrossResult marks an owner outbox row published after direct visitor settlement.

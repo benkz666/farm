@@ -5,6 +5,37 @@ import (
 	"time"
 )
 
+func TestNewConfiguresReadCachesForFormalFixture(t *testing.T) {
+	storage := New(nil, nil, 0)
+	if defaultReadCacheCapacity < 15_000 {
+		t.Fatalf("read cache capacity = %d, does not fit formal fixture", defaultReadCacheCapacity)
+	}
+	if storage.taskRead.capacity != defaultReadCacheCapacity || storage.taskEncoded.capacity != defaultReadCacheCapacity {
+		t.Fatalf(
+			"task cache capacities = structured:%d encoded:%d, want %d",
+			storage.taskRead.capacity,
+			storage.taskEncoded.capacity,
+			defaultReadCacheCapacity,
+		)
+	}
+	if storage.mailbox.local.capacity != mailLocalCacheCapacity || storage.mailbox.encoded.capacity != mailLocalCacheCapacity {
+		t.Fatalf(
+			"mail cache capacities = structured:%d encoded:%d, want %d",
+			storage.mailbox.local.capacity,
+			storage.mailbox.encoded.capacity,
+			mailLocalCacheCapacity,
+		)
+	}
+	if storage.mailbox.local.ttl != mailLocalCacheTTL || storage.mailbox.encoded.ttl != mailLocalCacheTTL {
+		t.Fatalf(
+			"mail cache TTLs = structured:%s encoded:%s, want %s",
+			storage.mailbox.local.ttl,
+			storage.mailbox.encoded.ttl,
+			mailLocalCacheTTL,
+		)
+	}
+}
+
 func TestInvalidateTaskCacheDropsStructuredAndEncodedViews(t *testing.T) {
 	storage := &Store{}
 	key := taskReadKey{uid: 42, dayKey: 20260807}

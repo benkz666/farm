@@ -30,14 +30,22 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 		var payload farmrpc.PetRequest
 		switch request.Cmd {
 		case CommandPetStatus:
-			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-				response.Err = errcode.BadRequest
-				return response
+			if request.CommandRequest == nil {
+				if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+					response.Err = errcode.BadRequest
+					return response
+				}
 			}
 			payload.Kind = farmrpc.PetStatus
 		case CommandPetActivate:
 			var activate petActivateRequest
-			if err := unmarshalPayload(request.Payload, &activate); err != nil || activate.DogType > 0xFF {
+			if request.CommandRequest != nil {
+				activate.DogType = request.CommandRequest.DogType
+			} else if err := unmarshalPayload(request.Payload, &activate); err != nil {
+				response.Err = errcode.BadRequest
+				return response
+			}
+			if activate.DogType > 0xFF {
 				response.Err = errcode.BadRequest
 				return response
 			}
@@ -45,7 +53,9 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 			payload.DogType = farm.DogType(activate.DogType)
 		case CommandPetFeed:
 			var feed petFeedRequest
-			if err := unmarshalPayload(request.Payload, &feed); err != nil {
+			if request.CommandRequest != nil {
+				feed.Grams = request.CommandRequest.Grams
+			} else if err := unmarshalPayload(request.Payload, &feed); err != nil {
 				response.Err = errcode.BadRequest
 				return response
 			}
@@ -56,9 +66,11 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 			return response
 		}
 		remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-			Operation:  farmrpc.OperationPet,
-			Originator: g.connectionRef(connection),
-			Payload:    marshalPayload(payload),
+			Operation:     farmrpc.OperationPet,
+			Originator:    g.connectionRef(connection),
+			ClientCommand: request.Cmd,
+			ClientRequest: request.CommandRequest,
+			Payload:       marshalPayload(payload),
 		})
 		if err != nil {
 			response.Err = errcode.Internal
@@ -67,6 +79,7 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 		response.Err = remote.Err
 		if remote.Err == errcode.OK {
 			response.Payload = remote.Payload
+			response.CommandResponse = remote.ClientResponse
 		}
 		return response
 	}
@@ -85,19 +98,28 @@ func (g *Gateway) handlePet(connection *wsConnection, request Envelope) Envelope
 		beforeFarmSeq := farmActor.Aggregate.FarmSeq
 		switch request.Cmd {
 		case CommandPetStatus:
-			if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
-				return err
+			if request.CommandRequest == nil {
+				if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+					return err
+				}
 			}
 			result.Err = errcode.OK
 		case CommandPetActivate:
 			var payload petActivateRequest
-			if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.DogType > 0xFF {
+			if request.CommandRequest != nil {
+				payload.DogType = request.CommandRequest.DogType
+			} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+				return errors.New("gateway: invalid pet activate payload")
+			}
+			if payload.DogType > 0xFF {
 				return errors.New("gateway: invalid pet activate payload")
 			}
 			result = farmActor.Aggregate.PetActivateWithProfile(farm.DogType(payload.DogType), g.Now(), g.TimeProfile())
 		case CommandPetFeed:
 			var payload petFeedRequest
-			if err := unmarshalPayload(request.Payload, &payload); err != nil {
+			if request.CommandRequest != nil {
+				payload.Grams = request.CommandRequest.Grams
+			} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
 				return err
 			}
 			result = farmActor.Aggregate.PetFeedWithProfile(farm.PetFeedReq{Grams: payload.Grams}, g.Now(), g.TimeProfile())

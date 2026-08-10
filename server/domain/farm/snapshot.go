@@ -134,30 +134,52 @@ func SplitItems(items map[ItemKey]uint32) (bag, warehouse map[string]uint32) {
 
 // PatchJSON 是动作成功后的客户端补丁摘要。
 type PatchJSON struct {
-	PlotIndex uint8             `json:"plot_index"`
-	Plot      *PlotSnapshot     `json:"plot,omitempty"`
-	Coin      int64             `json:"coin"`
-	Exp       uint32            `json:"exp"`
-	Bag       map[string]uint32 `json:"bag"`
-	Warehouse map[string]uint32 `json:"warehouse"`
-	FarmSeq   uint64            `json:"farm_seq"`
-	Codex     *CodexProgress    `json:"codex_progress,omitempty"`
+	PlotIndex        uint8             `json:"plot_index,omitempty"`
+	Plot             *PlotSnapshot     `json:"plot,omitempty"`
+	Coin             int64             `json:"coin"`
+	Exp              uint32            `json:"exp"`
+	BagChanges       map[string]uint32 `json:"bag_changes,omitempty"`
+	WarehouseChanges map[string]uint32 `json:"warehouse_changes,omitempty"`
+	FarmSeq          uint64            `json:"farm_seq"`
+	Codex            *CodexProgress    `json:"codex_progress,omitempty"`
 }
 
 // PatchFromAction 把 ActionPatch 转成可 JSON 序列化的补丁。
 func (a *Aggregate) PatchFromAction(result ActionResult) PatchJSON {
-	bag, warehouse := SplitItems(a.Items)
+	bagChanges, warehouseChanges := SplitItemChanges(result.Patch.Items)
 	patch := PatchJSON{
-		PlotIndex: result.Patch.PlotIndex,
-		Coin:      a.Coin,
-		Exp:       a.Exp,
-		Bag:       bag,
-		Warehouse: warehouse,
-		FarmSeq:   a.FarmSeq,
-		Codex:     result.Patch.Codex,
+		PlotIndex:        result.Patch.PlotIndex,
+		Coin:             result.Patch.Coin,
+		Exp:              result.Patch.Exp,
+		BagChanges:       bagChanges,
+		WarehouseChanges: warehouseChanges,
+		FarmSeq:          a.FarmSeq,
+		Codex:            result.Patch.Codex,
 	}
-	// 商店动作用 plot_index=0 且未改地块时仍带当前 0 号地快照，便于客户端统一 apply。
-	p := PlotSnapshotOf(result.Patch.PlotIndex, a.Plots[result.Patch.PlotIndex])
-	patch.Plot = &p
+	if result.Patch.Plot != nil {
+		p := PlotSnapshotOf(result.Patch.PlotIndex, *result.Patch.Plot)
+		patch.Plot = &p
+	}
 	return patch
+}
+
+// SplitItemChanges classifies authoritative changed counts without dropping
+// zeros: zero is required by the browser to delete an exhausted item key.
+func SplitItemChanges(items map[ItemKey]uint32) (bag, warehouse map[string]uint32) {
+	for key, count := range items {
+		s := string(key)
+		switch {
+		case len(s) >= 6 && s[:6] == "fruit:":
+			if warehouse == nil {
+				warehouse = make(map[string]uint32, 1)
+			}
+			warehouse[s] = count
+		default:
+			if bag == nil {
+				bag = make(map[string]uint32, 1)
+			}
+			bag[s] = count
+		}
+	}
+	return bag, warehouse
 }

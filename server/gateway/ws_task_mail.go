@@ -40,6 +40,40 @@ type mailMutationResponse struct {
 	Affected int64 `json:"affected"`
 }
 
+func validateEmptyClientRequest(request Envelope) error {
+	if request.CommandRequest != nil {
+		return nil
+	}
+	return unmarshalPayload(request.Payload, &struct{}{})
+}
+
+func decodeTaskClaimClientRequest(request Envelope) (taskClaimRequest, error) {
+	if request.CommandRequest != nil {
+		return taskClaimRequest{TaskID: request.CommandRequest.TaskId}, nil
+	}
+	var value taskClaimRequest
+	err := unmarshalPayload(request.Payload, &value)
+	return value, err
+}
+
+func decodeMailMutationClientRequest(request Envelope) (mailMutationRequest, error) {
+	if request.CommandRequest != nil {
+		return mailMutationRequest{MailID: clientjson.Uint64(request.CommandRequest.MailId), All: request.CommandRequest.All}, nil
+	}
+	var value mailMutationRequest
+	err := unmarshalPayload(request.Payload, &value)
+	return value, err
+}
+
+func decodeMailClaimClientRequest(request Envelope) (mailClaimRequest, error) {
+	if request.CommandRequest != nil {
+		return mailClaimRequest{MailID: clientjson.Uint64(request.CommandRequest.MailId)}, nil
+	}
+	var value mailClaimRequest
+	err := unmarshalPayload(request.Payload, &value)
+	return value, err
+}
+
 func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelope) Envelope {
 	if request.Cmd == CommandCodexList {
 		return g.handleCodexList(connection, request)
@@ -64,7 +98,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 
 	switch request.Cmd {
 	case CommandTaskList:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -78,8 +112,8 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 			ResetAt: gameconfig.NextLocalDayResetMs(now),
 		})
 	case CommandTaskClaim:
-		var payload taskClaimRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.TaskID == 0 {
+		payload, decodeErr := decodeTaskClaimClientRequest(request)
+		if decodeErr != nil || payload.TaskID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -114,7 +148,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 		response.Payload = marshalPayload(reward)
 		_ = g.PublishPlayerDelta(ctx, connection.uid, playerDelta)
 	case CommandMailList:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -125,8 +159,8 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 		}
 		response.Payload = marshalPayload(mailListResponse{Mails: mails})
 	case CommandMailRead, CommandMailDelete:
-		var payload mailMutationRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil ||
+		payload, decodeErr := decodeMailMutationClientRequest(request)
+		if decodeErr != nil ||
 			(!payload.All && payload.MailID == 0) ||
 			(payload.All && payload.MailID != 0) {
 			response.Err = errcode.BadRequest
@@ -148,8 +182,8 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 		}
 		response.Payload = marshalPayload(mailMutationResponse{Affected: affected})
 	case CommandMailClaim:
-		var payload mailClaimRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil || payload.MailID == 0 {
+		payload, decodeErr := decodeMailClaimClientRequest(request)
+		if decodeErr != nil || payload.MailID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -184,7 +218,7 @@ func (g *Gateway) handleTaskMailRequest(connection *wsConnection, request Envelo
 		response.Payload = marshalPayload(mail)
 		_ = g.PublishPlayerDelta(ctx, connection.uid, playerDelta)
 	case CommandClaimDailyLogin:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -236,30 +270,30 @@ func (g *Gateway) handleTaskMailRemote(connection *wsConnection, request Envelop
 	)
 	switch request.Cmd {
 	case CommandTaskList:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
 		operation = farmrpc.OperationTaskList
 		payload = emptyPayload
 	case CommandTaskClaim:
-		var body taskClaimRequest
-		if err := unmarshalPayload(request.Payload, &body); err != nil || body.TaskID == 0 {
+		body, decodeErr := decodeTaskClaimClientRequest(request)
+		if decodeErr != nil || body.TaskID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
 		operation = farmrpc.OperationTaskClaim
 		payload = marshalPayload(farmrpc.TaskClaimRequest{TaskID: body.TaskID})
 	case CommandMailList:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
 		operation = farmrpc.OperationMailList
 		payload = emptyPayload
 	case CommandMailRead:
-		var body mailMutationRequest
-		if err := unmarshalPayload(request.Payload, &body); err != nil ||
+		body, decodeErr := decodeMailMutationClientRequest(request)
+		if decodeErr != nil ||
 			(!body.All && body.MailID == 0) ||
 			(body.All && body.MailID != 0) {
 			response.Err = errcode.BadRequest
@@ -271,8 +305,8 @@ func (g *Gateway) handleTaskMailRemote(connection *wsConnection, request Envelop
 			All:    body.All,
 		})
 	case CommandMailDelete:
-		var body mailMutationRequest
-		if err := unmarshalPayload(request.Payload, &body); err != nil ||
+		body, decodeErr := decodeMailMutationClientRequest(request)
+		if decodeErr != nil ||
 			(!body.All && body.MailID == 0) ||
 			(body.All && body.MailID != 0) {
 			response.Err = errcode.BadRequest
@@ -284,15 +318,15 @@ func (g *Gateway) handleTaskMailRemote(connection *wsConnection, request Envelop
 			All:    body.All,
 		})
 	case CommandMailClaim:
-		var body mailClaimRequest
-		if err := unmarshalPayload(request.Payload, &body); err != nil || body.MailID == 0 {
+		body, decodeErr := decodeMailClaimClientRequest(request)
+		if decodeErr != nil || body.MailID == 0 {
 			response.Err = errcode.BadRequest
 			return response
 		}
 		operation = farmrpc.OperationMailClaim
 		payload = marshalPayload(farmrpc.MailClaimRequest{MailID: uint64(body.MailID)})
 	case CommandClaimDailyLogin:
-		if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+		if err := validateEmptyClientRequest(request); err != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -304,9 +338,11 @@ func (g *Gateway) handleTaskMailRemote(connection *wsConnection, request Envelop
 	}
 
 	remote, err := g.executeFarmRPC(ctx, connection.uid, farmrpc.CommandRequest{
-		Operation:  operation,
-		Originator: g.connectionRef(connection),
-		Payload:    payload,
+		Operation:     operation,
+		Originator:    g.connectionRef(connection),
+		ClientCommand: request.Cmd,
+		ClientRequest: request.CommandRequest,
+		Payload:       payload,
 	})
 	if err != nil {
 		response.Err = errcode.Internal
@@ -315,6 +351,7 @@ func (g *Gateway) handleTaskMailRemote(connection *wsConnection, request Envelop
 	response.Err = remote.Err
 	if remote.Err == errcode.OK {
 		response.Payload = remote.Payload
+		response.CommandResponse = remote.ClientResponse
 	}
 	return response
 }
@@ -325,15 +362,17 @@ func (g *Gateway) handleCodexList(connection *wsConnection, request Envelope) En
 		ClientSeq: request.ClientSeq,
 		Payload:   emptyPayload,
 	}
-	if err := unmarshalPayload(request.Payload, &struct{}{}); err != nil {
+	if err := validateEmptyClientRequest(request); err != nil {
 		response.Err = errcode.BadRequest
 		return response
 	}
 	if g.farmRPC != nil {
 		remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-			Operation:  farmrpc.OperationCodexList,
-			Originator: g.connectionRef(connection),
-			Payload:    emptyPayload,
+			Operation:     farmrpc.OperationCodexList,
+			Originator:    g.connectionRef(connection),
+			ClientCommand: request.Cmd,
+			ClientRequest: request.CommandRequest,
+			Payload:       emptyPayload,
 		})
 		if err != nil {
 			response.Err = errcode.Internal
@@ -342,6 +381,7 @@ func (g *Gateway) handleCodexList(connection *wsConnection, request Envelope) En
 		response.Err = remote.Err
 		if remote.Err == errcode.OK {
 			response.Payload = remote.Payload
+			response.CommandResponse = remote.ClientResponse
 		}
 		return response
 	}

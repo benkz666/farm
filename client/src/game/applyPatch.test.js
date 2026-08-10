@@ -63,6 +63,28 @@ test('FarmDelta 只投影变更地块', () => {
   assert.equal(state.plots[1].state, PLOT.GROWING)
 })
 
+test('动作物品增量只更新指定键并支持零值删除', () => {
+  const state = defaultState()
+  state.inventory.seeds = { bailuobo: 9, carrot: 4 }
+  state.inventory.fertilizers = { normal: 2 }
+  state.inventory.dogFood = 8
+  state.warehouse = { bailuobo: 7, carrot: 3 }
+
+  applyPatch(state, {
+    patch: {
+      bag_changes: { 'seed:1': 0, 'fert:1': 5, 'dogfood:1': 0 },
+      warehouse_changes: { 'fruit:1': 11 },
+    },
+  })
+
+  assert.equal(state.inventory.seeds.bailuobo, undefined)
+  assert.equal(state.inventory.seeds.carrot, 4)
+  assert.equal(state.inventory.fertilizers.normal, 5)
+  assert.equal(state.inventory.dogFood, 0)
+  assert.equal(state.warehouse.bailuobo, 11)
+  assert.equal(state.warehouse.carrot, 3)
+})
+
 test('FRIEND 农场快照只投影地块，不覆盖访客自己的金币/经验/背包', () => {
   const state = defaultState()
   state.gold = 333

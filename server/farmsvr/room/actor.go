@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"farm/server/domain/farm"
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
 )
@@ -27,9 +28,16 @@ type FarmActor struct {
 	// outboxEvents 记录尚未 durable ack 的跨农场结果等事件。
 	outboxEvents []stampedOutboxEvent
 	outboxTail   int
+	taskAdvances []stampedTaskAdvance
+	taskTail     int
+	codexRewards []stampedCodexReward
+	codexTail    int
 	persistPlan  outbox.PersistPlan
 	planSet      bool
 	planGen      uint64
+	dirtyPlots   map[uint8]uint64
+	dirtyItems   map[farm.ItemKey]stampedItemCount
+	dirtyCodex   map[uint16]uint64
 
 	// snapshotJSON is the immutable, client-visible full snapshot for
 	// snapshotSeq. Actor serialization makes it safe to reuse until a write
@@ -130,6 +138,12 @@ func (a *FarmActor) MarkPlotDirty(plotIndex uint8, includeItems, includeCodex bo
 	if a == nil {
 		return
 	}
+	// The request must not acknowledge a state mutation until its immutable
+	// snapshot is present in the reliable write journal. With the journaled
+	// store this waits only for Redis Streams, while MySQL materialization stays
+	// asynchronous. Tests and non-journal stores retain the original durable
+	// behavior because the same Runtime boundary still applies.
+	a.syncFlush = true
 	a.dirty = true
 	a.mergePersistPlan(outbox.PersistPlan{
 		Mode:         outbox.PersistPlot,
@@ -137,7 +151,81 @@ func (a *FarmActor) MarkPlotDirty(plotIndex uint8, includeItems, includeCodex bo
 		IncludeItems: includeItems,
 		IncludeCodex: includeCodex,
 	})
+	if a.dirtyPlots == nil {
+		a.dirtyPlots = make(map[uint8]uint64, 1)
+	}
+	a.dirtyPlots[plotIndex] = 0
 	a.InvalidateSnapshot()
+}
+
+type stampedItemCount struct {
+	generation uint64
+	count      uint32
+}
+
+// SnapshotItems is a cheap inventory-only before-image. Callers use it around
+// operations that may change inventory so the journal records exact keys,
+// never a complete bag replacement.
+func (a *FarmActor) SnapshotItems() map[farm.ItemKey]uint32 {
+	if a == nil || a.Aggregate == nil || len(a.Aggregate.Items) == 0 {
+		return nil
+	}
+	before := make(map[farm.ItemKey]uint32, len(a.Aggregate.Items))
+	for key, count := range a.Aggregate.Items {
+		before[key] = count
+	}
+	return before
+}
+
+// RecordItemChanges compares an inventory before-image with current Actor
+// state and retains only final counts for changed keys. A zero count is an
+// explicit row tombstone.
+func (a *FarmActor) RecordItemChanges(before map[farm.ItemKey]uint32) {
+	if a == nil || a.Aggregate == nil {
+		return
+	}
+	if a.dirtyItems == nil {
+		a.dirtyItems = make(map[farm.ItemKey]stampedItemCount)
+	}
+	for key, previous := range before {
+		current := a.Aggregate.Items[key]
+		if current != previous {
+			a.dirtyItems[key] = stampedItemCount{count: current}
+		}
+	}
+	for key, current := range a.Aggregate.Items {
+		if previous, existed := before[key]; !existed && current != 0 || existed && previous != current {
+			a.dirtyItems[key] = stampedItemCount{count: current}
+		}
+	}
+}
+
+// RecordItemCounts retains authoritative final counts already produced by the
+// domain action patch. This avoids cloning and comparing the complete inventory
+// on ordinary one-key mutations such as Plant, Harvest, Buy and Sell.
+func (a *FarmActor) RecordItemCounts(changes map[farm.ItemKey]uint32) {
+	if a == nil || len(changes) == 0 {
+		return
+	}
+	if a.dirtyItems == nil {
+		a.dirtyItems = make(map[farm.ItemKey]stampedItemCount, len(changes))
+	}
+	for key, count := range changes {
+		if key != "" {
+			a.dirtyItems[key] = stampedItemCount{count: count}
+		}
+	}
+}
+
+// RecordCodexChange marks one exact plaque row after Harvest.
+func (a *FarmActor) RecordCodexChange(cropID uint16) {
+	if a == nil || cropID == 0 {
+		return
+	}
+	if a.dirtyCodex == nil {
+		a.dirtyCodex = make(map[uint16]uint64, 1)
+	}
+	a.dirtyCodex[cropID] = 0
 }
 
 // RequireCrossVisitorFlush requests an ordered visitor reservation/settlement
@@ -169,6 +257,9 @@ func (a *FarmActor) requirePlannedFlush(plan outbox.PersistPlan) {
 }
 
 func (a *FarmActor) mergePersistPlan(plan outbox.PersistPlan) {
+	if plan.Modes == 0 {
+		plan.Modes = outbox.PersistModeMask(plan.Mode)
+	}
 	if !a.planSet {
 		a.persistPlan = plan
 		a.planSet = true
@@ -177,9 +268,15 @@ func (a *FarmActor) mergePersistPlan(plan outbox.PersistPlan) {
 	if a.persistPlan.Mode != plan.Mode ||
 		(plan.Mode == outbox.PersistCrossOwner || plan.Mode == outbox.PersistPlot) &&
 			a.persistPlan.PlotIndex != plan.PlotIndex {
-		a.persistPlan = outbox.PersistPlan{Mode: outbox.PersistFull}
+		a.persistPlan = outbox.PersistPlan{
+			Mode:         outbox.PersistFull,
+			Modes:        a.persistPlan.Modes | plan.Modes,
+			IncludeItems: a.persistPlan.IncludeItems || plan.IncludeItems,
+			IncludeCodex: a.persistPlan.IncludeCodex || plan.IncludeCodex,
+		}
 		return
 	}
+	a.persistPlan.Modes |= plan.Modes
 	a.persistPlan.IncludeItems = a.persistPlan.IncludeItems || plan.IncludeItems
 	a.persistPlan.IncludeCodex = a.persistPlan.IncludeCodex || plan.IncludeCodex
 }
@@ -187,6 +284,25 @@ func (a *FarmActor) mergePersistPlan(plan outbox.PersistPlan) {
 func (a *FarmActor) stampPersistGeneration(generation uint64) {
 	if a != nil && a.planSet {
 		a.planGen = generation
+	}
+	if a == nil {
+		return
+	}
+	for index, stamped := range a.dirtyPlots {
+		if stamped == 0 {
+			a.dirtyPlots[index] = generation
+		}
+	}
+	for key, stamped := range a.dirtyItems {
+		if stamped.generation == 0 {
+			stamped.generation = generation
+			a.dirtyItems[key] = stamped
+		}
+	}
+	for cropID, stamped := range a.dirtyCodex {
+		if stamped == 0 {
+			a.dirtyCodex[cropID] = generation
+		}
 	}
 }
 
@@ -198,17 +314,145 @@ func (a *FarmActor) pendingPersistPlan() outbox.PersistPlan {
 }
 
 func (a *FarmActor) ackPersistPlan(generation uint64) {
-	if a == nil || !a.planSet || generation < a.planGen {
+	if a == nil {
 		return
 	}
-	a.persistPlan = outbox.PersistPlan{}
-	a.planSet = false
-	a.planGen = 0
+	if a.planSet && generation >= a.planGen {
+		a.persistPlan = outbox.PersistPlan{}
+		a.planSet = false
+		a.planGen = 0
+	}
+	for index, stamped := range a.dirtyPlots {
+		if stamped != 0 && stamped <= generation {
+			delete(a.dirtyPlots, index)
+		}
+	}
+	for key, stamped := range a.dirtyItems {
+		if stamped.generation != 0 && stamped.generation <= generation {
+			delete(a.dirtyItems, key)
+		}
+	}
+	for cropID, stamped := range a.dirtyCodex {
+		if stamped != 0 && stamped <= generation {
+			delete(a.dirtyCodex, cropID)
+		}
+	}
+}
+
+func (a *FarmActor) pendingWriteMutation() (*farmv1.FarmWriteMutation, error) {
+	if a == nil || a.Aggregate == nil {
+		return nil, errors.New("room: actor aggregate is nil")
+	}
+	plots := make([]uint8, 0, len(a.dirtyPlots))
+	for index, generation := range a.dirtyPlots {
+		if generation != 0 {
+			plots = append(plots, index)
+		}
+	}
+	items := make(map[farm.ItemKey]uint32, len(a.dirtyItems))
+	for key, stamped := range a.dirtyItems {
+		if stamped.generation != 0 {
+			items[key] = stamped.count
+		}
+	}
+	codex := make([]uint16, 0, len(a.dirtyCodex))
+	for cropID, generation := range a.dirtyCodex {
+		if generation != 0 {
+			codex = append(codex, cropID)
+		}
+	}
+	return outbox.NewFarmWriteMutation(
+		a.Aggregate, a.pendingPersistPlan(), plots, items, codex,
+		a.pendingOutboxEvents(), a.pendingTaskAdvances(), a.pendingCodexRewards(),
+	)
 }
 
 type stampedOutboxEvent struct {
 	generation uint64
 	event      outbox.Event
+}
+
+type stampedTaskAdvance struct {
+	generation uint64
+	advance    outbox.TaskAdvance
+}
+
+type stampedCodexReward struct {
+	generation uint64
+	reward     outbox.CodexReward
+}
+
+// RecordTaskAdvance and RecordCodexReward attach gameplay side effects to the
+// same durable Farm commit instead of issuing additional synchronous XADDs.
+func (a *FarmActor) RecordTaskAdvance(advance outbox.TaskAdvance) {
+	if a == nil || advance.DayKey == 0 || advance.TaskID == 0 || advance.Amount == 0 {
+		return
+	}
+	a.taskAdvances = append(a.taskAdvances, stampedTaskAdvance{advance: advance})
+	a.dirty = true
+}
+
+func (a *FarmActor) RecordCodexReward(progress farm.CodexProgress) {
+	if a == nil || progress.CropID == 0 || progress.HarvestCount == 0 {
+		return
+	}
+	a.codexRewards = append(a.codexRewards, stampedCodexReward{
+		reward: outbox.CodexReward{Progress: progress},
+	})
+	a.dirty = true
+}
+
+func (a *FarmActor) stampSideEffectGeneration(generation uint64) {
+	for index := a.taskTail; index < len(a.taskAdvances); index++ {
+		a.taskAdvances[index].generation = generation
+	}
+	a.taskTail = len(a.taskAdvances)
+	for index := a.codexTail; index < len(a.codexRewards); index++ {
+		a.codexRewards[index].generation = generation
+	}
+	a.codexTail = len(a.codexRewards)
+}
+
+func (a *FarmActor) pendingTaskAdvances() []outbox.TaskAdvance {
+	advances := make([]outbox.TaskAdvance, 0, len(a.taskAdvances))
+	for _, stamped := range a.taskAdvances {
+		if stamped.generation != 0 {
+			advances = append(advances, stamped.advance)
+		}
+	}
+	return advances
+}
+
+func (a *FarmActor) pendingCodexRewards() []outbox.CodexReward {
+	rewards := make([]outbox.CodexReward, 0, len(a.codexRewards))
+	for _, stamped := range a.codexRewards {
+		if stamped.generation != 0 {
+			rewards = append(rewards, stamped.reward)
+		}
+	}
+	return rewards
+}
+
+func (a *FarmActor) ackSideEffects(committedGen uint64) {
+	if a == nil || committedGen == 0 {
+		return
+	}
+	keptTasks := a.taskAdvances[:0]
+	for _, stamped := range a.taskAdvances {
+		if stamped.generation > committedGen {
+			keptTasks = append(keptTasks, stamped)
+		}
+	}
+	a.taskAdvances = keptTasks
+	a.taskTail = len(keptTasks)
+	keptCodex := a.codexRewards[:0]
+	for _, stamped := range a.codexRewards {
+		if stamped.generation > committedGen {
+			keptCodex = append(keptCodex, stamped)
+		}
+	}
+	a.codexRewards = keptCodex
+	a.codexTail = len(keptCodex)
 }
 
 // RecordOutbox queues a durable outbox event for the current callback generation.

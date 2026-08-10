@@ -110,6 +110,39 @@ func TestPreparedSuffixAppendsIntoFinalFrame(t *testing.T) {
 	}
 }
 
+func TestPreparedCommandResponseRoundTrip(t *testing.T) {
+	response := NewActionCommandResponse(9007199254740993, farm.PatchJSON{
+		PlotIndex: 2,
+		Plot:      &farm.PlotSnapshot{Index: 2, State: uint8(farm.StateGrowing), CropID: 1},
+		Coin:      123,
+		FarmSeq:   9007199254740993,
+	}, nil)
+	payload, err := MarshalCommandResponsePayload(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame, err := EncodeBinaryBatch([]Envelope{{
+		Cmd:             212,
+		ClientSeq:       17,
+		PreparedPayload: payload,
+		PreparedField:   PreparedCommandResponse,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeBinaryBatch(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded) != 1 || decoded[0].CommandResponse == nil || decoded[0].CommandResponse.Action == nil {
+		t.Fatalf("decoded=%#v", decoded)
+	}
+	action := decoded[0].CommandResponse.Action
+	if action.FarmSeq != 9007199254740993 || action.Patch == nil || action.Patch.Plot == nil || action.Patch.Plot.Index != 2 {
+		t.Fatalf("action=%#v", action)
+	}
+}
+
 func TestAppendBinaryBatchRetainsMixedEnvelopeOrder(t *testing.T) {
 	prepared, err := MarshalSyncFarmCaughtUpPayload(9, 123, "normal", false)
 	if err != nil {
@@ -166,7 +199,8 @@ func TestFrameBinaryRecordsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(want) || got[0].Cmd != 9000 || string(got[0].Payload) != `{"farm_seq":"7"}` || got[1].Err != errcode.BadRequest {
+	var delta farm.FarmDelta
+	if len(got) != len(want) || got[0].Cmd != 9000 || json.Unmarshal(got[0].Payload, &delta) != nil || delta.FarmSeq != 7 || got[1].Err != errcode.BadRequest {
 		t.Fatalf("round trip = %#v", got)
 	}
 }

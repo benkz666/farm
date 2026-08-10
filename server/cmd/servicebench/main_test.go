@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -28,5 +29,106 @@ func TestSummarizeTimedOut(t *testing.T) {
 	}
 	if measured.ActualQPS != 1 {
 		t.Fatalf("ActualQPS = %v, want 1", measured.ActualQPS)
+	}
+}
+
+func TestGatewayOperationModes(t *testing.T) {
+	for _, operation := range []string{"water", "harvest", "steal", "water-visitor"} {
+		if !gatewayOperationSupported(operation) {
+			t.Fatalf("%s is not supported", operation)
+		}
+		if !gatewayOperationOneShot(operation) {
+			t.Fatalf("%s is not one-shot", operation)
+		}
+		if !gatewayOperationNeedsOwnActor(operation) {
+			t.Fatalf("%s does not prewarm the visitor actor", operation)
+		}
+		if gatewayOperationWarmRequest(operation) {
+			t.Fatalf("%s mutates state during warmup", operation)
+		}
+	}
+	for _, operation := range []string{"ping", "enter", "sync", "friend-list", "search-user", "task-list", "mail-list"} {
+		if !gatewayOperationWarmRequest(operation) {
+			t.Fatalf("%s does not warm its read path", operation)
+		}
+	}
+	for _, operation := range []string{"task-list", "mail-list"} {
+		if !gatewayOperationNeedsFinalReadWarmup(operation) {
+			t.Fatalf("%s does not refresh its cache immediately before measurement", operation)
+		}
+	}
+	for _, operation := range []string{"ping", "enter", "sync", "friend-list", "search-user"} {
+		if gatewayOperationNeedsFinalReadWarmup(operation) {
+			t.Fatalf("%s unexpectedly performs a second read warmup", operation)
+		}
+	}
+	for _, operation := range []string{"buy", "sell"} {
+		if !gatewayOperationSupported(operation) || gatewayOperationOneShot(operation) {
+			t.Fatalf("%s must be a sustained hot operation", operation)
+		}
+	}
+}
+
+func TestOneShotOperationSchedule(t *testing.T) {
+	if got := oneShotOperationCount(3_000, 2*time.Second); got != 6_000 {
+		t.Fatalf("oneShotOperationCount = %d, want 6000", got)
+	}
+	if got := oneShotOperationCount(10, time.Millisecond); got != 1 {
+		t.Fatalf("short oneShotOperationCount = %d, want 1", got)
+	}
+	if got := oneShotOperationCount(int(^uint(0)>>1), time.Duration(1<<63-1)); got != int(^uint(0)>>1) {
+		t.Fatalf("overflow-safe oneShotOperationCount = %d, want platform max int", got)
+	}
+	if got := oneShotStartOffset(3_000, 3_000); got != time.Second {
+		t.Fatalf("oneShotStartOffset = %s, want 1s", got)
+	}
+	if got := oneShotStartOffset(0, 3_000); got != 0 {
+		t.Fatalf("first oneShotStartOffset = %s, want 0", got)
+	}
+}
+
+func TestGatewayMultiPlotFixtureCapacityAndRotation(t *testing.T) {
+	indexes := make([]int, 18)
+	for index := range indexes {
+		indexes[index] = index
+	}
+	accounts := []gatewayAccount{
+		{PlotIndex: 0, PlotIndexes: append([]int(nil), indexes...)},
+		{PlotIndex: 0, PlotIndexes: append([]int(nil), indexes...)},
+	}
+	if err := validateGatewayFixturePlots(accounts, "water"); err != nil {
+		t.Fatal(err)
+	}
+	if got := minimumGatewayActionCount(accounts, "water"); got != 18 {
+		t.Fatalf("minimum action count = %d, want 18", got)
+	}
+	if got := minimumGatewayActionCount([]gatewayAccount{{PlotIndex: 7}}, "harvest"); got != 1 {
+		t.Fatalf("legacy action count = %d, want 1", got)
+	}
+
+	client := gatewayBenchConnection{account: accounts[0]}
+	for _, actionIndex := range []int{0, 9, 17} {
+		request := client.requestAt("water", actionIndex)
+		var payload struct {
+			PlotIndex int `json:"plot_index"`
+		}
+		if err := json.Unmarshal(request.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.PlotIndex != actionIndex {
+			t.Fatalf("action %d used plot %d", actionIndex, payload.PlotIndex)
+		}
+	}
+	if client.nextSeq != 3 {
+		t.Fatalf("next sequence = %d, want 3", client.nextSeq)
+	}
+
+	bad := []gatewayAccount{{PlotIndexes: []int{0, 0}}}
+	if err := validateGatewayFixturePlots(bad, "harvest"); err == nil {
+		t.Fatal("duplicate plot indexes should be rejected")
+	}
+	bad = []gatewayAccount{{PlotIndexes: []int{0, 18}}}
+	if err := validateGatewayFixturePlots(bad, "steal"); err == nil {
+		t.Fatal("out-of-range plot index should be rejected")
 	}
 }

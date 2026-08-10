@@ -11,7 +11,10 @@ import (
 	"strconv"
 
 	"farm/server/domain/farm"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/errcode"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // Protocol push command numbers (docs/design/protocol.md §5).
@@ -23,7 +26,9 @@ const (
 	CommandTaskNotify  uint32 = 9008
 )
 
-// Envelope is the public JSON shape written on the WebSocket wire.
+// Envelope is the transport-neutral Gateway representation. Payload is kept
+// only for in-process compatibility with existing handlers and tests; public
+// WebSocket frames always use one of the typed Protobuf fields below.
 type Envelope struct {
 	Cmd       uint32          `json:"cmd"`
 	ClientSeq uint32          `json:"client_seq"`
@@ -37,60 +42,58 @@ type Envelope struct {
 	// PreparedSuffix contains trusted protobuf fields appended to the prepared
 	// oneof body by Gateway. Keeping it separate avoids copying a large Farm
 	// snapshot merely to add the small relation/mutable fields.
-	PreparedSuffix []byte `json:"-"`
+	PreparedSuffix   []byte                     `json:"-"`
+	EnterFarmRequest *publicv3.EnterFarmRequest `json:"-"`
+	SyncFarmRequest  *publicv3.SyncFarmRequest  `json:"-"`
+	CommandRequest   *publicv3.CommandRequest   `json:"-"`
+	CommandResponse  *publicv3.CommandResponse  `json:"-"`
+	FarmDelta        *publicv3.FarmDelta        `json:"-"`
+	PlayerDelta      *publicv3.PlayerDelta      `json:"-"`
+	MailNotify       *publicv3.MailNotify       `json:"-"`
+	SessionKick      *publicv3.SessionKick      `json:"-"`
+	TaskNotify       *publicv3.Task             `json:"-"`
+	// ServerPayload is set only while decoding a response/push oneof arm. The
+	// Gateway uses it to reject clients that send server-direction messages.
+	ServerPayload bool `json:"-"`
 }
 
-// EncodeFarmDelta builds the FarmDelta push Envelope bytes once for fan-out.
+// EncodeFarmDelta builds the raw typed FarmDelta bytes used by the in-process
+// fan-out test seam. Production gRPC fan-out passes FarmDelta directly.
 func EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error) {
-	payload, err := json.Marshal(delta)
+	encoded, err := proto.Marshal(FarmDeltaToProto(delta))
 	if err != nil {
-		return nil, fmt.Errorf("wireenv: marshal FarmDelta: %w", err)
+		return nil, fmt.Errorf("wireenv: marshal FarmDelta protobuf: %w", err)
 	}
-	return AppendTrustedEnvelope(nil, Envelope{
-		Cmd:       CommandFarmDelta,
-		ClientSeq: 0,
-		Err:       errcode.OK,
-		Payload:   payload,
-	})
+	return encoded, nil
 }
 
 // EncodeFarmDeltaRecord builds a frame-ready binary record for Gateway-local
 // fan-out. Unlike EncodeFarmDelta it is not a complete public frame.
 func EncodeFarmDeltaRecord(delta farm.FarmDelta) ([]byte, error) {
-	payload, err := json.Marshal(delta)
-	if err != nil {
-		return nil, fmt.Errorf("wireenv: marshal FarmDelta: %w", err)
+	return EncodeFarmDeltaProtoRecord(FarmDeltaToProto(delta))
+}
+
+// EncodeFarmDeltaProtoRecord wraps an already-decoded typed delta without a
+// domain→protobuf round trip at Gateway ingress.
+func EncodeFarmDeltaProtoRecord(delta *publicv3.FarmDelta) ([]byte, error) {
+	if delta == nil || len(delta.ProtoReflect().GetUnknown()) != 0 {
+		return nil, fmt.Errorf("wireenv: invalid FarmDelta protobuf")
 	}
 	return EncodeTrustedBinaryRecord(Envelope{
 		Cmd:       CommandFarmDelta,
 		ClientSeq: 0,
 		Err:       errcode.OK,
-		Payload:   payload,
+		FarmDelta: delta,
 	})
 }
 
-// DecodeFarmDelta recovers the structured delta from pre-encoded Envelope bytes.
-// It requires the public push metadata (cmd=9000, client_seq=0, err=OK) and a
-// single strictly-decoded FarmDelta payload object.
+// DecodeFarmDelta recovers a structured delta from raw FarmDelta protobuf.
 func DecodeFarmDelta(encoded []byte) (farm.FarmDelta, error) {
-	envelope, err := DecodeEnvelope(encoded)
-	if err != nil {
-		return farm.FarmDelta{}, err
+	var delta publicv3.FarmDelta
+	if len(encoded) == 0 || proto.Unmarshal(encoded, &delta) != nil || len(delta.ProtoReflect().GetUnknown()) != 0 {
+		return farm.FarmDelta{}, fmt.Errorf("wireenv: invalid FarmDelta protobuf")
 	}
-	if envelope.Cmd != CommandFarmDelta {
-		return farm.FarmDelta{}, fmt.Errorf("wireenv: unexpected cmd %d", envelope.Cmd)
-	}
-	if envelope.ClientSeq != 0 {
-		return farm.FarmDelta{}, fmt.Errorf("wireenv: FarmDelta client_seq must be 0")
-	}
-	if envelope.Err != errcode.OK {
-		return farm.FarmDelta{}, fmt.Errorf("wireenv: FarmDelta err must be OK")
-	}
-	var delta farm.FarmDelta
-	if err := DecodeStrictJSON(envelope.Payload, &delta); err != nil {
-		return farm.FarmDelta{}, fmt.Errorf("wireenv: decode FarmDelta payload: %w", err)
-	}
-	return delta, nil
+	return FarmDeltaFromProto(&delta), nil
 }
 
 // EncodeEnvelope serializes one client Envelope frame.

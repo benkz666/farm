@@ -10,6 +10,7 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/store"
@@ -23,8 +24,10 @@ const (
 	deltaPushMaxAttempts    = 3
 	deltaPushRetryBaseDelay = 50 * time.Millisecond
 
-	taskNotifyCoalesceWindow = 75 * time.Millisecond
-	maxPendingTaskNotifies   = 4096
+	taskNotifyCoalesceWindow  = 75 * time.Millisecond
+	maxPendingTaskNotifies    = 4096
+	defaultDeltaQueueShards   = 16
+	defaultDeltaQueuePerShard = 1024
 )
 
 // DeltaPushRequest is the legacy single-connection Farm→Gateway callback.
@@ -34,11 +37,12 @@ type DeltaPushRequest struct {
 	Delta        farm.FarmDelta `json:"delta"`
 }
 
-// PushBatch is the internal Gateway push unit from protocol.md §2.5:
-// pre-encoded Envelope bytes delivered to many local connections at once.
+// PushBatch is the internal Gateway push unit from protocol.md §2.5. Delta is
+// the production typed payload; Envelope remains as an in-process test seam.
 type PushBatch struct {
-	ConnIDs  []uint64 `json:"conn_ids"`
-	Envelope []byte   `json:"envelope"`
+	ConnIDs  []uint64            `json:"conn_ids"`
+	Delta    *publicv3.FarmDelta `json:"-"`
+	Envelope []byte              `json:"envelope,omitempty"`
 }
 
 // PlayerDeltaPushRequest is sent to the Gateway that owns a player's WebSocket.
@@ -78,6 +82,118 @@ type DeltaPublisher interface {
 	Publish(ctx context.Context, delta farm.FarmDelta, originator presence.ConnRef) error
 }
 
+type queuedDelta struct {
+	delta      farm.FarmDelta
+	originator presence.ConnRef
+}
+
+// AsyncDeltaPublisher moves registry lookup, encoding and Gateway callbacks
+// behind a bounded UID-sharded queue. One shard owns a UID, preserving FarmSeq
+// order without creating one goroutine per action. A full queue drops this
+// best-effort hint; SyncFarm remains the authoritative gap recovery path.
+type AsyncDeltaPublisher struct {
+	inner   DeltaPublisher
+	mu      sync.RWMutex
+	queues  []chan queuedDelta
+	closed  bool
+	wg      sync.WaitGroup
+	dropped atomic.Uint64
+}
+
+func NewAsyncDeltaPublisher(inner DeltaPublisher, shards, perShard int) *AsyncDeltaPublisher {
+	if shards <= 0 {
+		shards = defaultDeltaQueueShards
+	}
+	if perShard <= 0 {
+		perShard = defaultDeltaQueuePerShard
+	}
+	publisher := &AsyncDeltaPublisher{
+		inner:  inner,
+		queues: make([]chan queuedDelta, shards),
+	}
+	for index := range publisher.queues {
+		queue := make(chan queuedDelta, perShard)
+		publisher.queues[index] = queue
+		publisher.wg.Add(1)
+		go publisher.run(queue)
+	}
+	return publisher
+}
+
+func (*AsyncDeltaPublisher) publishesAsynchronously() {}
+
+func (publisher *AsyncDeltaPublisher) Publish(_ context.Context, delta farm.FarmDelta, originator presence.ConnRef) error {
+	if publisher == nil || publisher.inner == nil || delta.OwnerUID == 0 || len(publisher.queues) == 0 {
+		return fmt.Errorf("farmrpc: async Delta publisher is not configured")
+	}
+	// FarmDelta values become immutable once handed to a publisher; retaining
+	// the slice avoids copying the same plot projection a third time.
+	if delta.GuardDog != nil {
+		guardDog := *delta.GuardDog
+		delta.GuardDog = &guardDog
+	}
+	job := queuedDelta{delta: delta, originator: originator}
+	queue := publisher.queues[delta.OwnerUID%uint64(len(publisher.queues))]
+	publisher.mu.RLock()
+	defer publisher.mu.RUnlock()
+	if publisher.closed {
+		return fmt.Errorf("farmrpc: async Delta publisher stopped")
+	}
+	select {
+	case queue <- job:
+	default:
+		dropped := publisher.dropped.Add(1)
+		if dropped == 1 || dropped%1024 == 0 {
+			telemetry.L().Warn("farmrpc Delta queue full; recovery delegated to SyncFarm",
+				"component", "farmrpc", "op", "queue_delta", "dropped", dropped)
+		}
+	}
+	return nil
+}
+
+func (publisher *AsyncDeltaPublisher) HasActiveFarm(ctx context.Context, uid uint64) (bool, error) {
+	checker, ok := publisher.inner.(ActiveFarmChecker)
+	if !ok {
+		return false, nil
+	}
+	return checker.HasActiveFarm(ctx, uid)
+}
+
+func (publisher *AsyncDeltaPublisher) Shutdown(ctx context.Context) error {
+	if publisher == nil {
+		return nil
+	}
+	publisher.mu.Lock()
+	if !publisher.closed {
+		publisher.closed = true
+		for _, queue := range publisher.queues {
+			close(queue)
+		}
+	}
+	publisher.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		publisher.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("farmrpc: drain Delta publisher: %w", ctx.Err())
+	}
+}
+
+func (publisher *AsyncDeltaPublisher) run(queue <-chan queuedDelta) {
+	defer publisher.wg.Done()
+	for job := range queue {
+		if err := publisher.inner.Publish(context.Background(), job.delta, job.originator); err != nil {
+			telemetry.L().Error("farmrpc Delta publish failed",
+				"component", "farmrpc", "op", "publish_delta", "err", err.Error())
+		}
+	}
+}
+
 // ActiveFarmChecker reports whether a farm still has a live room subscriber.
 // The scheduler uses it after an Actor was evicted so offline farms are not
 // loaded only to produce a push nobody can receive.
@@ -90,7 +206,7 @@ type DeltaBatchPusher interface {
 	PushBatch(ctx context.Context, gatewayID string, batch PushBatch) error
 }
 
-// FarmDeltaEncoder builds the client-visible FarmDelta Envelope once per publish.
+// FarmDeltaEncoder builds the typed FarmDelta payload once per publish.
 type FarmDeltaEncoder interface {
 	EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error)
 }
@@ -188,12 +304,12 @@ func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, ori
 		return nil
 	}
 
-	encoder := p.encoder
-	if encoder == nil {
-		encoder = defaultFarmDeltaEncoder{}
-	}
 	encodeStart := time.Now()
-	envelope, err := encoder.EncodeFarmDelta(delta)
+	typedDelta := clientwire.FarmDeltaToProto(delta)
+	var envelope []byte
+	if p.encoder != nil {
+		envelope, err = p.encoder.EncodeFarmDelta(delta)
+	}
 	encodeDur := time.Since(encodeStart)
 	if err != nil {
 		return err
@@ -242,6 +358,7 @@ func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, ori
 				}
 				err := p.pusher.PushBatch(ctx, item.gatewayID, PushBatch{
 					ConnIDs:  item.connIDs,
+					Delta:    typedDelta,
 					Envelope: envelope,
 				})
 				recordErr(err)
@@ -264,12 +381,6 @@ sendLoop:
 		m.ObserveDeltaBroadcast(len(jobs), targetCount, encodeDur, time.Since(pushStart))
 	}
 	return firstErr
-}
-
-type defaultFarmDeltaEncoder struct{}
-
-func (defaultFarmDeltaEncoder) EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error) {
-	return clientwire.EncodeFarmDelta(delta)
 }
 
 // PlayerFanoutPublisher resolves every active connection of a player and

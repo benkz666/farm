@@ -48,6 +48,15 @@ type Metrics struct {
 	CommitFarms       prometheus.Counter
 	CommitRequests    prometheus.Counter
 
+	WriteJournalAppends            prometheus.Counter
+	WriteJournalAppendRecords      prometheus.Counter
+	WriteJournalAppendDuration     prometheus.Histogram
+	WriteJournalAppendErrors       prometheus.Counter
+	WriteJournalProjectionBatches  prometheus.Counter
+	WriteJournalProjectionRecords  prometheus.Counter
+	WriteJournalProjectionDuration prometheus.Histogram
+	WriteJournalProjectionErrors   prometheus.Counter
+
 	DeltaBatches        prometheus.Counter
 	DeltaTargets        prometheus.Histogram
 	DeltaEncodeDuration prometheus.Histogram
@@ -160,6 +169,40 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Name: "farm_committer_requests_total",
 		Help: "Logical snapshot requests merged into group-commit batches",
 	})
+	m.WriteJournalAppends = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_appends_total",
+		Help: "Redis Streams append batches attempted by the Farm write journal",
+	})
+	m.WriteJournalAppendRecords = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_append_records_total",
+		Help: "Farm, task, codex and outbox records submitted to the write journal",
+	})
+	m.WriteJournalAppendDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "farm_write_journal_append_duration_seconds",
+		Help:    "Redis Streams durable append latency observed by request paths",
+		Buckets: prometheus.DefBuckets,
+	})
+	m.WriteJournalAppendErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_append_errors_total",
+		Help: "Redis Streams append failures",
+	})
+	m.WriteJournalProjectionBatches = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_projection_batches_total",
+		Help: "MySQL materialization batches completed or attempted",
+	})
+	m.WriteJournalProjectionRecords = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_projection_records_total",
+		Help: "Journal records included in MySQL materialization batches",
+	})
+	m.WriteJournalProjectionDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "farm_write_journal_projection_duration_seconds",
+		Help:    "MySQL materialization latency for write-journal batches",
+		Buckets: prometheus.DefBuckets,
+	})
+	m.WriteJournalProjectionErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_journal_projection_errors_total",
+		Help: "Write-journal reads or MySQL materialization failures",
+	})
 
 	m.DeltaBatches = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "farm_delta_broadcast_batches_total",
@@ -192,9 +235,45 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		m.ActorLoadDuration, m.ActorLoadErrors,
 		m.ActorSaveDuration, m.ActorSaveErrors,
 		m.CommitBatches, m.CommitFarms, m.CommitRequests,
+		m.WriteJournalAppends, m.WriteJournalAppendRecords,
+		m.WriteJournalAppendDuration, m.WriteJournalAppendErrors,
+		m.WriteJournalProjectionBatches, m.WriteJournalProjectionRecords,
+		m.WriteJournalProjectionDuration, m.WriteJournalProjectionErrors,
 		m.DeltaBatches, m.DeltaTargets, m.DeltaEncodeDuration, m.DeltaPushDuration,
 	)
 	return m
+}
+
+// ObserveWriteJournalAppend records the foreground durability boundary.
+func (m *Metrics) ObserveWriteJournalAppend(duration time.Duration, records int, err error) {
+	if m == nil {
+		return
+	}
+	m.WriteJournalAppends.Inc()
+	m.WriteJournalAppendRecords.Add(float64(records))
+	m.WriteJournalAppendDuration.Observe(duration.Seconds())
+	if err != nil {
+		m.WriteJournalAppendErrors.Inc()
+	}
+}
+
+// ObserveWriteJournalProjection records one background materialization batch.
+func (m *Metrics) ObserveWriteJournalProjection(duration time.Duration, records int, err error) {
+	if m == nil {
+		return
+	}
+	m.WriteJournalProjectionBatches.Inc()
+	m.WriteJournalProjectionRecords.Add(float64(records))
+	m.WriteJournalProjectionDuration.Observe(duration.Seconds())
+	if err != nil {
+		m.WriteJournalProjectionErrors.Inc()
+	}
+}
+
+func (m *Metrics) ObserveWriteJournalProjectionError() {
+	if m != nil {
+		m.WriteJournalProjectionErrors.Inc()
+	}
 }
 
 type statusRecorder struct {

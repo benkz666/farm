@@ -1,0 +1,2 @@
+FROM prom/prometheus:v2.54.1
+COPY --chown=65534:65534 deploy/observability/prometheus.yml /etc/prometheus/prometheus.yml

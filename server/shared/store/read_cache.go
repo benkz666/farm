@@ -6,8 +6,10 @@ import (
 )
 
 const (
-	defaultReadCacheTTL      = 30 * time.Second
-	defaultReadCacheCapacity = 8192
+	defaultReadCacheTTL = 30 * time.Second
+	// The formal performance fixture keeps 15,000 accounts hot at once. Keep
+	// enough headroom for that working set without making the cache unbounded.
+	defaultReadCacheCapacity = 32_768
 	readCacheShardCount      = 64
 	taskCacheStateShardCount = 1024
 )
@@ -17,8 +19,8 @@ type ttlValue[V any] struct {
 	expiresAt time.Time
 }
 
-// boundedTTLCache is intentionally small and process-local. Database state is
-// still authoritative; this only absorbs repeated hot reads owned by the same
+// boundedTTLCache is bounded and process-local. Database state is still
+// authoritative; this only absorbs repeated hot reads owned by the same
 // service process.
 type ttlCacheShard[K comparable, V any] struct {
 	mu      sync.Mutex

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 
@@ -60,6 +61,10 @@ func (client *GRPCClient) Execute(ctx context.Context, farmID string, command Co
 		PayloadJson:    command.Payload,
 		PreferPrepared: command.PreferPrepared,
 	}
+	if command.ClientCommand != 0 && command.ClientRequest != nil {
+		request.PayloadJson = nil
+		request.ClientCommand = &farmv1.ClientCommand{Command: command.ClientCommand, Request: command.ClientRequest}
+	}
 	commandStream, err := client.streamFor(target, conn)
 	if err != nil {
 		// Stream creation has not sent the command, so unary fallback is safe and
@@ -68,7 +73,7 @@ func (client *GRPCClient) Execute(ctx context.Context, farmID string, command Co
 		if unaryErr != nil {
 			return CommandResponse{}, fmt.Errorf("farmrpc: create stream: %v; unary execute: %w", err, unaryErr)
 		}
-		return commandResponseFromProto(response), nil
+		return commandResponseFromProto(response, command.ClientCommand), nil
 	}
 	response, err := commandStream.execute(ctx, request)
 	if err != nil {
@@ -82,26 +87,37 @@ func (client *GRPCClient) Execute(ctx context.Context, farmID string, command Co
 		if status.Code(err) == codes.Unimplemented {
 			response, unaryErr := farmv1.NewFarmCommandServiceClient(conn).Execute(ctx, request)
 			if unaryErr == nil {
-				return commandResponseFromProto(response), nil
+				return commandResponseFromProto(response, command.ClientCommand), nil
 			}
 			return CommandResponse{}, fmt.Errorf("farmrpc: stream unsupported: %v; unary execute: %w", err, unaryErr)
 		}
 		return CommandResponse{}, fmt.Errorf("farmrpc: execute command: %w", err)
 	}
-	return commandResponseFromProto(response), nil
+	return commandResponseFromProto(response, command.ClientCommand), nil
 }
 
-func commandResponseFromProto(response *farmv1.ExecuteResponse) CommandResponse {
+func commandResponseFromProto(response *farmv1.ExecuteResponse, command uint32) CommandResponse {
 	if response == nil {
 		return CommandResponse{Err: errcode.Internal}
 	}
-	return CommandResponse{
+	result := CommandResponse{
 		Err:             errcode.Code(response.Err),
 		Payload:         json.RawMessage(response.PayloadJson),
 		FarmSeq:         response.FarmSeq,
 		PreparedPayload: response.PreparedPayload,
 		PreparedField:   response.PreparedField,
+		ClientResponse:  response.ClientResponse,
 	}
+	if result.ClientResponse != nil && !isHotActionCommand(command) {
+		if payload, err := clientwire.CommandResponseToJSON(command, result.ClientResponse); err == nil {
+			result.Payload = payload
+		}
+	}
+	return result
+}
+
+func isHotActionCommand(command uint32) bool {
+	return command >= 206 && command <= 220 && command%2 == 0 || command == 302 || command == 304
 }
 
 func (client *GRPCClient) streamFor(target string, conn grpc.ClientConnInterface) (*commandStream, error) {

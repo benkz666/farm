@@ -2,11 +2,10 @@ syntax = "proto3";
 
 package farm.public.v3;
 
-option go_package = "gen/farm/public/v3;publicv3";
+option go_package = "farm/server/gen/farm/public/v3;publicv3";
 
-// WireBatch is one WebSocket binary message. Low-frequency commands use the
-// JSON compatibility arm while the bandwidth/CPU-critical Farm read path is
-// represented by typed messages.
+// WireBatch is one WebSocket binary message. Every payload is a typed
+// Protobuf message; JSON compatibility was intentionally removed in v3.
 message WireBatch {
   repeated WireEnvelope envelopes = 1;
 }
@@ -15,14 +14,73 @@ message WireEnvelope {
   uint32 cmd = 1;
   uint32 client_seq = 2;
   int32 err = 3;
+  reserved 10;
   oneof payload {
-    bytes json_payload = 10;
     EnterFarmRequest enter_farm_request = 11;
     SyncFarmRequest sync_farm_request = 12;
     EnterFarmResponse enter_farm_response = 13;
     SyncFarmResponse sync_farm_response = 14;
     FarmDelta farm_delta = 15;
+    CommandRequest command_request = 16;
+    CommandResponse command_response = 17;
+    PlayerDelta player_delta = 18;
+    MailNotify mail_notify = 19;
+    SessionKick session_kick = 20;
+    Task task_notify = 21;
   }
+}
+
+// CommandRequest is the typed field set shared by the command-numbered public
+// protocol. The envelope cmd selects the legal subset; Gateway performs the
+// command-specific validation.
+message CommandRequest {
+  string auth_token = 1;
+  uint64 resume_farm_uid = 2;
+  uint64 resume_farm_seq = 3;
+  uint32 client_config_ver = 4;
+  int64 client_time = 5;
+  uint64 owner_uid = 6;
+  uint32 plot_index = 7;
+  uint32 arg = 8;
+  uint32 crop_id = 9;
+  uint32 item_id = 10;
+  uint32 quantity = 11;
+  uint64 peer_uid = 12;
+  string username = 13;
+  string invite_token = 14;
+  uint64 from_uid = 15;
+  uint32 dog_type = 16;
+  uint32 grams = 17;
+  uint32 task_id = 18;
+  uint64 mail_id = 19;
+  bool all = 20;
+  string time_profile = 21;
+  uint64 from_seq = 22;
+}
+
+// CommandResponse is the typed result set shared by command-numbered replies.
+// The envelope cmd selects the populated result fields.
+message CommandResponse {
+  uint64 uid = 1;
+  int64 client_time = 2;
+  int64 server_time = 3;
+  ActionResponse action = 4;
+  VisitorReward visitor_reward = 5;
+  repeated Friend friends = 6;
+  repeated User users = 7;
+  repeated FriendRequest friend_requests = 8;
+  string path = 9;
+  PetStatus pet_status = 10;
+  repeated Task tasks = 11;
+  int64 reset_at = 12;
+  TaskReward task_reward = 13;
+  repeated Mail mails = 14;
+  int64 affected = 15;
+  Mail mail = 16;
+  repeated CodexProgress codex_entries = 17;
+  uint32 codex_total = 18;
+  string time_profile = 19;
+  bool time_profile_mutable = 20;
 }
 
 message EnterFarmRequest {
@@ -87,6 +145,125 @@ message PlotSnapshot {
 message GuardDog {
   uint32 active_dog = 1;
   int64 bowl_empty_at = 2;
+}
+
+message FarmPatch {
+  optional uint32 plot_index = 1;
+  PlotSnapshot plot = 2;
+  int64 coin = 3;
+  uint32 exp = 4;
+  map<string, uint32> bag_changes = 5;
+  map<string, uint32> warehouse_changes = 6;
+  uint64 farm_seq = 7;
+  CodexProgress codex_progress = 8;
+}
+
+message ActionResponse {
+  uint64 farm_seq = 1;
+  FarmPatch patch = 2;
+  repeated CodexRewardNotice codex_rewards = 3;
+}
+
+message VisitorReward {
+  uint64 req_id = 1;
+  uint32 exp_gained = 2;
+  int64 coin_gained = 3;
+  uint32 crop_id = 4;
+  uint32 amount = 5;
+  int64 compensation = 6;
+  uint32 dog_type = 7;
+}
+
+message Friend {
+  uint64 uid = 1;
+  string nickname = 2;
+  bool has_stealable = 3;
+}
+
+message User {
+  uint64 uid = 1;
+  string nickname = 2;
+}
+
+message FriendRequest {
+  uint64 from_uid = 1;
+  string nickname = 2;
+  int64 created_at = 3;
+}
+
+message PetDogStatus {
+  uint32 dog_type = 1;
+  uint32 level = 2;
+  uint32 intercepts = 3;
+  uint32 interception_pct = 4;
+}
+
+message PetStatus {
+  uint32 active_dog = 1;
+  uint32 owned = 2;
+  uint32 bowl_grams = 3;
+  int64 bowl_empty_at = 4;
+  int64 ms_per_gram = 5;
+  uint32 dog_level = 6;
+  uint32 intercepts = 7;
+  uint32 interception_pct = 8;
+  repeated PetDogStatus dogs = 9;
+}
+
+message Task {
+  uint32 id = 1;
+  int64 day_key = 2;
+  string kind = 3;
+  string title = 4;
+  uint32 progress = 5;
+  uint32 target = 6;
+  int64 reward_coin = 7;
+  bool claimed = 8;
+}
+
+message TaskReward {
+  int64 coin = 1;
+  uint32 exp = 2;
+}
+
+message Mail {
+  uint64 id = 1;
+  string title = 2;
+  int64 attachment_coin = 3;
+  bool claimed = 4;
+  bool read = 5;
+  int64 created_at = 6;
+}
+
+message CodexProgress {
+  uint32 crop_id = 1;
+  uint32 harvest_count = 2;
+  string tier = 3;
+  uint32 next_target = 4;
+}
+
+message CodexRewardNotice {
+  uint32 crop_id = 1;
+  string tier = 2;
+  uint32 target = 3;
+  int64 reward_coin = 4;
+}
+
+message PlayerDelta {
+  int64 coin = 1;
+  uint32 exp = 2;
+  uint32 level = 3;
+  map<string, uint32> bag = 4;
+  map<string, uint32> warehouse = 5;
+  PetStatus pet = 6;
+}
+
+message MailNotify {
+  string kind = 1;
+}
+
+message SessionKick {
+  int32 reason = 1;
 }
 
 message FarmDelta {

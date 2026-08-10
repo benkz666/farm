@@ -58,6 +58,28 @@ func TestFarmAdvanceSchedulerDoesNotDuplicateUnchangedDeadline(t *testing.T) {
 	}
 }
 
+func TestFarmAdvanceSchedulerCompactsChangedDeadlines(t *testing.T) {
+	scheduler := newFarmAdvanceScheduler(
+		func() int64 { return time.Now().UnixMilli() },
+		func(uint64) {},
+	)
+	defer scheduler.Close()
+	base := time.Now().Add(time.Hour).UnixMilli()
+	for i := 0; i < 10_000; i++ {
+		scheduler.Schedule(42, base+int64(i))
+	}
+	scheduler.mu.Lock()
+	items := scheduler.items.Len()
+	live := len(scheduler.deadline)
+	scheduler.mu.Unlock()
+	if live != 1 {
+		t.Fatalf("live deadlines=%d, want 1", live)
+	}
+	if items > advanceHeapCompactSlack+1 {
+		t.Fatalf("heap items=%d, want bounded stale nodes", items)
+	}
+}
+
 type evictedAdvanceRuntime struct {
 	actor *room.FarmActor
 	calls atomic.Int32

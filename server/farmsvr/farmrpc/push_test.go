@@ -1,6 +1,7 @@
 package farmrpc
 
 import (
+	"context"
 	"reflect"
 	"sort"
 	"testing"
@@ -10,6 +11,37 @@ import (
 	"farm/server/gateway/presence"
 	"farm/server/shared/store"
 )
+
+type channelDeltaPublisher chan uint64
+
+func (publisher channelDeltaPublisher) Publish(_ context.Context, delta farm.FarmDelta, _ presence.ConnRef) error {
+	publisher <- delta.FarmSeq
+	return nil
+}
+
+func TestAsyncDeltaPublisherPreservesPerFarmOrder(t *testing.T) {
+	inner := make(channelDeltaPublisher, 128)
+	publisher := NewAsyncDeltaPublisher(inner, 2, 128)
+	for seq := uint64(1); seq <= 100; seq++ {
+		if err := publisher.Publish(t.Context(), farm.FarmDelta{OwnerUID: 42, FarmSeq: seq}, presence.ConnRef{}); err != nil {
+			t.Fatalf("Publish %d: %v", seq, err)
+		}
+	}
+	if err := publisher.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	close(inner)
+	want := uint64(1)
+	for got := range inner {
+		if got != want {
+			t.Fatalf("FarmSeq=%d, want %d", got, want)
+		}
+		want++
+	}
+	if want != 101 {
+		t.Fatalf("published %d deltas, want 100", want-1)
+	}
+}
 
 func TestFanoutPublisherPushesEverySubscribedConnection(t *testing.T) {
 	backend := newRegistryBackend()

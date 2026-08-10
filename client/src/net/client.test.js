@@ -104,7 +104,7 @@ test('FarmDelta 主动推送交给 delta 订阅者', () => {
     }]),
   })
 
-  assert.deepEqual(received.payload, { owner_uid: 9, farm_seq: 3, plots: [] })
+  assert.deepEqual(received.payload, { owner_uid: '9', farm_seq: '3', plots: [] })
 })
 
 test('PlayerDelta 主动推送交给个人状态订阅者', () => {

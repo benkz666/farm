@@ -116,7 +116,7 @@ func (d *OutboxDispatcher) deliverRow(row store.OutboxRow) {
 			_ = d.store.MarkOutboxPublished(ctx, row.EventID)
 			return
 		}
-		_, code, err := d.client.DeliverCrossResult(ctx, domain)
+		_, _, code, err := d.client.DeliverCrossResult(ctx, domain)
 		if err != nil || code == errcode.Internal {
 			d.scheduleRetry(row)
 			return

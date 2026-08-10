@@ -24,16 +24,9 @@ func TestEncodeFarmDeltaPublicEnvelopeShape(t *testing.T) {
 		t.Fatalf("EncodeFarmDelta: %v", err)
 	}
 
-	var envelope Envelope
-	if err := json.Unmarshal(encoded, &envelope); err != nil {
-		t.Fatalf("unmarshal envelope: %v", err)
-	}
-	if envelope.Cmd != CommandFarmDelta || envelope.ClientSeq != 0 || envelope.Err != errcode.OK {
-		t.Fatalf("envelope = %#v", envelope)
-	}
-	var payload farm.FarmDelta
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
+	payload, err := DecodeFarmDelta(encoded)
+	if err != nil {
+		t.Fatalf("decode protobuf FarmDelta: %v", err)
 	}
 	if payload.OwnerUID != 42 || payload.FarmSeq != 7 || payload.ActorUID != 9 || payload.Action != 212 {
 		t.Fatalf("payload = %#v", payload)

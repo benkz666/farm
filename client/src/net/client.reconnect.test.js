@@ -295,13 +295,13 @@ test('旧 socket 事件不能污染新连接', async () => {
   assert.equal(ping.cmd, CMD_PING)
   const seq = ping.client_seq
 
-  oldWs.respond({ cmd: CMD_PING, client_seq: seq, err: 0, payload: { stale: true } })
+  oldWs.respond({ cmd: CMD_PING, client_seq: seq, err: 0, payload: { client_time: 1, server_time: 2 } })
   await Promise.resolve()
   assert.equal(client._pending.size, 1)
 
-  newWs.respond({ cmd: CMD_PING, client_seq: seq, err: 0, payload: { ok: true } })
+  newWs.respond({ cmd: CMD_PING, client_seq: seq, err: 0, payload: { client_time: 3, server_time: 4 } })
   const env = await req
-  assert.deepEqual(env.payload, { ok: true })
+  assert.deepEqual(env.payload, { client_time: 3, server_time: 4 })
 })
 
 test('主动 close 取消重连；后续显式 connect 可重新启用', async () => {
@@ -539,8 +539,8 @@ test('不匹配 cmd/seq 的应答不清理其他 pending', async () => {
   await Promise.resolve()
   assert.equal(client._pending.size, 2)
 
-  ws.respond({ cmd: CMD_PING, client_seq: seqA, err: 0, payload: { a: 1 } })
-  assert.deepEqual((await a).payload, { a: 1 })
+  ws.respond({ cmd: CMD_PING, client_seq: seqA, err: 0, payload: { client_time: 1, server_time: 2 } })
+  assert.deepEqual((await a).payload, { client_time: 1, server_time: 2 })
   assert.equal(client._pending.size, 1)
 
   ws.respond({ cmd: CMD_HANDSHAKE, client_seq: seqB, err: 0, payload: {} })

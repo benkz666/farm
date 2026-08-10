@@ -21,18 +21,30 @@
 
 WebSocket 仅支持二进制子协议 `farm.v3.pb`，不提供旧子协议的协商分支。每个 Protobuf `WireBatch` 可携带 1～64 个 `WireEnvelope`；客户端同一微任务内发出的请求会合并，Gateway 的应答和推送也按帧合并。
 
-`WireEnvelope` 的 `cmd`、`client_seq`、`err` 为类型化字段。EnterFarm、SyncFarm 与 FarmDelta 使用明确的 Protobuf message；其他低频命令暂时使用受校验的 `json_payload` oneof 分支。Farm 可把预编码快照子消息不透明地交给 Gateway，Gateway 只追加自己负责的关系/调试字段。浏览器适配层把 UID、`farm_seq` 等 64 位标识转换为十进制字符串，禁止转为 JavaScript Number。
+`WireEnvelope` 的 `cmd`、`client_seq`、`err` 以及所有 payload 都是类型化 Protobuf 字段。EnterFarm、SyncFarm、FarmDelta 和各类推送使用独立 message；其余命令使用 `CommandRequest` / `CommandResponse`，并由 `cmd` 约束合法字段子集。协议中不再保留 JSON payload 兼容分支。Farm 可把预编码快照子消息不透明地交给 Gateway，Gateway 只追加自己负责的关系/调试字段。浏览器适配层把 UID、`farm_seq` 等 64 位标识转换为十进制字符串，禁止转为 JavaScript Number。
 
 ### 1.3 消息信封
 
-所有 WebSocket 帧都是一个 `Envelope`：
+所有 WebSocket 帧都是一个 `WireBatch`，其中每条记录都是 `WireEnvelope`：
 
 ```proto
-message Envelope {
+message WireEnvelope {
   uint32 cmd        = 1;  // 命令号，见第 5 章清单
   uint32 client_seq = 2;  // 请求携带；应答原样回带；服务端主动推送时为 0
   int32  err        = 3;  // 仅应答有效，0 表示成功，见第 4 章
-  bytes  payload    = 4;  // 按 cmd 反序列化为对应的 Req / Rsp / Push 消息
+  oneof payload {
+    EnterFarmRequest  enter_farm_request  = 11;
+    SyncFarmRequest   sync_farm_request   = 12;
+    EnterFarmResponse enter_farm_response = 13;
+    SyncFarmResponse  sync_farm_response  = 14;
+    FarmDelta         farm_delta          = 15;
+    CommandRequest    command_request     = 16;
+    CommandResponse   command_response    = 17;
+    PlayerDelta       player_delta        = 18;
+    MailNotify        mail_notify         = 19;
+    SessionKick       session_kick        = 20;
+    Task              task_notify         = 21;
+  }
 }
 ```
 

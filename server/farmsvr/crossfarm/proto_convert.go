@@ -1,8 +1,8 @@
 package crossfarm
 
 import (
-	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/domain/farm"
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
 )
 

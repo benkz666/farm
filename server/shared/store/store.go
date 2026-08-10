@@ -192,8 +192,12 @@ func New(db *sql.DB, rdb *redis.Client, farmTTL time.Duration) *Store {
 		farmTTL = DefaultFarmCacheTTL
 	}
 	storage := &Store{db: db, rdb: rdb, farmTTL: farmTTL}
+	storage.taskRead.capacity = defaultReadCacheCapacity
+	storage.taskEncoded.capacity = defaultReadCacheCapacity
 	storage.mailbox.local.ttl = mailLocalCacheTTL
 	storage.mailbox.local.capacity = mailLocalCacheCapacity
+	storage.mailbox.encoded.ttl = mailLocalCacheTTL
+	storage.mailbox.encoded.capacity = mailLocalCacheCapacity
 	return storage
 }
 

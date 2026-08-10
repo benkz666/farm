@@ -29,9 +29,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Complex client-visible payloads remain
-// JSON inside payload_json for legacy command payloads; cross-farm settlement
-// uses the separate typed CrossFarmService contract.
+// Farm instance that owns FarmUID. Client-originated commands use the same
+// typed payload as the public WebSocket boundary.
 type FarmCommandServiceClient interface {
 	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
 	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
@@ -92,9 +91,8 @@ type FarmCommandService_ExecuteBatchStreamClient = grpc.BidiStreamingClient[Stre
 // for forward compatibility.
 //
 // FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Complex client-visible payloads remain
-// JSON inside payload_json for legacy command payloads; cross-farm settlement
-// uses the separate typed CrossFarmService contract.
+// Farm instance that owns FarmUID. Client-originated commands use the same
+// typed payload as the public WebSocket boundary.
 type FarmCommandServiceServer interface {
 	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
 	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.

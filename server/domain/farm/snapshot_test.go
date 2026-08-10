@@ -137,6 +137,39 @@ func TestActionPatchClonesStealersSlice(t *testing.T) {
 	}
 }
 
+func TestActionPatchCarriesOnlyChangedItemCounts(t *testing.T) {
+	agg := NewAggregate(1, "alice")
+	agg.Items[FruitItem(1)] = 1
+	result := agg.Sell(SellReq{ItemID: 1, Quantity: 1})
+	if result.Err != 0 {
+		t.Fatalf("Sell err = %d", result.Err)
+	}
+	if result.Patch.Plot != nil {
+		t.Fatal("shop patch unexpectedly contains plot snapshot")
+	}
+	if len(result.Patch.Items) != 1 || result.Patch.Items[FruitItem(1)] != 0 {
+		t.Fatalf("item changes = %#v, want fruit tombstone", result.Patch.Items)
+	}
+
+	patch := agg.PatchFromAction(result)
+	if len(patch.BagChanges) != 0 || patch.WarehouseChanges["fruit:1"] != 0 {
+		t.Fatalf("wire item changes = bag %#v warehouse %#v", patch.BagChanges, patch.WarehouseChanges)
+	}
+	encoded, err := json.Marshal(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"plot", "bag", "warehouse"} {
+		if _, ok := fields[absent]; ok {
+			t.Fatalf("incremental patch unexpectedly contains %q: %s", absent, encoded)
+		}
+	}
+}
+
 func TestMultiSeasonHarvestSnapshotAndPatchContainSeasonIndex(t *testing.T) {
 	agg := NewAggregate(1, "alice")
 	agg.Plots[0] = Plot{

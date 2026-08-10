@@ -191,7 +191,7 @@ func (a *Aggregate) PetActivateWithProfile(dog DogType, now int64, timeProfile s
 		return ActionResult{Err: errcode.DogNotOwned}
 	}
 	if a.Pet.ActiveDog == dog {
-		return a.okPatch(0)
+		return ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}
 	}
 	remaining := a.Pet.remainingGrams(now)
 	a.Pet.ActiveDog = dog
@@ -202,7 +202,7 @@ func (a *Aggregate) PetActivateWithProfile(dog DogType, now int64, timeProfile s
 		a.Pet.BowlEmptyAt = 0
 	}
 	a.FarmSeq++
-	return a.okPatch(0)
+	return ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}
 }
 
 // PetFeed tops up the bowl without exceeding capacity. Excess requested grams
@@ -243,7 +243,7 @@ func (a *Aggregate) PetFeedWithProfile(req PetFeedReq, now int64, timeProfile st
 	a.Pet.MsPerGram = rate
 	a.Pet.BowlEmptyAt = now + int64(remaining+add)*a.Pet.MsPerGram
 	a.FarmSeq++
-	return a.okPatch(0)
+	return a.withItemCounts(ActionResult{Err: errcode.OK, Patch: a.resourcePatch()}, key)
 }
 
 // FreezeStealCompensation deducts the potential loss before publishing a cross

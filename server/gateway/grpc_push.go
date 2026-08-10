@@ -2,10 +2,10 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"farm/server/domain/farm"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
@@ -32,7 +32,7 @@ func (server *PushServer) PushFarmDeltaBatch(_ context.Context, request *farmv1.
 	if server == nil || server.gateway == nil || request == nil {
 		return &farmv1.Empty{}, nil
 	}
-	if err := server.gateway.applyFarmDeltaBatch(request.ConnIds, request.Envelope); err != nil {
+	if err := server.gateway.applyFarmDeltaBatchProto(request.ConnIds, request.Delta); err != nil {
 		if errors.Is(err, errApplyBadRequest) {
 			return nil, status.Error(codes.InvalidArgument, "bad_request")
 		}
@@ -46,13 +46,10 @@ func (server *PushServer) PushPlayerDelta(_ context.Context, request *farmv1.Pus
 	if server == nil || server.gateway == nil || request == nil {
 		return &farmv1.Empty{}, nil
 	}
-	var delta farm.PlayerDelta
-	if len(request.DeltaJson) > 0 {
-		if err := json.Unmarshal(request.DeltaJson, &delta); err != nil {
-			return nil, status.Error(codes.InvalidArgument, "bad_request")
-		}
+	if request.Delta == nil {
+		return nil, status.Error(codes.InvalidArgument, "bad_request")
 	}
-	server.gateway.applyPlayerDelta(request.ConnectionId, request.Uid, delta)
+	server.gateway.applyPlayerDeltaProto(request.ConnectionId, request.Uid, request.Delta)
 	return &farmv1.Empty{}, nil
 }
 
@@ -101,7 +98,18 @@ func (g *Gateway) applyFarmDeltaBatch(connIDs []uint64, envelope []byte) error {
 	if err != nil || delta.OwnerUID == 0 {
 		return errApplyBadRequest
 	}
-	record, err := clientwire.EncodeFarmDeltaRecord(delta)
+	return g.applyFarmDeltaBatchProto(connIDs, clientwire.FarmDeltaToProto(delta))
+}
+
+func (g *Gateway) applyFarmDeltaBatchProto(connIDs []uint64, encodedDelta *publicv3.FarmDelta) error {
+	if len(connIDs) == 0 || encodedDelta == nil {
+		return errApplyBadRequest
+	}
+	delta := clientwire.FarmDeltaFromProto(encodedDelta)
+	if delta.OwnerUID == 0 {
+		return errApplyBadRequest
+	}
+	record, err := clientwire.EncodeFarmDeltaProtoRecord(encodedDelta)
 	if err != nil {
 		return errApplyBadRequest
 	}
@@ -141,6 +149,13 @@ func (g *Gateway) applyFarmDeltaBatch(connIDs []uint64, envelope []byte) error {
 }
 
 func (g *Gateway) applyPlayerDelta(connectionID, uid uint64, delta farm.PlayerDelta) {
+	g.applyPlayerDeltaProto(connectionID, uid, clientwire.PlayerDeltaToProto(delta))
+}
+
+func (g *Gateway) applyPlayerDeltaProto(connectionID, uid uint64, delta *publicv3.PlayerDelta) {
+	if delta == nil {
+		return
+	}
 	connection, ok := g.connections.Load(connectionID)
 	if !ok {
 		return
@@ -149,7 +164,7 @@ func (g *Gateway) applyPlayerDelta(connectionID, uid uint64, delta farm.PlayerDe
 	if wsConn.uid != uid {
 		return
 	}
-	if err := wsConn.pushPlayerDelta(delta); err != nil {
+	if err := wsConn.pushPlayerDeltaProto(delta); err != nil {
 		telemetry.L().Warn("gateway PlayerDelta push failed",
 			"component", "gateway",
 			"op", "push_player_delta",

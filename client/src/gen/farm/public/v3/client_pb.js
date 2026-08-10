@@ -8,7 +8,7 @@ import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
  * Describes the file farm/public/v3/client.proto.
  */
 export const file_farm_public_v3_client = /*@__PURE__*/
-  fileDesc("ChtmYXJtL3B1YmxpYy92My9jbGllbnQucHJvdG8SDmZhcm0ucHVibGljLnYzIjwKCVdpcmVCYXRjaBIvCgllbnZlbG9wZXMYASADKAsyHC5mYXJtLnB1YmxpYy52My5XaXJlRW52ZWxvcGUikAMKDFdpcmVFbnZlbG9wZRILCgNjbWQYASABKA0SEgoKY2xpZW50X3NlcRgCIAEoDRILCgNlcnIYAyABKAUSFgoManNvbl9wYXlsb2FkGAogASgMSAASPgoSZW50ZXJfZmFybV9yZXF1ZXN0GAsgASgLMiAuZmFybS5wdWJsaWMudjMuRW50ZXJGYXJtUmVxdWVzdEgAEjwKEXN5bmNfZmFybV9yZXF1ZXN0GAwgASgLMh8uZmFybS5wdWJsaWMudjMuU3luY0Zhcm1SZXF1ZXN0SAASQAoTZW50ZXJfZmFybV9yZXNwb25zZRgNIAEoCzIhLmZhcm0ucHVibGljLnYzLkVudGVyRmFybVJlc3BvbnNlSAASPgoSc3luY19mYXJtX3Jlc3BvbnNlGA4gASgLMiAuZmFybS5wdWJsaWMudjMuU3luY0Zhcm1SZXNwb25zZUgAEi8KCmZhcm1fZGVsdGEYDyABKAsyGS5mYXJtLnB1YmxpYy52My5GYXJtRGVsdGFIAEIJCgdwYXlsb2FkIiUKEEVudGVyRmFybVJlcXVlc3QSEQoJb3duZXJfdWlkGAEgASgEIjYKD1N5bmNGYXJtUmVxdWVzdBIRCglvd25lcl91aWQYASABKAQSEAoIZnJvbV9zZXEYAiABKAQisAEKEUVudGVyRmFybVJlc3BvbnNlEi4KCHNuYXBzaG90GAEgASgLMhwuZmFybS5wdWJsaWMudjMuRmFybVNuYXBzaG90EhAKCGZhcm1fc2VxGAIgASgEEhMKC3NlcnZlcl90aW1lGAMgASgDEhQKDHRpbWVfcHJvZmlsZRgEIAEoCRIcChR0aW1lX3Byb2ZpbGVfbXV0YWJsZRgFIAEoCBIQCghyZWxhdGlvbhgGIAEoCSLIAQoQU3luY0Zhcm1SZXNwb25zZRIpCgZkZWx0YXMYASADKAsyGS5mYXJtLnB1YmxpYy52My5GYXJtRGVsdGESLgoIc25hcHNob3QYAiABKAsyHC5mYXJtLnB1YmxpYy52My5GYXJtU25hcHNob3QSEAoIZmFybV9zZXEYAyABKAQSEwoLc2VydmVyX3RpbWUYBCABKAMSFAoMdGltZV9wcm9maWxlGAUgASgJEhwKFHRpbWVfcHJvZmlsZV9tdXRhYmxlGAYgASgIIqEDCgxGYXJtU25hcHNob3QSEQoJb3duZXJfdWlkGAEgASgEEhAKCG5pY2tuYW1lGAIgASgJEg0KBWxldmVsGAMgASgNEgsKA2V4cBgEIAEoDRIMCgRjb2luGAUgASgDEhYKDnVubG9ja2VkX3Bsb3RzGAYgASgNEisKBXBsb3RzGAcgAygLMhwuZmFybS5wdWJsaWMudjMuUGxvdFNuYXBzaG90EjIKA2JhZxgIIAMoCzIlLmZhcm0ucHVibGljLnYzLkZhcm1TbmFwc2hvdC5CYWdFbnRyeRI+Cgl3YXJlaG91c2UYCSADKAsyKy5mYXJtLnB1YmxpYy52My5GYXJtU25hcHNob3QuV2FyZWhvdXNlRW50cnkSKwoJZ3VhcmRfZG9nGAogASgLMhguZmFybS5wdWJsaWMudjMuR3VhcmREb2caKgoIQmFnRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgNOgI4ARowCg5XYXJlaG91c2VFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKA06AjgBItMCCgxQbG90U25hcHNob3QSDQoFaW5kZXgYASABKA0SDQoFc3RhdGUYAiABKA0SDwoHY3JvcF9pZBgDIAEoDRIUCgxzZWFzb25faW5kZXgYBCABKA0SFAoMc2Vhc29uX3RvdGFsGAUgASgNEhcKD3NlYXNvbl9zdGFydF9hdBgGIAEoAxIRCgltYXR1cmVfYXQYByABKAMSFwoPc2Vhc29uX2R1cmF0aW9uGAggASgDEhMKC2ZpbmFsX3lpZWxkGAkgASgNEhYKDmxhc3Rfc2V0dGxlX2F0GAogASgDEhUKDWxhc3Rfd2F0ZXJfYXQYCyABKAMSEgoKd2VlZF9zaW5jZRgMIAEoAxISCgpwZXN0X3NpbmNlGA0gASgDEg4KBmhlYWx0aBgOIAEoDRIUCgxzdG9sZW5fY291bnQYDyABKA0SEQoJZmVydF9tYXNrGBAgASgNIjUKCEd1YXJkRG9nEhIKCmFjdGl2ZV9kb2cYASABKA0SFQoNYm93bF9lbXB0eV9hdBgCIAEoAyKtAQoJRmFybURlbHRhEhEKCW93bmVyX3VpZBgBIAEoBBIQCghmYXJtX3NlcRgCIAEoBBIrCgVwbG90cxgDIAMoCzIcLmZhcm0ucHVibGljLnYzLlBsb3RTbmFwc2hvdBIrCglndWFyZF9kb2cYBCABKAsyGC5mYXJtLnB1YmxpYy52My5HdWFyZERvZxIRCglhY3Rvcl91aWQYBSABKAQSDgoGYWN0aW9uGAYgASgNQh1aG2dlbi9mYXJtL3B1YmxpYy92MztwdWJsaWN2M2IGcHJvdG8z");
+  fileDesc("ChtmYXJtL3B1YmxpYy92My9jbGllbnQucHJvdG8SDmZhcm0ucHVibGljLnYzIjwKCVdpcmVCYXRjaBIvCgllbnZlbG9wZXMYASADKAsyHC5mYXJtLnB1YmxpYy52My5XaXJlRW52ZWxvcGUiwAUKDFdpcmVFbnZlbG9wZRILCgNjbWQYASABKA0SEgoKY2xpZW50X3NlcRgCIAEoDRILCgNlcnIYAyABKAUSPgoSZW50ZXJfZmFybV9yZXF1ZXN0GAsgASgLMiAuZmFybS5wdWJsaWMudjMuRW50ZXJGYXJtUmVxdWVzdEgAEjwKEXN5bmNfZmFybV9yZXF1ZXN0GAwgASgLMh8uZmFybS5wdWJsaWMudjMuU3luY0Zhcm1SZXF1ZXN0SAASQAoTZW50ZXJfZmFybV9yZXNwb25zZRgNIAEoCzIhLmZhcm0ucHVibGljLnYzLkVudGVyRmFybVJlc3BvbnNlSAASPgoSc3luY19mYXJtX3Jlc3BvbnNlGA4gASgLMiAuZmFybS5wdWJsaWMudjMuU3luY0Zhcm1SZXNwb25zZUgAEi8KCmZhcm1fZGVsdGEYDyABKAsyGS5mYXJtLnB1YmxpYy52My5GYXJtRGVsdGFIABI5Cg9jb21tYW5kX3JlcXVlc3QYECABKAsyHi5mYXJtLnB1YmxpYy52My5Db21tYW5kUmVxdWVzdEgAEjsKEGNvbW1hbmRfcmVzcG9uc2UYESABKAsyHy5mYXJtLnB1YmxpYy52My5Db21tYW5kUmVzcG9uc2VIABIzCgxwbGF5ZXJfZGVsdGEYEiABKAsyGy5mYXJtLnB1YmxpYy52My5QbGF5ZXJEZWx0YUgAEjEKC21haWxfbm90aWZ5GBMgASgLMhouZmFybS5wdWJsaWMudjMuTWFpbE5vdGlmeUgAEjMKDHNlc3Npb25fa2ljaxgUIAEoCzIbLmZhcm0ucHVibGljLnYzLlNlc3Npb25LaWNrSAASKwoLdGFza19ub3RpZnkYFSABKAsyFC5mYXJtLnB1YmxpYy52My5UYXNrSABCCQoHcGF5bG9hZEoECAoQCyKyAwoOQ29tbWFuZFJlcXVlc3QSEgoKYXV0aF90b2tlbhgBIAEoCRIXCg9yZXN1bWVfZmFybV91aWQYAiABKAQSFwoPcmVzdW1lX2Zhcm1fc2VxGAMgASgEEhkKEWNsaWVudF9jb25maWdfdmVyGAQgASgNEhMKC2NsaWVudF90aW1lGAUgASgDEhEKCW93bmVyX3VpZBgGIAEoBBISCgpwbG90X2luZGV4GAcgASgNEgsKA2FyZxgIIAEoDRIPCgdjcm9wX2lkGAkgASgNEg8KB2l0ZW1faWQYCiABKA0SEAoIcXVhbnRpdHkYCyABKA0SEAoIcGVlcl91aWQYDCABKAQSEAoIdXNlcm5hbWUYDSABKAkSFAoMaW52aXRlX3Rva2VuGA4gASgJEhAKCGZyb21fdWlkGA8gASgEEhAKCGRvZ190eXBlGBAgASgNEg0KBWdyYW1zGBEgASgNEg8KB3Rhc2tfaWQYEiABKA0SDwoHbWFpbF9pZBgTIAEoBBILCgNhbGwYFCABKAgSFAoMdGltZV9wcm9maWxlGBUgASgJEhAKCGZyb21fc2VxGBYgASgEIrQFCg9Db21tYW5kUmVzcG9uc2USCwoDdWlkGAEgASgEEhMKC2NsaWVudF90aW1lGAIgASgDEhMKC3NlcnZlcl90aW1lGAMgASgDEi4KBmFjdGlvbhgEIAEoCzIeLmZhcm0ucHVibGljLnYzLkFjdGlvblJlc3BvbnNlEjUKDnZpc2l0b3JfcmV3YXJkGAUgASgLMh0uZmFybS5wdWJsaWMudjMuVmlzaXRvclJld2FyZBInCgdmcmllbmRzGAYgAygLMhYuZmFybS5wdWJsaWMudjMuRnJpZW5kEiMKBXVzZXJzGAcgAygLMhQuZmFybS5wdWJsaWMudjMuVXNlchI2Cg9mcmllbmRfcmVxdWVzdHMYCCADKAsyHS5mYXJtLnB1YmxpYy52My5GcmllbmRSZXF1ZXN0EgwKBHBhdGgYCSABKAkSLQoKcGV0X3N0YXR1cxgKIAEoCzIZLmZhcm0ucHVibGljLnYzLlBldFN0YXR1cxIjCgV0YXNrcxgLIAMoCzIULmZhcm0ucHVibGljLnYzLlRhc2sSEAoIcmVzZXRfYXQYDCABKAMSLwoLdGFza19yZXdhcmQYDSABKAsyGi5mYXJtLnB1YmxpYy52My5UYXNrUmV3YXJkEiMKBW1haWxzGA4gAygLMhQuZmFybS5wdWJsaWMudjMuTWFpbBIQCghhZmZlY3RlZBgPIAEoAxIiCgRtYWlsGBAgASgLMhQuZmFybS5wdWJsaWMudjMuTWFpbBI0Cg1jb2RleF9lbnRyaWVzGBEgAygLMh0uZmFybS5wdWJsaWMudjMuQ29kZXhQcm9ncmVzcxITCgtjb2RleF90b3RhbBgSIAEoDRIUCgx0aW1lX3Byb2ZpbGUYEyABKAkSHAoUdGltZV9wcm9maWxlX211dGFibGUYFCABKAgiJQoQRW50ZXJGYXJtUmVxdWVzdBIRCglvd25lcl91aWQYASABKAQiNgoPU3luY0Zhcm1SZXF1ZXN0EhEKCW93bmVyX3VpZBgBIAEoBBIQCghmcm9tX3NlcRgCIAEoBCKwAQoRRW50ZXJGYXJtUmVzcG9uc2USLgoIc25hcHNob3QYASABKAsyHC5mYXJtLnB1YmxpYy52My5GYXJtU25hcHNob3QSEAoIZmFybV9zZXEYAiABKAQSEwoLc2VydmVyX3RpbWUYAyABKAMSFAoMdGltZV9wcm9maWxlGAQgASgJEhwKFHRpbWVfcHJvZmlsZV9tdXRhYmxlGAUgASgIEhAKCHJlbGF0aW9uGAYgASgJIsgBChBTeW5jRmFybVJlc3BvbnNlEikKBmRlbHRhcxgBIAMoCzIZLmZhcm0ucHVibGljLnYzLkZhcm1EZWx0YRIuCghzbmFwc2hvdBgCIAEoCzIcLmZhcm0ucHVibGljLnYzLkZhcm1TbmFwc2hvdBIQCghmYXJtX3NlcRgDIAEoBBITCgtzZXJ2ZXJfdGltZRgEIAEoAxIUCgx0aW1lX3Byb2ZpbGUYBSABKAkSHAoUdGltZV9wcm9maWxlX211dGFibGUYBiABKAgioQMKDEZhcm1TbmFwc2hvdBIRCglvd25lcl91aWQYASABKAQSEAoIbmlja25hbWUYAiABKAkSDQoFbGV2ZWwYAyABKA0SCwoDZXhwGAQgASgNEgwKBGNvaW4YBSABKAMSFgoOdW5sb2NrZWRfcGxvdHMYBiABKA0SKwoFcGxvdHMYByADKAsyHC5mYXJtLnB1YmxpYy52My5QbG90U25hcHNob3QSMgoDYmFnGAggAygLMiUuZmFybS5wdWJsaWMudjMuRmFybVNuYXBzaG90LkJhZ0VudHJ5Ej4KCXdhcmVob3VzZRgJIAMoCzIrLmZhcm0ucHVibGljLnYzLkZhcm1TbmFwc2hvdC5XYXJlaG91c2VFbnRyeRIrCglndWFyZF9kb2cYCiABKAsyGC5mYXJtLnB1YmxpYy52My5HdWFyZERvZxoqCghCYWdFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKA06AjgBGjAKDldhcmVob3VzZUVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAEi0wIKDFBsb3RTbmFwc2hvdBINCgVpbmRleBgBIAEoDRINCgVzdGF0ZRgCIAEoDRIPCgdjcm9wX2lkGAMgASgNEhQKDHNlYXNvbl9pbmRleBgEIAEoDRIUCgxzZWFzb25fdG90YWwYBSABKA0SFwoPc2Vhc29uX3N0YXJ0X2F0GAYgASgDEhEKCW1hdHVyZV9hdBgHIAEoAxIXCg9zZWFzb25fZHVyYXRpb24YCCABKAMSEwoLZmluYWxfeWllbGQYCSABKA0SFgoObGFzdF9zZXR0bGVfYXQYCiABKAMSFQoNbGFzdF93YXRlcl9hdBgLIAEoAxISCgp3ZWVkX3NpbmNlGAwgASgDEhIKCnBlc3Rfc2luY2UYDSABKAMSDgoGaGVhbHRoGA4gASgNEhQKDHN0b2xlbl9jb3VudBgPIAEoDRIRCglmZXJ0X21hc2sYECABKA0iNQoIR3VhcmREb2cSEgoKYWN0aXZlX2RvZxgBIAEoDRIVCg1ib3dsX2VtcHR5X2F0GAIgASgDIrsDCglGYXJtUGF0Y2gSFwoKcGxvdF9pbmRleBgBIAEoDUgAiAEBEioKBHBsb3QYAiABKAsyHC5mYXJtLnB1YmxpYy52My5QbG90U25hcHNob3QSDAoEY29pbhgDIAEoAxILCgNleHAYBCABKA0SPgoLYmFnX2NoYW5nZXMYBSADKAsyKS5mYXJtLnB1YmxpYy52My5GYXJtUGF0Y2guQmFnQ2hhbmdlc0VudHJ5EkoKEXdhcmVob3VzZV9jaGFuZ2VzGAYgAygLMi8uZmFybS5wdWJsaWMudjMuRmFybVBhdGNoLldhcmVob3VzZUNoYW5nZXNFbnRyeRIQCghmYXJtX3NlcRgHIAEoBBI1Cg5jb2RleF9wcm9ncmVzcxgIIAEoCzIdLmZhcm0ucHVibGljLnYzLkNvZGV4UHJvZ3Jlc3MaMQoPQmFnQ2hhbmdlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAEaNwoVV2FyZWhvdXNlQ2hhbmdlc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAFCDQoLX3Bsb3RfaW5kZXgihgEKDkFjdGlvblJlc3BvbnNlEhAKCGZhcm1fc2VxGAEgASgEEigKBXBhdGNoGAIgASgLMhkuZmFybS5wdWJsaWMudjMuRmFybVBhdGNoEjgKDWNvZGV4X3Jld2FyZHMYAyADKAsyIS5mYXJtLnB1YmxpYy52My5Db2RleFJld2FyZE5vdGljZSKRAQoNVmlzaXRvclJld2FyZBIOCgZyZXFfaWQYASABKAQSEgoKZXhwX2dhaW5lZBgCIAEoDRITCgtjb2luX2dhaW5lZBgDIAEoAxIPCgdjcm9wX2lkGAQgASgNEg4KBmFtb3VudBgFIAEoDRIUCgxjb21wZW5zYXRpb24YBiABKAMSEAoIZG9nX3R5cGUYByABKA0iPgoGRnJpZW5kEgsKA3VpZBgBIAEoBBIQCghuaWNrbmFtZRgCIAEoCRIVCg1oYXNfc3RlYWxhYmxlGAMgASgIIiUKBFVzZXISCwoDdWlkGAEgASgEEhAKCG5pY2tuYW1lGAIgASgJIkcKDUZyaWVuZFJlcXVlc3QSEAoIZnJvbV91aWQYASABKAQSEAoIbmlja25hbWUYAiABKAkSEgoKY3JlYXRlZF9hdBgDIAEoAyJdCgxQZXREb2dTdGF0dXMSEAoIZG9nX3R5cGUYASABKA0SDQoFbGV2ZWwYAiABKA0SEgoKaW50ZXJjZXB0cxgDIAEoDRIYChBpbnRlcmNlcHRpb25fcGN0GAQgASgNItsBCglQZXRTdGF0dXMSEgoKYWN0aXZlX2RvZxgBIAEoDRINCgVvd25lZBgCIAEoDRISCgpib3dsX2dyYW1zGAMgASgNEhUKDWJvd2xfZW1wdHlfYXQYBCABKAMSEwoLbXNfcGVyX2dyYW0YBSABKAMSEQoJZG9nX2xldmVsGAYgASgNEhIKCmludGVyY2VwdHMYByABKA0SGAoQaW50ZXJjZXB0aW9uX3BjdBgIIAEoDRIqCgRkb2dzGAkgAygLMhwuZmFybS5wdWJsaWMudjMuUGV0RG9nU3RhdHVzIogBCgRUYXNrEgoKAmlkGAEgASgNEg8KB2RheV9rZXkYAiABKAMSDAoEa2luZBgDIAEoCRINCgV0aXRsZRgEIAEoCRIQCghwcm9ncmVzcxgFIAEoDRIOCgZ0YXJnZXQYBiABKA0SEwoLcmV3YXJkX2NvaW4YByABKAMSDwoHY2xhaW1lZBgIIAEoCCInCgpUYXNrUmV3YXJkEgwKBGNvaW4YASABKAMSCwoDZXhwGAIgASgNIm0KBE1haWwSCgoCaWQYASABKAQSDQoFdGl0bGUYAiABKAkSFwoPYXR0YWNobWVudF9jb2luGAMgASgDEg8KB2NsYWltZWQYBCABKAgSDAoEcmVhZBgFIAEoCBISCgpjcmVhdGVkX2F0GAYgASgDIloKDUNvZGV4UHJvZ3Jlc3MSDwoHY3JvcF9pZBgBIAEoDRIVCg1oYXJ2ZXN0X2NvdW50GAIgASgNEgwKBHRpZXIYAyABKAkSEwoLbmV4dF90YXJnZXQYBCABKA0iVwoRQ29kZXhSZXdhcmROb3RpY2USDwoHY3JvcF9pZBgBIAEoDRIMCgR0aWVyGAIgASgJEg4KBnRhcmdldBgDIAEoDRITCgtyZXdhcmRfY29pbhgEIAEoAyKvAgoLUGxheWVyRGVsdGESDAoEY29pbhgBIAEoAxILCgNleHAYAiABKA0SDQoFbGV2ZWwYAyABKA0SMQoDYmFnGAQgAygLMiQuZmFybS5wdWJsaWMudjMuUGxheWVyRGVsdGEuQmFnRW50cnkSPQoJd2FyZWhvdXNlGAUgAygLMiouZmFybS5wdWJsaWMudjMuUGxheWVyRGVsdGEuV2FyZWhvdXNlRW50cnkSJgoDcGV0GAYgASgLMhkuZmFybS5wdWJsaWMudjMuUGV0U3RhdHVzGioKCEJhZ0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoDToCOAEaMAoOV2FyZWhvdXNlRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgNOgI4ASIaCgpNYWlsTm90aWZ5EgwKBGtpbmQYASABKAkiHQoLU2Vzc2lvbktpY2sSDgoGcmVhc29uGAEgASgFIq0BCglGYXJtRGVsdGESEQoJb3duZXJfdWlkGAEgASgEEhAKCGZhcm1fc2VxGAIgASgEEisKBXBsb3RzGAMgAygLMhwuZmFybS5wdWJsaWMudjMuUGxvdFNuYXBzaG90EisKCWd1YXJkX2RvZxgEIAEoCzIYLmZhcm0ucHVibGljLnYzLkd1YXJkRG9nEhEKCWFjdG9yX3VpZBgFIAEoBBIOCgZhY3Rpb24YBiABKA1CKVonZmFybS9zZXJ2ZXIvZ2VuL2Zhcm0vcHVibGljL3YzO3B1YmxpY3YzYgZwcm90bzM");
 
 /**
  * Describes the message farm.public.v3.WireBatch.
@@ -25,58 +25,184 @@ export const WireEnvelopeSchema = /*@__PURE__*/
   messageDesc(file_farm_public_v3_client, 1);
 
 /**
+ * Describes the message farm.public.v3.CommandRequest.
+ * Use `create(CommandRequestSchema)` to create a new message.
+ */
+export const CommandRequestSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 2);
+
+/**
+ * Describes the message farm.public.v3.CommandResponse.
+ * Use `create(CommandResponseSchema)` to create a new message.
+ */
+export const CommandResponseSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 3);
+
+/**
  * Describes the message farm.public.v3.EnterFarmRequest.
  * Use `create(EnterFarmRequestSchema)` to create a new message.
  */
 export const EnterFarmRequestSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 2);
+  messageDesc(file_farm_public_v3_client, 4);
 
 /**
  * Describes the message farm.public.v3.SyncFarmRequest.
  * Use `create(SyncFarmRequestSchema)` to create a new message.
  */
 export const SyncFarmRequestSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 3);
+  messageDesc(file_farm_public_v3_client, 5);
 
 /**
  * Describes the message farm.public.v3.EnterFarmResponse.
  * Use `create(EnterFarmResponseSchema)` to create a new message.
  */
 export const EnterFarmResponseSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 4);
+  messageDesc(file_farm_public_v3_client, 6);
 
 /**
  * Describes the message farm.public.v3.SyncFarmResponse.
  * Use `create(SyncFarmResponseSchema)` to create a new message.
  */
 export const SyncFarmResponseSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 5);
+  messageDesc(file_farm_public_v3_client, 7);
 
 /**
  * Describes the message farm.public.v3.FarmSnapshot.
  * Use `create(FarmSnapshotSchema)` to create a new message.
  */
 export const FarmSnapshotSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 6);
+  messageDesc(file_farm_public_v3_client, 8);
 
 /**
  * Describes the message farm.public.v3.PlotSnapshot.
  * Use `create(PlotSnapshotSchema)` to create a new message.
  */
 export const PlotSnapshotSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 7);
+  messageDesc(file_farm_public_v3_client, 9);
 
 /**
  * Describes the message farm.public.v3.GuardDog.
  * Use `create(GuardDogSchema)` to create a new message.
  */
 export const GuardDogSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 8);
+  messageDesc(file_farm_public_v3_client, 10);
+
+/**
+ * Describes the message farm.public.v3.FarmPatch.
+ * Use `create(FarmPatchSchema)` to create a new message.
+ */
+export const FarmPatchSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 11);
+
+/**
+ * Describes the message farm.public.v3.ActionResponse.
+ * Use `create(ActionResponseSchema)` to create a new message.
+ */
+export const ActionResponseSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 12);
+
+/**
+ * Describes the message farm.public.v3.VisitorReward.
+ * Use `create(VisitorRewardSchema)` to create a new message.
+ */
+export const VisitorRewardSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 13);
+
+/**
+ * Describes the message farm.public.v3.Friend.
+ * Use `create(FriendSchema)` to create a new message.
+ */
+export const FriendSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 14);
+
+/**
+ * Describes the message farm.public.v3.User.
+ * Use `create(UserSchema)` to create a new message.
+ */
+export const UserSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 15);
+
+/**
+ * Describes the message farm.public.v3.FriendRequest.
+ * Use `create(FriendRequestSchema)` to create a new message.
+ */
+export const FriendRequestSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 16);
+
+/**
+ * Describes the message farm.public.v3.PetDogStatus.
+ * Use `create(PetDogStatusSchema)` to create a new message.
+ */
+export const PetDogStatusSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 17);
+
+/**
+ * Describes the message farm.public.v3.PetStatus.
+ * Use `create(PetStatusSchema)` to create a new message.
+ */
+export const PetStatusSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 18);
+
+/**
+ * Describes the message farm.public.v3.Task.
+ * Use `create(TaskSchema)` to create a new message.
+ */
+export const TaskSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 19);
+
+/**
+ * Describes the message farm.public.v3.TaskReward.
+ * Use `create(TaskRewardSchema)` to create a new message.
+ */
+export const TaskRewardSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 20);
+
+/**
+ * Describes the message farm.public.v3.Mail.
+ * Use `create(MailSchema)` to create a new message.
+ */
+export const MailSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 21);
+
+/**
+ * Describes the message farm.public.v3.CodexProgress.
+ * Use `create(CodexProgressSchema)` to create a new message.
+ */
+export const CodexProgressSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 22);
+
+/**
+ * Describes the message farm.public.v3.CodexRewardNotice.
+ * Use `create(CodexRewardNoticeSchema)` to create a new message.
+ */
+export const CodexRewardNoticeSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 23);
+
+/**
+ * Describes the message farm.public.v3.PlayerDelta.
+ * Use `create(PlayerDeltaSchema)` to create a new message.
+ */
+export const PlayerDeltaSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 24);
+
+/**
+ * Describes the message farm.public.v3.MailNotify.
+ * Use `create(MailNotifySchema)` to create a new message.
+ */
+export const MailNotifySchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 25);
+
+/**
+ * Describes the message farm.public.v3.SessionKick.
+ * Use `create(SessionKickSchema)` to create a new message.
+ */
+export const SessionKickSchema = /*@__PURE__*/
+  messageDesc(file_farm_public_v3_client, 26);
 
 /**
  * Describes the message farm.public.v3.FarmDelta.
  * Use `create(FarmDeltaSchema)` to create a new message.
  */
 export const FarmDeltaSchema = /*@__PURE__*/
-  messageDesc(file_farm_public_v3_client, 9);
+  messageDesc(file_farm_public_v3_client, 27);
 

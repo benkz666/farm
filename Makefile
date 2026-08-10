@@ -3,7 +3,7 @@ COMPOSE_FILE := deploy/compose.yml
 .PHONY: infra-up compose-up compose-down migrate run stop api-docs api-docs-check \
 	run-gateway run-farm run-social client-dev test proto proto-check \
 	smoke smoke-friends smoke-room smoke-help smoke-steal smoke-all gen gen-check \
-	obs-up obs-down api-baseline api-ladder service-bench-build
+	obs-up obs-down api-baseline api-ladder service-bench-build bench-fixture-reset
 
 # 生成 OpenAPI / AsyncAPI / gRPC 离线文档。首次运行需先在 docs/api 执行 npm ci。
 api-docs:
@@ -25,6 +25,11 @@ service-bench-build:
 	mkdir -p .run/service-bench/bin
 	cd server && go build -o ../.run/service-bench/bin/servicebench ./cmd/servicebench
 	cd server && go build -o ../.run/service-bench/bin/benchstub ./cmd/benchstub
+
+# 复用既有账号/token，仅重置业务状态；例如：
+# make bench-fixture-reset PROFILE=water FIXTURE=/fixtures/hot-write-15000x18.json
+bench-fixture-reset:
+	PROFILE="$${PROFILE:?set PROFILE}" FIXTURE="$${FIXTURE:?set FIXTURE}" ./scripts/reset-bench-fixture.sh
 
 # 从 config/*.csv 生成服务端与前端共享配置。
 gen:

@@ -34,3 +34,11 @@ func TestCrossInFlightSetting(t *testing.T) {
 		t.Fatal("nonNegativeIntSetting accepted negative value")
 	}
 }
+
+func TestWriteInFlightSetting(t *testing.T) {
+	t.Setenv("FARM_WRITE_MAX_IN_FLIGHT", "640")
+	value, err := nonNegativeIntSetting("FARM_WRITE_MAX_IN_FLIGHT", 512)
+	if err != nil || value != 640 {
+		t.Fatalf("nonNegativeIntSetting = %d, %v", value, err)
+	}
+}

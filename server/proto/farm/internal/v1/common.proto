@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package farm.internal.v1;
 
-option go_package = "gen/farm/v1;farmv1";
+option go_package = "farm/server/gen/farm/v1;farmv1";
 
 // ConnRef identifies a WebSocket connection on a specific Gateway instance.
 message ConnRef {

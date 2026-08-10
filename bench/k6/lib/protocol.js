@@ -18,12 +18,13 @@ export const MAX_COMMANDS_PER_SECOND = 8
 export const DEFAULT_COMMAND_INTERVAL_MS = 1000 / MAX_COMMANDS_PER_SECOND
 
 function appendVarint(target, value) {
+  value = typeof value === 'bigint' ? value : BigInt(value)
   do {
-    let byte = value % 128
-    value = Math.floor(value / 128)
-    if (value > 0) byte |= 0x80
+    let byte = Number(value & 0x7fn)
+    value >>= 7n
+    if (value > 0n) byte |= 0x80
     target.push(byte)
-  } while (value > 0)
+  } while (value > 0n)
 }
 
 function appendFieldVarint(target, field, value) {
@@ -35,6 +36,16 @@ function appendFieldBytes(target, field, value) {
   appendVarint(target, field * 8 + 2)
   appendVarint(target, value.length)
   target.push(...value)
+}
+
+function appendFieldString(target, field, value) {
+  if (value === undefined || value === null || value === '') return
+  appendFieldBytes(target, field, utf8Encode(String(value)))
+}
+
+function appendOptionalVarint(target, field, value) {
+  if (value === undefined || value === null || value === '' || value === false || value === 0 || value === '0') return
+  appendFieldVarint(target, field, value)
 }
 
 function readVarint(bytes, cursor) {
@@ -111,15 +122,70 @@ export function encodeBinaryBatch(envelopes) {
   }
   const bytes = []
   for (const envelope of envelopes) {
-    const payload = utf8Encode(JSON.stringify(envelope.payload || {}))
     const message = []
     appendFieldVarint(message, 1, envelope.cmd)
     appendFieldVarint(message, 2, envelope.client_seq)
     if (envelope.err) appendFieldVarint(message, 3, envelope.err)
-    appendFieldBytes(message, 10, payload)
+    const typed = encodeRequestPayload(envelope.cmd, envelope.payload || {})
+    appendFieldBytes(message, typed.field, typed.payload)
     appendFieldBytes(bytes, 1, message)
   }
   return new Uint8Array(bytes).buffer
+}
+
+function encodeRequestPayload(cmd, payload) {
+  if (cmd === 200) {
+    const request = []
+    appendOptionalVarint(request, 1, payload.owner_uid)
+    return { field: 11, payload: request }
+  }
+  if (cmd === 204) {
+    const request = []
+    appendOptionalVarint(request, 1, payload.owner_uid)
+    appendOptionalVarint(request, 2, payload.from_seq)
+    return { field: 12, payload: request }
+  }
+
+  const request = []
+  switch (cmd) {
+    case 100:
+      appendFieldString(request, 1, payload.token)
+      appendOptionalVarint(request, 2, payload.resume_farm_uid)
+      appendOptionalVarint(request, 3, payload.resume_farm_seq)
+      appendOptionalVarint(request, 4, payload.client_config_ver)
+      break
+    case 102: appendOptionalVarint(request, 5, payload.client_time); break
+    case 202: case 400: case 402: case 414: case 500: case 600: case 604: case 612: case 614: break
+    case 206: case 208: case 210: case 212: case 214: case 216: case 218: case 220:
+      appendOptionalVarint(request, 6, payload.owner_uid)
+      appendOptionalVarint(request, 7, payload.plot_index)
+      appendOptionalVarint(request, 8, payload.arg)
+      break
+    case 222:
+      appendOptionalVarint(request, 6, payload.owner_uid)
+      appendOptionalVarint(request, 7, payload.plot_index)
+      appendOptionalVarint(request, 9, payload.crop_id)
+      break
+    case 302: case 304:
+      appendOptionalVarint(request, 10, payload.item_id)
+      appendOptionalVarint(request, 11, payload.quantity)
+      break
+    case 404: appendFieldString(request, 14, payload.token); break
+    case 406: case 408: case 412: appendOptionalVarint(request, 12, payload.peer_uid); break
+    case 410: appendFieldString(request, 13, payload.username); break
+    case 416: case 418: appendOptionalVarint(request, 15, payload.from_uid); break
+    case 502: appendOptionalVarint(request, 16, payload.dog_type); break
+    case 504: appendOptionalVarint(request, 17, payload.grams); break
+    case 602: appendOptionalVarint(request, 18, payload.task_id); break
+    case 606: case 610:
+      appendOptionalVarint(request, 19, payload.mail_id)
+      appendOptionalVarint(request, 20, payload.all)
+      break
+    case 608: appendOptionalVarint(request, 19, payload.mail_id); break
+    case 616: appendFieldString(request, 21, payload.time_profile); break
+    default: throw new Error(`unsupported protobuf command request ${cmd}`)
+  }
+  return { field: 16, payload: request }
 }
 
 export function decodeBinaryBatch(data) {
@@ -148,14 +214,121 @@ function decodeWireEnvelope(bytes) {
     if (field === 1 && wireType === 0) cmd = readVarint(bytes, cursor)
     else if (field === 2 && wireType === 0) client_seq = readVarint(bytes, cursor)
     else if (field === 3 && wireType === 0) err = readVarint(bytes, cursor)
-    else if (field === 10 && wireType === 2) payload = JSON.parse(utf8Decode(readBytes(bytes, cursor)))
     else if (field === 13 && wireType === 2) payload = decodeFarmReadPayload(readBytes(bytes, cursor), 2, 6)
     else if (field === 14 && wireType === 2) payload = decodeFarmReadPayload(readBytes(bytes, cursor), 3, 0)
     else if (field === 15 && wireType === 2) payload = decodeFarmDeltaPayload(readBytes(bytes, cursor))
+    else if (field === 17 && wireType === 2) payload = decodeCommandResponse(cmd, readBytes(bytes, cursor))
+    else if (field === 18 && wireType === 2) payload = decodePlayerDeltaPayload(readBytes(bytes, cursor))
+    else if (field === 19 && wireType === 2) payload = decodeStringMessage(readBytes(bytes, cursor), 1, 'kind')
+    else if (field === 20 && wireType === 2) payload = decodeVarintMessage(readBytes(bytes, cursor), 1, 'reason')
+    else if (field === 21 && wireType === 2) payload = decodeTaskPayload(readBytes(bytes, cursor))
     else skipField(bytes, cursor, wireType)
   }
   if (payload === null) throw new Error('missing protobuf payload')
   return { cmd, client_seq, err, payload }
+}
+
+function decodeCommandResponse(cmd, bytes) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (cmd === 100 && field === 1 && wireType === 0) payload.uid = readVarintBig(bytes, cursor).toString()
+    else if (cmd === 102 && field === 2 && wireType === 0) payload.client_time = Number(readVarintBig(bytes, cursor))
+    else if (cmd === 102 && field === 3 && wireType === 0) payload.server_time = Number(readVarintBig(bytes, cursor))
+    else if (field === 4 && wireType === 2) Object.assign(payload, decodeActionResponse(readBytes(bytes, cursor)))
+    else if (field === 5 && wireType === 2) Object.assign(payload, decodeVisitorReward(readBytes(bytes, cursor)))
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodeActionResponse(bytes) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === 1 && wireType === 0) payload.farm_seq = readVarintBig(bytes, cursor).toString()
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodeVisitorReward(bytes) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === 1 && wireType === 0) payload.req_id = readVarintBig(bytes, cursor).toString()
+    else if (field === 2 && wireType === 0) payload.exp_gained = readVarint(bytes, cursor)
+    else if (field === 4 && wireType === 0) payload.crop_id = readVarint(bytes, cursor)
+    else if (field === 5 && wireType === 0) payload.amount = readVarint(bytes, cursor)
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodePlayerDeltaPayload(bytes) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === 1 && wireType === 0) payload.coin = Number(readVarintBig(bytes, cursor))
+    else if (field === 2 && wireType === 0) payload.exp = readVarint(bytes, cursor)
+    else if (field === 3 && wireType === 0) payload.level = readVarint(bytes, cursor)
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodeStringMessage(bytes, targetField, key) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === targetField && wireType === 2) payload[key] = utf8Decode(readBytes(bytes, cursor))
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodeVarintMessage(bytes, targetField, key) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === targetField && wireType === 0) payload[key] = readVarint(bytes, cursor)
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
+}
+
+function decodeTaskPayload(bytes) {
+  const cursor = { offset: 0 }
+  const payload = {}
+  while (cursor.offset < bytes.length) {
+    const tag = readVarint(bytes, cursor)
+    const field = Math.floor(tag / 8)
+    const wireType = tag % 8
+    if (field === 1 && wireType === 0) payload.id = readVarint(bytes, cursor)
+    else if (field === 4 && wireType === 2) payload.title = utf8Decode(readBytes(bytes, cursor))
+    else if (field === 5 && wireType === 0) payload.progress = readVarint(bytes, cursor)
+    else if (field === 6 && wireType === 0) payload.target = readVarint(bytes, cursor)
+    else skipField(bytes, cursor, wireType)
+  }
+  return payload
 }
 
 function decodeFarmReadPayload(bytes, farmSeqField, relationField) {

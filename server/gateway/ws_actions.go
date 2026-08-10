@@ -31,6 +31,28 @@ type actionResponse struct {
 	CodexRewards []farm.CodexRewardNotice `json:"codex_rewards,omitempty"`
 }
 
+func (g *Gateway) acquireWriteSlot() bool {
+	if g == nil || g.writeSlots == nil {
+		return true
+	}
+	select {
+	case g.writeSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *Gateway) releaseWriteSlot() {
+	if g == nil || g.writeSlots == nil {
+		return
+	}
+	select {
+	case <-g.writeSlots:
+	default:
+	}
+}
+
 func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) Envelope {
 	response := Envelope{
 		Cmd:       request.Cmd,
@@ -55,12 +77,23 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 	}
+	if !g.acquireWriteSlot() {
+		response.Err = errcode.RateLimited
+		return response
+	}
+	defer g.releaseWriteSlot()
 
 	switch request.Cmd {
 	case CommandTill, CommandClear, CommandPlant, CommandWater,
 		CommandRemoveWeed, CommandRemovePest, CommandFertilize, CommandHarvest:
 		var payload plotActionRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil {
+		var decodeErr error
+		if request.CommandRequest != nil {
+			payload = plotActionRequest{OwnerUID: clientjson.UID(request.CommandRequest.OwnerUid), PlotIndex: request.CommandRequest.PlotIndex, Arg: request.CommandRequest.Arg}
+		} else {
+			decodeErr = unmarshalPayload(request.Payload, &payload)
+		}
+		if decodeErr != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -83,24 +116,38 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		if g.farmRPC != nil {
-			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-				Operation:  farmrpc.OperationPlotAction,
-				Originator: g.connectionRef(connection),
-				Payload: marshalPayload(farmrpc.PlotActionRequest{
+			rpcRequest := farmrpc.CommandRequest{
+				Operation:     farmrpc.OperationPlotAction,
+				Originator:    g.connectionRef(connection),
+				ClientCommand: request.Cmd,
+				ClientRequest: request.CommandRequest,
+			}
+			// Typed WebSocket commands stay typed across Gateway→Farm. JSON is
+			// retained only for legacy in-process/unit seams.
+			if request.CommandRequest == nil {
+				rpcRequest.Payload = marshalPayload(farmrpc.PlotActionRequest{
 					OwnerUID:  ownerUID,
 					PlotIndex: payload.PlotIndex,
 					Arg:       payload.Arg,
 					Kind:      kind,
 					Command:   request.Cmd,
-				}),
-			})
+				})
+			}
+			remote, err := g.executeFarmRPC(context.Background(), connection.uid, rpcRequest)
 			if err != nil {
 				response.Err = errcode.Internal
 				return response
 			}
 			response.Err = remote.Err
 			if remote.Err == errcode.OK {
-				response.Payload = remote.Payload
+				if len(remote.PreparedPayload) > 0 {
+					response.PreparedPayload = remote.PreparedPayload
+					response.PreparedField = remote.PreparedField
+				} else if remote.ClientResponse != nil {
+					response.CommandResponse = remote.ClientResponse
+				} else {
+					response.Payload = remote.Payload
+				}
 				connection.advanceRoomWatermark(connection.uid, remote.FarmSeq)
 			}
 			return response
@@ -148,8 +195,10 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 				}
 				farmActor.Deltas.Append(emitted)
 				delta = &emitted
-				stealable = farmActor.Aggregate.HasStealable()
-				stoleHint = true
+				if kind == farm.Harvest {
+					stealable = farmActor.Aggregate.HasStealable()
+					stoleHint = true
+				}
 			}
 			return nil
 		}); err != nil {
@@ -182,7 +231,13 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 
 	case CommandBuy, CommandSell:
 		var payload shopRequest
-		if err := unmarshalPayload(request.Payload, &payload); err != nil {
+		var decodeErr error
+		if request.CommandRequest != nil {
+			payload = shopRequest{ItemID: request.CommandRequest.ItemId, Quantity: request.CommandRequest.Quantity}
+		} else {
+			decodeErr = unmarshalPayload(request.Payload, &payload)
+		}
+		if decodeErr != nil {
 			response.Err = errcode.BadRequest
 			return response
 		}
@@ -191,23 +246,35 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 			return response
 		}
 		if g.farmRPC != nil {
-			remote, err := g.executeFarmRPC(context.Background(), connection.uid, farmrpc.CommandRequest{
-				Operation:  farmrpc.OperationShop,
-				Originator: g.connectionRef(connection),
-				Payload: marshalPayload(farmrpc.ShopRequest{
+			rpcRequest := farmrpc.CommandRequest{
+				Operation:     farmrpc.OperationShop,
+				Originator:    g.connectionRef(connection),
+				ClientCommand: request.Cmd,
+				ClientRequest: request.CommandRequest,
+			}
+			if request.CommandRequest == nil {
+				rpcRequest.Payload = marshalPayload(farmrpc.ShopRequest{
 					Buy:      request.Cmd == CommandBuy,
 					ItemID:   payload.ItemID,
 					Quantity: payload.Quantity,
 					Command:  request.Cmd,
-				}),
-			})
+				})
+			}
+			remote, err := g.executeFarmRPC(context.Background(), connection.uid, rpcRequest)
 			if err != nil {
 				response.Err = errcode.Internal
 				return response
 			}
 			response.Err = remote.Err
 			if remote.Err == errcode.OK {
-				response.Payload = remote.Payload
+				if len(remote.PreparedPayload) > 0 {
+					response.PreparedPayload = remote.PreparedPayload
+					response.PreparedField = remote.PreparedField
+				} else if remote.ClientResponse != nil {
+					response.CommandResponse = remote.ClientResponse
+				} else {
+					response.Payload = remote.Payload
+				}
 				connection.advanceRoomWatermark(connection.uid, remote.FarmSeq)
 			}
 			return response

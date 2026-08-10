@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 )
@@ -31,8 +32,13 @@ func (g *Gateway) handleSetTimeProfile(_ *wsConnection, request Envelope) Envelo
 		return response
 	}
 	var payload setTimeProfileRequest
-	if err := unmarshalPayload(request.Payload, &payload); err != nil ||
-		!gameconfig.ValidTimeProfile(payload.TimeProfile) {
+	if request.CommandRequest != nil {
+		payload.TimeProfile = request.CommandRequest.TimeProfile
+	} else if err := unmarshalPayload(request.Payload, &payload); err != nil {
+		response.Err = errcode.BadRequest
+		return response
+	}
+	if !gameconfig.ValidTimeProfile(payload.TimeProfile) {
 		response.Err = errcode.BadRequest
 		return response
 	}
@@ -40,9 +46,11 @@ func (g *Gateway) handleSetTimeProfile(_ *wsConnection, request Envelope) Envelo
 		response.Err = errcode.Internal
 		return response
 	}
-	response.Payload = marshalPayload(setTimeProfileResponse{
+	result := setTimeProfileResponse{
 		TimeProfile:        g.TimeProfile(),
 		TimeProfileMutable: true,
-	})
+	}
+	response.Payload = marshalPayload(result)
+	response.CommandResponse = &publicv3.CommandResponse{TimeProfile: result.TimeProfile, TimeProfileMutable: result.TimeProfileMutable}
 	return response
 }
