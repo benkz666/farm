@@ -1,6 +1,6 @@
 package store
 
-import "farm/server/gateway/presence"
+import "farm/server/shared/presence"
 
 // ConnectionRegistry returns the shared Redis-backed registry used to route
 // Farm Delta callbacks to the Gateway holding each WebSocket.

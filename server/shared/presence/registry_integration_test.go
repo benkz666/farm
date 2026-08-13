@@ -11,7 +11,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"farm/server/gateway/presence"
+	"farm/server/shared/presence"
 )
 
 func TestRedisRegistryReplaceConnection(t *testing.T) {

@@ -182,8 +182,8 @@ type CrossAction struct {
 	PlotIndex    uint32                 `protobuf:"varint,5,opt,name=plot_index,json=plotIndex,proto3" json:"plot_index,omitempty"`
 	CropId       uint32                 `protobuf:"varint,6,opt,name=crop_id,json=cropId,proto3" json:"crop_id,omitempty"`
 	Compensation int64                  `protobuf:"varint,7,opt,name=compensation,proto3" json:"compensation,omitempty"`
-	// Set only by the trusted Gateway after its authoritative friendship check.
-	// Non-Gateway callers leave it false and the owner revalidates friendship.
+	// Set only by the coordinating Farm after Social authorization. Other Farm
+	// callers leave it false and the owner revalidates friendship.
 	FriendshipVerified bool `protobuf:"varint,8,opt,name=friendship_verified,json=friendshipVerified,proto3" json:"friendship_verified,omitempty"`
 	// Identifies the requesting WebSocket only on the colocated fast path. Farm
 	// excludes it from fan-out because ExecuteCrossAction returns its delta

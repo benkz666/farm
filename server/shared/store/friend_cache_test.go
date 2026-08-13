@@ -431,14 +431,14 @@ func TestCachedFriendStoreSerializesReadBackfillWithMutation(t *testing.T) {
 
 type friendInvalidationBusStub struct {
 	mu          sync.Mutex
-	subscribers []func(string)
+	subscribers []func([]byte)
 	ready       chan struct{}
 	readyOnce   sync.Once
 }
 
-func (bus *friendInvalidationBusStub) Publish(_ context.Context, message string) error {
+func (bus *friendInvalidationBusStub) Publish(_ context.Context, message []byte) error {
 	bus.mu.Lock()
-	subscribers := append([]func(string){}, bus.subscribers...)
+	subscribers := append([]func([]byte){}, bus.subscribers...)
 	bus.mu.Unlock()
 	for _, subscriber := range subscribers {
 		subscriber(message)
@@ -446,7 +446,7 @@ func (bus *friendInvalidationBusStub) Publish(_ context.Context, message string)
 	return nil
 }
 
-func (bus *friendInvalidationBusStub) Subscribe(ctx context.Context, handle func(string)) error {
+func (bus *friendInvalidationBusStub) Subscribe(ctx context.Context, handle func([]byte)) error {
 	bus.mu.Lock()
 	bus.subscribers = append(bus.subscribers, handle)
 	bus.readyOnce.Do(func() { close(bus.ready) })

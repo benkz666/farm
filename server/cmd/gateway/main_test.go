@@ -26,26 +26,6 @@ func TestAPIDocsEnabled(t *testing.T) {
 	}
 }
 
-func TestCrossInFlightSetting(t *testing.T) {
-	t.Setenv("FARM_CROSS_MAX_IN_FLIGHT", "768")
-	value, err := nonNegativeIntSetting("FARM_CROSS_MAX_IN_FLIGHT", 1024)
-	if err != nil || value != 768 {
-		t.Fatalf("nonNegativeIntSetting = %d, %v", value, err)
-	}
-	t.Setenv("FARM_CROSS_MAX_IN_FLIGHT", "-1")
-	if _, err := nonNegativeIntSetting("FARM_CROSS_MAX_IN_FLIGHT", 1024); err == nil {
-		t.Fatal("nonNegativeIntSetting accepted negative value")
-	}
-}
-
-func TestWriteInFlightSetting(t *testing.T) {
-	t.Setenv("FARM_WRITE_MAX_IN_FLIGHT", "640")
-	value, err := nonNegativeIntSetting("FARM_WRITE_MAX_IN_FLIGHT", 512)
-	if err != nil || value != 640 {
-		t.Fatalf("nonNegativeIntSetting = %d, %v", value, err)
-	}
-}
-
 func TestGatewayAdvertiseTargetUsesPodHostAndListenerPort(t *testing.T) {
 	env := map[string]string{"FARM_GATEWAY_ADVERTISE_HOST": "10.42.0.7"}
 	target, err := gatewayAdvertiseTarget(":9202", func(name string) string { return env[name] })

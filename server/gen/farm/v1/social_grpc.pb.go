@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	SocialService_ExecuteClientCommand_FullMethodName       = "/farm.internal.v1.SocialService/ExecuteClientCommand"
 	SocialService_AreFriends_FullMethodName                 = "/farm.internal.v1.SocialService/AreFriends"
 	SocialService_AddFriends_FullMethodName                 = "/farm.internal.v1.SocialService/AddFriends"
 	SocialService_RemoveFriends_FullMethodName              = "/farm.internal.v1.SocialService/RemoveFriends"
@@ -38,6 +39,10 @@ const (
 //
 // SocialService is the typed friendship boundary between Gateway/Farm and Social.
 type SocialServiceClient interface {
+	// ExecuteClientCommand is the Gateway-facing boundary for every public
+	// social command. Lower-level typed methods remain available to Farm for
+	// authorization and cross-farm orchestration.
+	ExecuteClientCommand(ctx context.Context, in *ClientCommandRequest, opts ...grpc.CallOption) (*ClientCommandResponse, error)
 	AreFriends(ctx context.Context, in *AreFriendsRequest, opts ...grpc.CallOption) (*AreFriendsResponse, error)
 	AddFriends(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
 	RemoveFriends(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -48,7 +53,6 @@ type SocialServiceClient interface {
 	ListIncomingFriendRequests(ctx context.Context, in *UidRequest, opts ...grpc.CallOption) (*ListFriendRequestsResponse, error)
 	AcceptFriendRequest(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
 	RejectFriendRequest(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
-	// Reserved for future cache invalidation; not implemented in P3.
 	WatchFriendInvalidations(ctx context.Context, in *UidRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FriendInvalidation], error)
 }
 
@@ -58,6 +62,16 @@ type socialServiceClient struct {
 
 func NewSocialServiceClient(cc grpc.ClientConnInterface) SocialServiceClient {
 	return &socialServiceClient{cc}
+}
+
+func (c *socialServiceClient) ExecuteClientCommand(ctx context.Context, in *ClientCommandRequest, opts ...grpc.CallOption) (*ClientCommandResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClientCommandResponse)
+	err := c.cc.Invoke(ctx, SocialService_ExecuteClientCommand_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *socialServiceClient) AreFriends(ctx context.Context, in *AreFriendsRequest, opts ...grpc.CallOption) (*AreFriendsResponse, error) {
@@ -185,6 +199,10 @@ type SocialService_WatchFriendInvalidationsClient = grpc.ServerStreamingClient[F
 //
 // SocialService is the typed friendship boundary between Gateway/Farm and Social.
 type SocialServiceServer interface {
+	// ExecuteClientCommand is the Gateway-facing boundary for every public
+	// social command. Lower-level typed methods remain available to Farm for
+	// authorization and cross-farm orchestration.
+	ExecuteClientCommand(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error)
 	AreFriends(context.Context, *AreFriendsRequest) (*AreFriendsResponse, error)
 	AddFriends(context.Context, *PairRequest) (*Empty, error)
 	RemoveFriends(context.Context, *PairRequest) (*Empty, error)
@@ -195,7 +213,6 @@ type SocialServiceServer interface {
 	ListIncomingFriendRequests(context.Context, *UidRequest) (*ListFriendRequestsResponse, error)
 	AcceptFriendRequest(context.Context, *PairRequest) (*Empty, error)
 	RejectFriendRequest(context.Context, *PairRequest) (*Empty, error)
-	// Reserved for future cache invalidation; not implemented in P3.
 	WatchFriendInvalidations(*UidRequest, grpc.ServerStreamingServer[FriendInvalidation]) error
 	mustEmbedUnimplementedSocialServiceServer()
 }
@@ -207,6 +224,9 @@ type SocialServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSocialServiceServer struct{}
 
+func (UnimplementedSocialServiceServer) ExecuteClientCommand(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecuteClientCommand not implemented")
+}
 func (UnimplementedSocialServiceServer) AreFriends(context.Context, *AreFriendsRequest) (*AreFriendsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AreFriends not implemented")
 }
@@ -259,6 +279,24 @@ func RegisterSocialServiceServer(s grpc.ServiceRegistrar, srv SocialServiceServe
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&SocialService_ServiceDesc, srv)
+}
+
+func _SocialService_ExecuteClientCommand_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClientCommandRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SocialServiceServer).ExecuteClientCommand(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SocialService_ExecuteClientCommand_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SocialServiceServer).ExecuteClientCommand(ctx, req.(*ClientCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _SocialService_AreFriends_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -459,6 +497,10 @@ var SocialService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "farm.internal.v1.SocialService",
 	HandlerType: (*SocialServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ExecuteClientCommand",
+			Handler:    _SocialService_ExecuteClientCommand_Handler,
+		},
 		{
 			MethodName: "AreFriends",
 			Handler:    _SocialService_AreFriends_Handler,

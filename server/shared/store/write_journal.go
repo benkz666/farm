@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -264,9 +265,10 @@ type FarmWriteJournal struct {
 	backlogUntil    atomic.Int64
 }
 
-// OpenFarmWriteJournal opens a dedicated Redis client. redisAddr may point at
-// the shared Redis in development, but production can isolate the durable log
-// from cache eviction and session traffic.
+// OpenFarmWriteJournal opens dedicated connection pools against the deployment's
+// single Redis instance. Separate pools prevent blocking projector reads from
+// starving foreground session/cache/event commands; they are not separate data
+// stores.
 func OpenFarmWriteJournal(
 	ctx context.Context,
 	base *Store,
@@ -1848,13 +1850,11 @@ func (journal *FarmWriteJournal) latestKey(shard int, uid uint64) string {
 }
 
 // FarmWriteJournalProjectorGroup is the Redis consumer group that materializes
-// the recovery log into MySQL. Gateway admission uses the same group when it
-// samples real pending and lag values from XINFO GROUPS.
+// the recovery log into MySQL. Farm admission samples this group directly.
 const FarmWriteJournalProjectorGroup = "mysql-projector"
 
 // FarmWriteJournalStreamKey returns the canonical stream key shared by Farm
-// writers, Projectors and Gateway backlog admission. Keeping this construction
-// in one package prevents a deployment from silently monitoring the wrong key.
+// writers, Projectors and Farm backlog admission.
 func FarmWriteJournalStreamKey(prefix, instanceID string, shard int) string {
 	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), ":")
 	instanceID = sanitizeJournalPart(instanceID)
@@ -1896,6 +1896,74 @@ func (journal *FarmWriteJournal) WaitIdle(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// WriteJournalBacklog is a point-in-time view of records waiting for MySQL
+// projection. Pending records were delivered but not acknowledged; lag records
+// have not yet been delivered to a projector.
+type WriteJournalBacklog struct {
+	Pending int64
+	Lag     int64
+	Streams int
+}
+
+func (backlog WriteJournalBacklog) Total() int64 {
+	if backlog.Pending < 0 {
+		backlog.Pending = 0
+	}
+	if backlog.Lag < 0 {
+		backlog.Lag = 0
+	}
+	if backlog.Pending > math.MaxInt64-backlog.Lag {
+		return math.MaxInt64
+	}
+	return backlog.Pending + backlog.Lag
+}
+
+// WriteBacklog returns the exact local Farm journal pressure used by the
+// foreground admission controller. It intentionally lives with the journal so
+// Gateway never needs Redis Stream or MySQL projection knowledge.
+func (journal *FarmWriteJournal) WriteBacklog(ctx context.Context) (WriteJournalBacklog, error) {
+	if journal == nil || journal.lookupRDB == nil || !journal.started.Load() || journal.closed.Load() {
+		return WriteJournalBacklog{}, errors.New("store: write journal is not running")
+	}
+	pipe := journal.lookupRDB.Pipeline()
+	commands := make([]*redis.XInfoGroupsCmd, journal.config.Shards)
+	for shard := range journal.config.Shards {
+		commands[shard] = pipe.XInfoGroups(ctx, journal.streamKey(shard))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	var backlog WriteJournalBacklog
+	for shard, command := range commands {
+		groups, err := command.Result()
+		if err != nil {
+			return WriteJournalBacklog{}, fmt.Errorf("store: read write backlog shard %d: %w", shard, err)
+		}
+		found := false
+		for _, group := range groups {
+			if group.Name != journal.groupName() {
+				continue
+			}
+			found = true
+			lag := group.Lag
+			if lag < 0 {
+				length, lengthErr := journal.lookupRDB.XLen(ctx, journal.streamKey(shard)).Result()
+				if lengthErr != nil {
+					return WriteJournalBacklog{}, fmt.Errorf("store: read unknown write backlog shard %d: %w", shard, lengthErr)
+				}
+				lag = max(int64(0), length-group.Pending)
+			}
+			backlog.Pending += max(int64(0), group.Pending)
+			backlog.Lag += max(int64(0), lag)
+			backlog.Streams++
+			break
+		}
+		if !found {
+			return WriteJournalBacklog{}, fmt.Errorf("store: write journal group missing on shard %d", shard)
+		}
+	}
+	return backlog, nil
 }
 
 func (journal *FarmWriteJournal) isIdle(ctx context.Context) (bool, error) {

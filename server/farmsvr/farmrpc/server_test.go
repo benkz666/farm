@@ -2,19 +2,18 @@ package farmrpc
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"testing"
 	"time"
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
-	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
+	"farm/server/shared/presence"
 	"farm/server/shared/store"
 
 	"google.golang.org/grpc"
@@ -34,30 +33,24 @@ func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
 	if response.Err != errcode.OK {
 		t.Fatalf("response error = %d, want %d", response.Err, errcode.OK)
 	}
-	var payload EnterFarmResponse
-	if err := json.Unmarshal(response.Payload, &payload); err != nil {
-		t.Fatalf("decode enter response: %v", err)
-	}
-	if payload.Snapshot.OwnerUID != 42 || payload.ServerTime != 123 || payload.TimeProfile != gameconfig.TimeProfileAuthentic {
+	payload := response.EnterFarmResponse
+	if payload == nil || payload.Snapshot.GetOwnerUid() != 42 || payload.ServerTime != 123 || payload.TimeProfile != gameconfig.TimeProfileAuthentic {
 		t.Fatalf("enter payload = %#v", payload)
 	}
 }
 
-func TestHandlerEnterFarmBuildsOnlyRequestedPreparedRepresentation(t *testing.T) {
+func TestHandlerEnterFarmBuildsTypedRepresentation(t *testing.T) {
 	runtime := runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
 	handler := NewHandler(runtime, nil, func(uint64) bool { return true }, func() int64 { return 123 })
 
 	response := handler.Execute(CommandRequest{
-		Operation: OperationEnterFarm, FarmUID: 42, PreferPrepared: true,
+		Operation: OperationEnterFarm, FarmUID: 42,
 	})
 	if response.Err != errcode.OK {
 		t.Fatalf("response error = %d", response.Err)
 	}
-	if len(response.Payload) != 0 {
-		t.Fatalf("prepared response duplicated JSON payload: %s", response.Payload)
-	}
-	if len(response.PreparedPayload) == 0 || response.PreparedField != clientwire.PreparedEnterFarmResponse {
-		t.Fatalf("prepared response metadata = field %d payload %d", response.PreparedField, len(response.PreparedPayload))
+	if response.EnterFarmResponse == nil || response.EnterFarmResponse.Snapshot == nil || response.EnterFarmResponse.Snapshot.OwnerUid != 42 {
+		t.Fatalf("typed enter response = %#v", response.EnterFarmResponse)
 	}
 }
 
@@ -89,9 +82,9 @@ func TestHandlerReadsHotSwitchedTimeProfile(t *testing.T) {
 	if response.Err != errcode.OK {
 		t.Fatalf("EnterFarm err = %d", response.Err)
 	}
-	var payload EnterFarmResponse
-	if err := json.Unmarshal(response.Payload, &payload); err != nil {
-		t.Fatalf("decode EnterFarm: %v", err)
+	payload := response.EnterFarmResponse
+	if payload == nil {
+		t.Fatal("missing typed EnterFarm response")
 	}
 	if payload.TimeProfile != gameconfig.TimeProfileFast {
 		t.Fatalf("time profile = %q, want fast", payload.TimeProfile)
@@ -105,29 +98,6 @@ func TestHandlerReadsHotSwitchedTimeProfile(t *testing.T) {
 	}
 }
 
-func TestMarshalSnapshotResponsePreservesUint64Strings(t *testing.T) {
-	snapshot, err := json.Marshal(farm.FarmSnapshotJSON{
-		OwnerUID: 9_007_199_254_740_993,
-		Coin:     9_007_199_254_740_993,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload, err := marshalSnapshotResponse(snapshot, 9_007_199_254_740_993, 123, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response EnterFarmResponse
-	if err := json.Unmarshal(payload, &response); err != nil {
-		t.Fatalf("decode response: %v; payload=%s", err, payload)
-	}
-	if response.Snapshot.OwnerUID != 9_007_199_254_740_993 ||
-		response.Snapshot.Coin != 9_007_199_254_740_993 ||
-		uint64(response.FarmSeq) != 9_007_199_254_740_993 {
-		t.Fatalf("response lost uint64 precision: %#v", response)
-	}
-}
-
 func TestHandlerRejectsUnownedFarm(t *testing.T) {
 	handler := NewHandler(runtimeStub{}, []byte("internal-token"), func(uint64) bool { return false }, nil)
 	response := handler.Execute(CommandRequest{Operation: OperationEnterFarm, FarmUID: 42})
@@ -136,39 +106,32 @@ func TestHandlerRejectsUnownedFarm(t *testing.T) {
 	}
 }
 
-func TestGRPCClientSendsTokenAndDecodesFarmResponse(t *testing.T) {
-	stub := &stubCommandServer{response: CommandResponse{
-		Err:     errcode.OK,
-		Payload: json.RawMessage(`{"farm_seq":7}`),
-	}}
+func TestCommandServiceSendsTokenAndDecodesFarmResponse(t *testing.T) {
+	stub := &stubCommandServer{}
 	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
 		farmv1.RegisterFarmCommandServiceServer(server, stub)
 	})
-	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"})
-
-	response, err := client.Execute(t.Context(), "farm-0", CommandRequest{
-		Operation: OperationEnterFarm,
-		FarmUID:   42,
-	})
+	request := typedRequest(42, 204, 7)
+	conn, err := pair.Pool.Conn(t.Context(), "bufconn")
+	if err != nil {
+		t.Fatalf("conn: %v", err)
+	}
+	response, err := farmv1.NewFarmCommandServiceClient(conn).Execute(t.Context(), request)
 
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if response.Err != errcode.OK || string(response.Payload) != `{"farm_seq":7}` {
+	if response.Envelope.GetErr() != int32(errcode.OK) || response.Envelope.GetClientSeq() != 7 {
 		t.Fatalf("response = %#v", response)
 	}
 }
 
 type stubCommandServer struct {
 	farmv1.UnimplementedFarmCommandServiceServer
-	response CommandResponse
 }
 
-func (stub *stubCommandServer) Execute(context.Context, *farmv1.ExecuteRequest) (*farmv1.ExecuteResponse, error) {
-	return &farmv1.ExecuteResponse{
-		Err:         int32(stub.response.Err),
-		PayloadJson: stub.response.Payload,
-	}, nil
+func (stub *stubCommandServer) Execute(_ context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	return typedResponse(request, errcode.OK), nil
 }
 
 func TestHandlerPublishesDeltaAfterRoutedTill(t *testing.T) {
@@ -182,12 +145,10 @@ func TestHandlerPublishesDeltaAfterRoutedTill(t *testing.T) {
 		WithDeltaPublisher(publisher),
 	)
 	response := handler.Execute(CommandRequest{
-		Operation: OperationPlotAction,
-		FarmUID:   42,
-		Payload: marshalPayload(PlotActionRequest{
-			PlotIndex: 0,
-			Kind:      farm.Till,
-		}),
+		Operation:     OperationPlotAction,
+		FarmUID:       42,
+		ClientCommand: 206,
+		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0},
 	})
 	if response.Err != errcode.OK {
 		t.Fatalf("response error = %d", response.Err)
@@ -216,33 +177,33 @@ func TestHandlerExecutesShardedPlotShopSyncAndPetCommands(t *testing.T) {
 	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
 
 	plant := handler.Execute(CommandRequest{
-		Operation: OperationPlotAction,
-		FarmUID:   42,
-		Payload: marshalPayload(PlotActionRequest{
-			Kind: farm.Plant, PlotIndex: 0, Arg: 1, Command: 210,
-		}),
+		Operation:     OperationPlotAction,
+		FarmUID:       42,
+		ClientCommand: 210,
+		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0, Arg: 1},
 	})
 	buy := handler.Execute(CommandRequest{
-		Operation: OperationShop,
-		FarmUID:   42,
-		Payload: marshalPayload(ShopRequest{
-			Buy: true, ItemID: uint32(farm.DogFoodShopItemID), Quantity: 4, Command: 302,
-		}),
+		Operation:     OperationShop,
+		FarmUID:       42,
+		ClientCommand: 302,
+		ClientRequest: &publicv3.CommandRequest{ItemId: uint32(farm.DogFoodShopItemID), Quantity: 4},
 	})
 	sync := handler.Execute(CommandRequest{
-		Operation: OperationSyncFarm,
-		FarmUID:   42,
-		Payload:   marshalPayload(SyncFarmRequest{FromSeq: 0}),
+		Operation:   OperationSyncFarm,
+		FarmUID:     42,
+		SyncRequest: &publicv3.SyncFarmRequest{FromSeq: 0},
 	})
 	activate := handler.Execute(CommandRequest{
-		Operation: OperationPet,
-		FarmUID:   42,
-		Payload:   marshalPayload(PetRequest{Kind: PetActivate, DogType: farm.DogMutt}),
+		Operation:     OperationPet,
+		FarmUID:       42,
+		ClientCommand: 502,
+		ClientRequest: &publicv3.CommandRequest{DogType: uint32(farm.DogMutt)},
 	})
 	feed := handler.Execute(CommandRequest{
-		Operation: OperationPet,
-		FarmUID:   42,
-		Payload:   marshalPayload(PetRequest{Kind: PetFeed, Grams: 4}),
+		Operation:     OperationPet,
+		FarmUID:       42,
+		ClientCommand: 504,
+		ClientRequest: &publicv3.CommandRequest{Grams: 4},
 	})
 
 	for name, response := range map[string]CommandResponse{
@@ -282,21 +243,18 @@ func TestHandlerSyncFarmAdvancesMatureStateAndPublishesDelta(t *testing.T) {
 	)
 
 	response := handler.Execute(CommandRequest{
-		Operation: OperationSyncFarm,
-		FarmUID:   42,
-		Payload:   marshalPayload(SyncFarmRequest{FromSeq: 0}),
+		Operation:   OperationSyncFarm,
+		FarmUID:     42,
+		SyncRequest: &publicv3.SyncFarmRequest{FromSeq: 0},
 	})
 	if response.Err != errcode.OK {
 		t.Fatalf("SyncFarm response = %#v", response)
 	}
-	var payload SyncFarmResponse
-	if err := json.Unmarshal(response.Payload, &payload); err != nil {
-		t.Fatalf("decode SyncFarm response: %v", err)
-	}
-	if payload.FarmSeq != 1 || payload.ServerTime != 20_000 || len(payload.Deltas) != 1 {
+	payload := response.SyncFarmResponse
+	if payload == nil || payload.FarmSeq != 1 || payload.ServerTime != 20_000 || len(payload.Deltas) != 1 {
 		t.Fatalf("SyncFarm payload = %#v", payload)
 	}
-	if got := payload.Deltas[0].Plots[0]; got.State != farm.StateMature ||
+	if got := payload.Deltas[0].Plots[0]; got.State != uint32(farm.StateMature) ||
 		got.FinalYield == 0 || got.LastSettleAt != 20_000 {
 		t.Fatalf("mature delta = %#v", got)
 	}
@@ -321,19 +279,17 @@ func TestHandlerTaskClaimCreditsDirectReward(t *testing.T) {
 	)
 
 	response := handler.Execute(CommandRequest{
-		Operation: OperationTaskClaim,
-		FarmUID:   42,
-		Payload:   marshalPayload(TaskClaimRequest{TaskID: 1}),
+		Operation:     OperationTaskClaim,
+		FarmUID:       42,
+		ClientCommand: 602,
+		ClientRequest: &publicv3.CommandRequest{TaskId: 1},
 	})
 
 	if response.Err != errcode.OK {
 		t.Fatalf("TaskClaim response = %#v", response)
 	}
-	var reward store.TaskReward
-	if err := json.Unmarshal(response.Payload, &reward); err != nil {
-		t.Fatalf("decode TaskClaim reward: %v", err)
-	}
-	if reward.Coin != 20 || aggregate.Coin != 1020 {
+	reward := response.ClientResponse.GetTaskReward()
+	if reward.GetCoin() != 20 || aggregate.Coin != 1020 {
 		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
 	}
 }
@@ -352,19 +308,17 @@ func TestHandlerTaskListReturnsResetAt(t *testing.T) {
 	)
 
 	response := handler.Execute(CommandRequest{
-		Operation: OperationTaskList,
-		FarmUID:   42,
-		Payload:   marshalPayload(struct{}{}),
+		Operation:     OperationTaskList,
+		FarmUID:       42,
+		ClientCommand: 600,
+		ClientRequest: &publicv3.CommandRequest{},
 	})
 	if response.Err != errcode.OK {
 		t.Fatalf("TaskList response = %#v", response)
 	}
-	var payload TaskListResponse
-	if err := json.Unmarshal(response.Payload, &payload); err != nil {
-		t.Fatalf("decode TaskList: %v", err)
-	}
-	if len(payload.Tasks) != 1 || payload.Tasks[0].ID != 1 {
-		t.Fatalf("TaskList tasks = %#v", payload.Tasks)
+	payload := response.ClientResponse
+	if payload == nil || len(payload.Tasks) != 1 || payload.Tasks[0].Id != 1 {
+		t.Fatalf("TaskList response = %#v", payload)
 	}
 	if payload.ResetAt != gameconfig.NextLocalDayResetMs(now) {
 		t.Fatalf("TaskList reset_at = %d, want %d", payload.ResetAt, gameconfig.NextLocalDayResetMs(now))
@@ -390,35 +344,29 @@ func TestHandlerMailReadAndDeleteMutateScopedMail(t *testing.T) {
 	)
 
 	read := handler.Execute(CommandRequest{
-		Operation: OperationMailRead,
-		FarmUID:   42,
-		Payload:   marshalPayload(MailMutationRequest{All: true}),
+		Operation:     OperationMailRead,
+		FarmUID:       42,
+		ClientCommand: 606,
+		ClientRequest: &publicv3.CommandRequest{All: true},
 	})
 	if read.Err != errcode.OK {
 		t.Fatalf("MailRead response = %#v", read)
 	}
-	var readPayload MailMutationResponse
-	if err := json.Unmarshal(read.Payload, &readPayload); err != nil {
-		t.Fatalf("decode MailRead: %v", err)
-	}
-	if readPayload.Affected != 2 || !taskMail.mails[1].Read || !taskMail.mails[2].Read {
-		t.Fatalf("mails after read = %#v, affected = %d", taskMail.mails, readPayload.Affected)
+	if read.ClientResponse.GetAffected() != 2 || !taskMail.mails[1].Read || !taskMail.mails[2].Read {
+		t.Fatalf("mails after read = %#v, affected = %d", taskMail.mails, read.ClientResponse.GetAffected())
 	}
 
 	delete := handler.Execute(CommandRequest{
-		Operation: OperationMailDelete,
-		FarmUID:   42,
-		Payload:   marshalPayload(MailMutationRequest{All: true}),
+		Operation:     OperationMailDelete,
+		FarmUID:       42,
+		ClientCommand: 610,
+		ClientRequest: &publicv3.CommandRequest{All: true},
 	})
 	if delete.Err != errcode.OK {
 		t.Fatalf("MailDelete response = %#v", delete)
 	}
-	var deletePayload MailMutationResponse
-	if err := json.Unmarshal(delete.Payload, &deletePayload); err != nil {
-		t.Fatalf("decode MailDelete: %v", err)
-	}
-	if deletePayload.Affected != 1 || len(taskMail.mails) != 1 || taskMail.mails[2].ID != 2 {
-		t.Fatalf("mails after delete = %#v, affected = %d", taskMail.mails, deletePayload.Affected)
+	if delete.ClientResponse.GetAffected() != 1 || len(taskMail.mails) != 1 || taskMail.mails[2].ID != 2 {
+		t.Fatalf("mails after delete = %#v, affected = %d", taskMail.mails, delete.ClientResponse.GetAffected())
 	}
 	if taskMail.lastMailUID != 42 {
 		t.Fatalf("mail mutation uid = %d, want 42", taskMail.lastMailUID)
@@ -438,19 +386,17 @@ func TestHandlerDailyLoginCreditsDirectReward(t *testing.T) {
 	)
 
 	response := handler.Execute(CommandRequest{
-		Operation: OperationDailyLogin,
-		FarmUID:   42,
-		Payload:   marshalPayload(struct{}{}),
+		Operation:     OperationDailyLogin,
+		FarmUID:       42,
+		ClientCommand: 614,
+		ClientRequest: &publicv3.CommandRequest{},
 	})
 
 	if response.Err != errcode.OK {
 		t.Fatalf("DailyLogin response = %#v", response)
 	}
-	var reward store.TaskReward
-	if err := json.Unmarshal(response.Payload, &reward); err != nil {
-		t.Fatalf("decode DailyLogin reward: %v", err)
-	}
-	if reward.Coin != 100 || aggregate.Coin != 1100 {
+	reward := response.ClientResponse.GetTaskReward()
+	if reward.GetCoin() != 100 || aggregate.Coin != 1100 {
 		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
 	}
 	if claimer.taskID != store.TaskDailyLoginID || claimer.dayKey != gameconfig.LocalDayKey(now) {
@@ -503,14 +449,11 @@ func TestHandlerAcceptsCompositeOriginatorConnection(t *testing.T) {
 	runtime := runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
 	handler := NewHandler(runtime, []byte("internal-token"), func(uid uint64) bool { return uid == 42 }, func() int64 { return 123 })
 	response := handler.Execute(CommandRequest{
-		Operation:  OperationPlotAction,
-		FarmUID:    42,
-		Originator: presence.ConnRef{ConnID: 99, GatewayID: "gateway-0"},
-		Payload: marshalPayload(PlotActionRequest{
-			PlotIndex: 0,
-			Arg:       0,
-			Kind:      farm.Till,
-		}),
+		Operation:     OperationPlotAction,
+		FarmUID:       42,
+		Originator:    presence.ConnRef{ConnID: 99, GatewayID: "gateway-0"},
+		ClientCommand: 206,
+		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0},
 	})
 	if response.Err != errcode.OK {
 		t.Fatalf("response = %#v", response)
@@ -531,12 +474,10 @@ func TestHandlerReturnsBeforeSlowDeltaFanout(t *testing.T) {
 		WithDeltaPublisher(publisher),
 	)
 	command := CommandRequest{
-		Operation: OperationPlotAction,
-		FarmUID:   42,
-		Payload: marshalPayload(PlotActionRequest{
-			PlotIndex: 0,
-			Kind:      farm.Till,
-		}),
+		Operation:     OperationPlotAction,
+		FarmUID:       42,
+		ClientCommand: 206,
+		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0},
 	}
 	responses := make(chan CommandResponse, 1)
 	go func() {

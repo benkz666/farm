@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"farm/server/domain/farm"
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
-	"farm/server/shared/store"
 	"farm/server/shared/telemetry"
 
 	"google.golang.org/grpc/codes"
@@ -41,40 +39,22 @@ func (server *PushServer) PushFarmDeltaBatch(_ context.Context, request *farmv1.
 	return &farmv1.Empty{}, nil
 }
 
-// PushPlayerDelta delivers one personal-state update to a local connection.
-func (server *PushServer) PushPlayerDelta(_ context.Context, request *farmv1.PushPlayerDeltaRequest) (*farmv1.Empty, error) {
+// DeliverPush enqueues one application-owned public envelope without
+// interpreting its payload. This keeps Gateway independent of business
+// domains while retaining one typed Protobuf service boundary.
+func (server *PushServer) DeliverPush(_ context.Context, request *farmv1.DeliverPushRequest) (*farmv1.Empty, error) {
 	if server == nil || server.gateway == nil || request == nil {
 		return &farmv1.Empty{}, nil
 	}
-	if request.Delta == nil {
+	if request.ConnectionId == 0 || request.Uid == 0 || request.Envelope == nil {
 		return nil, status.Error(codes.InvalidArgument, "bad_request")
 	}
-	server.gateway.applyPlayerDeltaProto(request.ConnectionId, request.Uid, request.Delta)
-	return &farmv1.Empty{}, nil
-}
-
-// PushTaskNotify delivers one task progress update to a local connection.
-func (server *PushServer) PushTaskNotify(_ context.Context, request *farmv1.PushTaskNotifyRequest) (*farmv1.Empty, error) {
-	if server == nil || server.gateway == nil || request == nil {
-		return &farmv1.Empty{}, nil
+	if err := server.gateway.applyPush(request.ConnectionId, request.Uid, request.Envelope); err != nil {
+		if errors.Is(err, errApplyBadRequest) {
+			return nil, status.Error(codes.InvalidArgument, "bad_request")
+		}
+		return nil, status.Error(codes.Unavailable, "push_failed")
 	}
-	task := taskFromProto(request.Task)
-	if request.ConnectionId == 0 || request.Uid == 0 || !isTaskNotifyID(task.ID) {
-		return &farmv1.Empty{}, nil
-	}
-	server.gateway.applyTaskNotify(request.ConnectionId, request.Uid, task)
-	return &farmv1.Empty{}, nil
-}
-
-// PushMailNotify delivers one advisory mail refresh hint to a local connection.
-func (server *PushServer) PushMailNotify(_ context.Context, request *farmv1.PushMailNotifyRequest) (*farmv1.Empty, error) {
-	if server == nil || server.gateway == nil || request == nil {
-		return &farmv1.Empty{}, nil
-	}
-	if request.ConnectionId == 0 || request.Uid == 0 || request.Kind == "" {
-		return &farmv1.Empty{}, nil
-	}
-	server.gateway.applyMailNotify(request.ConnectionId, request.Uid, request.Kind)
 	return &farmv1.Empty{}, nil
 }
 
@@ -90,23 +70,22 @@ func (server *PushServer) PushSessionKick(_ context.Context, request *farmv1.Pus
 	return &farmv1.Empty{}, nil
 }
 
-func (g *Gateway) applyFarmDeltaBatch(connIDs []uint64, envelope []byte) error {
-	if len(connIDs) == 0 || len(envelope) == 0 {
-		return errApplyBadRequest
+// RevokeFarmAccess immediately removes a viewer from an owner room after
+// Social commits an unfriend. Gateway only applies the transport directive.
+func (server *PushServer) RevokeFarmAccess(_ context.Context, request *farmv1.RevokeFarmAccessRequest) (*farmv1.Empty, error) {
+	if server == nil || server.gateway == nil || request == nil ||
+		request.ConnectionId == 0 || request.ViewerUid == 0 || request.OwnerUid == 0 {
+		return &farmv1.Empty{}, nil
 	}
-	delta, err := clientwire.DecodeFarmDelta(envelope)
-	if err != nil || delta.OwnerUID == 0 {
-		return errApplyBadRequest
-	}
-	return g.applyFarmDeltaBatchProto(connIDs, clientwire.FarmDeltaToProto(delta))
+	server.gateway.applyFarmAccessRevocation(request.ConnectionId, request.ViewerUid, request.OwnerUid)
+	return &farmv1.Empty{}, nil
 }
 
 func (g *Gateway) applyFarmDeltaBatchProto(connIDs []uint64, encodedDelta *publicv3.FarmDelta) error {
 	if len(connIDs) == 0 || encodedDelta == nil {
 		return errApplyBadRequest
 	}
-	delta := clientwire.FarmDeltaFromProto(encodedDelta)
-	if delta.OwnerUID == 0 {
+	if encodedDelta.OwnerUid == 0 {
 		return errApplyBadRequest
 	}
 	record, err := clientwire.EncodeFarmDeltaProtoRecord(encodedDelta)
@@ -128,18 +107,18 @@ func (g *Gateway) applyFarmDeltaBatchProto(connIDs []uint64, encodedDelta *publi
 			continue
 		}
 		wsConn := connection.(*wsConnection)
-		if !wsConn.subscribedTo(delta.OwnerUID) {
+		if !wsConn.subscribedTo(encodedDelta.OwnerUid) {
 			continue
 		}
-		if err := wsConn.pushFarmDelta(delta.OwnerUID, delta, record); err != nil {
+		if err := wsConn.pushFarmDelta(encodedDelta.OwnerUid, encodedDelta, record); err != nil {
 			if firstWriteErr == nil {
 				firstWriteErr = err
 			}
 			telemetry.L().Warn("gateway batched FarmDelta push failed",
 				"component", "gateway",
 				"op", "push_farm_delta_batch",
-				"owner_uid", delta.OwnerUID,
-				"farm_seq", delta.FarmSeq,
+				"owner_uid", encodedDelta.OwnerUid,
+				"farm_seq", encodedDelta.FarmSeq,
 				"err", err.Error(),
 			)
 			wsConn.dropSlowConnection()
@@ -148,53 +127,34 @@ func (g *Gateway) applyFarmDeltaBatchProto(connIDs []uint64, encodedDelta *publi
 	return firstWriteErr
 }
 
-func (g *Gateway) applyPlayerDelta(connectionID, uid uint64, delta farm.PlayerDelta) {
-	g.applyPlayerDeltaProto(connectionID, uid, clientwire.PlayerDeltaToProto(delta))
-}
-
-func (g *Gateway) applyPlayerDeltaProto(connectionID, uid uint64, delta *publicv3.PlayerDelta) {
-	if delta == nil {
-		return
+func (g *Gateway) applyPush(connectionID, uid uint64, envelope *publicv3.WireEnvelope) error {
+	if connectionID == 0 || uid == 0 || envelope == nil {
+		return errApplyBadRequest
+	}
+	record, err := clientwire.EncodeWireRecord(envelope)
+	if err != nil {
+		return errApplyBadRequest
 	}
 	connection, ok := g.connections.Load(connectionID)
 	if !ok {
-		return
+		return nil
 	}
 	wsConn := connection.(*wsConnection)
-	if wsConn.uid != uid {
-		return
+	if !wsConn.authed || wsConn.uid != uid {
+		return nil
 	}
-	if err := wsConn.pushPlayerDeltaProto(delta); err != nil {
-		telemetry.L().Warn("gateway PlayerDelta push failed",
+	if err := wsConn.enqueuePush(record); err != nil {
+		telemetry.L().Warn("gateway transport push failed",
 			"component", "gateway",
-			"op", "push_player_delta",
+			"op", "deliver_push",
 			"uid", uid,
+			"cmd", envelope.Cmd,
 			"err", err.Error(),
 		)
 		wsConn.dropSlowConnection()
+		return err
 	}
-}
-
-func (g *Gateway) applyTaskNotify(connectionID, uid uint64, task store.Task) {
-	connection, ok := g.connections.Load(connectionID)
-	if !ok {
-		return
-	}
-	wsConnection := connection.(*wsConnection)
-	if wsConnection.uid == uid && wsConnection.authed {
-		wsConnection.enqueueTaskNotify(task)
-	}
-}
-
-func (g *Gateway) applyMailNotify(connectionID, uid uint64, kind string) {
-	connection, ok := g.connections.Load(connectionID)
-	if !ok {
-		return
-	}
-	wsConnection := connection.(*wsConnection)
-	if wsConnection.uid == uid && wsConnection.authed {
-		wsConnection.enqueueMailNotify(kind)
-	}
+	return nil
 }
 
 func (g *Gateway) applySessionKick(connectionID, uid uint64, reason errcode.Code) {
@@ -208,20 +168,16 @@ func (g *Gateway) applySessionKick(connectionID, uid uint64, reason errcode.Code
 	}
 }
 
-func taskFromProto(task *farmv1.Task) store.Task {
-	if task == nil {
-		return store.Task{}
+func (g *Gateway) applyFarmAccessRevocation(connectionID, viewerUID, ownerUID uint64) {
+	value, ok := g.connections.Load(connectionID)
+	if !ok {
+		return
 	}
-	return store.Task{
-		ID:         task.Id,
-		DayKey:     task.DayKey,
-		Kind:       task.Kind,
-		Title:      task.Title,
-		Progress:   task.Progress,
-		Target:     task.Target,
-		RewardCoin: task.RewardCoin,
-		Claimed:    task.Claimed,
+	connection, valid := value.(*wsConnection)
+	if !valid || connection == nil || !connection.authed || connection.uid != viewerUID || !connection.subscribedTo(ownerUID) {
+		return
 	}
+	g.leaveFarm(connection)
 }
 
 var errApplyBadRequest = errors.New("gateway: invalid push payload")

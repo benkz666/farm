@@ -123,7 +123,7 @@ func run() error {
 	journal, closeJournalRedis, err := store.OpenFarmWriteJournal(
 		ctx,
 		storage,
-		servicehost.Getenv("FARM_EVENT_REDIS_ADDR", config.RedisAddr),
+		config.RedisAddr,
 		journalConfig,
 	)
 	if err != nil {
@@ -144,6 +144,52 @@ func run() error {
 		return fmt.Errorf("farm: recover write journal before serving: %w", err)
 	}
 	cancelRecovery()
+
+	var writeAdmission *farmrpc.DynamicWriteAdmission
+	writeAdmissionEnabled, err := boolSetting("FARM_WRITE_DYNAMIC_ADMISSION", true)
+	if err != nil {
+		return err
+	}
+	if writeAdmissionEnabled {
+		writeMax, settingErr := intSetting("FARM_WRITE_MAX_IN_FLIGHT", 512)
+		if settingErr != nil || writeMax <= 0 {
+			return fmt.Errorf("farm: FARM_WRITE_MAX_IN_FLIGHT must be positive")
+		}
+		admissionConfig := farmrpc.DefaultWriteAdmissionConfig(writeMax)
+		admissionConfig.MinLimit, err = intSetting("FARM_WRITE_MIN_IN_FLIGHT", admissionConfig.MinLimit)
+		if err != nil || admissionConfig.MinLimit <= 0 {
+			return fmt.Errorf("farm: FARM_WRITE_MIN_IN_FLIGHT must be positive")
+		}
+		admissionConfig.LowWatermark = int64Value("FARM_WRITE_BACKLOG_LOW", admissionConfig.LowWatermark)
+		admissionConfig.HighWatermark = int64Value("FARM_WRITE_BACKLOG_HIGH", admissionConfig.HighWatermark)
+		admissionConfig.HardWatermark = int64Value("FARM_WRITE_BACKLOG_HARD", admissionConfig.HardWatermark)
+		admissionConfig.RecoveryStep, err = intSetting("FARM_WRITE_RECOVERY_STEP", admissionConfig.RecoveryStep)
+		if err != nil || admissionConfig.RecoveryStep <= 0 {
+			return fmt.Errorf("farm: FARM_WRITE_RECOVERY_STEP must be positive")
+		}
+		admissionConfig.PollInterval, err = durationSetting("FARM_WRITE_BACKLOG_POLL", admissionConfig.PollInterval.String())
+		if err != nil {
+			return err
+		}
+		admissionConfig.SampleTimeout, err = durationSetting("FARM_WRITE_BACKLOG_TIMEOUT", admissionConfig.SampleTimeout.String())
+		if err != nil {
+			return err
+		}
+		admissionConfig.ErrorGrace, err = nonNegativeDurationSetting("FARM_WRITE_BACKLOG_ERROR_GRACE", admissionConfig.ErrorGrace.String())
+		if err != nil {
+			return err
+		}
+		admissionConfig.AdmissionWait, err = nonNegativeDurationSetting("FARM_WRITE_ADMISSION_WAIT", admissionConfig.AdmissionWait.String())
+		if err != nil {
+			return err
+		}
+		writeAdmission, err = farmrpc.NewDynamicWriteAdmission(journal, admissionConfig)
+		if err != nil {
+			return err
+		}
+		writeAdmission.SetMetrics(metrics)
+		writeAdmission.Start(ctx)
+	}
 
 	actorIdleTTL, err := durationSetting("FARM_ACTOR_IDLE_TTL", "2m")
 	if err != nil {
@@ -241,6 +287,10 @@ func run() error {
 	crossServer := crossfarm.NewGRPCServer(
 		owner, visitor, owns, journal.WrapOutboxStore(storage),
 	)
+	crossCoordinator := crossfarm.NewClientCoordinator(
+		friends, crossServer, crossClient, clock.Now, timeProfiles.Get,
+	)
+	clientHandler := farmrpc.NewClientHandler(commandHandler, friends, crossCoordinator, owns, writeAdmission)
 
 	return (servicehost.Host{
 		Config:  config,
@@ -255,7 +305,7 @@ func run() error {
 		GRPC: &servicehost.GRPC{
 			Addr: config.GRPCAddr,
 			Register: func(server *grpc.Server) {
-				farmrpc.RegisterCommandService(server, commandHandler, owns)
+				farmrpc.RegisterCommandService(server, clientHandler, owns)
 				crossfarm.RegisterCrossFarmService(server, crossServer)
 				if servicehost.Getenv("FARM_ALLOW_DEBUG_TIME", "0") == "1" {
 					farmv1.RegisterDebugServiceServer(server, farmrpc.NewDebugServer(clock.Advance, clock.Now, timeProfiles))
@@ -295,6 +345,31 @@ func durationSetting(name, fallback string) (time.Duration, error) {
 		return 0, fmt.Errorf("farm: %s must be a positive duration, got %q", name, raw)
 	}
 	return value, nil
+}
+
+func nonNegativeDurationSetting(name, fallback string) (time.Duration, error) {
+	raw := servicehost.Getenv(name, fallback)
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("farm: %s must be a non-negative duration, got %q", name, raw)
+	}
+	return value, nil
+}
+
+func boolSetting(name string, fallback bool) (bool, error) {
+	fallbackText := "0"
+	if fallback {
+		fallbackText = "1"
+	}
+	raw := strings.TrimSpace(servicehost.Getenv(name, fallbackText))
+	switch raw {
+	case "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("farm: %s must be 0 or 1, got %q", name, raw)
+	}
 }
 
 func intSetting(name string, fallback int) (int, error) {

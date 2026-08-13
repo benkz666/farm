@@ -3,12 +3,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"farm/server/farmsvr/farmrpc"
+	"farm/server/shared/grpcx"
 	"farm/server/shared/servicehost"
 	"farm/server/shared/telemetry"
 	socialapi "farm/server/socialsvr/api"
@@ -39,6 +42,27 @@ func run() error {
 	}
 	defer closeStorage()
 	friendStore := storage.CachedFriendStore()
+	gatewayTargets, err := servicehost.ParseGRPCTargetMap(
+		"FARM_GATEWAY_GRPC_TARGETS",
+		servicehost.Getenv("FARM_GATEWAY_GRPC_TARGETS", `{"gateway-0":"127.0.0.1:9202"}`),
+	)
+	if err != nil {
+		return err
+	}
+	inviteSecret := servicehost.Getenv("FARM_INVITE_SECRET", "dev-only-invite-change-me")
+	if config.Environment != "dev" && len(inviteSecret) < 32 {
+		return fmt.Errorf("social: FARM_INVITE_SECRET must contain at least 32 bytes outside dev")
+	}
+	grpcPool := grpcx.NewPool(config.InternalToken)
+	pushClient := farmrpc.NewResolvingGatewayPushClient(
+		grpcPool, gatewayTargets, storage.GatewayDirectory(),
+	)
+	mailNotifier := farmrpc.NewMailFanoutPublisher(
+		storage.ConnectionRegistry(), farmrpc.NewGRPCMailNotifyPusher(pushClient),
+	)
+	accessRevoker := farmrpc.NewFarmAccessRevoker(
+		storage.ConnectionRegistry(), farmrpc.NewGRPCFarmAccessPusher(pushClient),
+	)
 
 	return (servicehost.Host{
 		Config:  config,
@@ -47,9 +71,15 @@ func run() error {
 		GRPC: &servicehost.GRPC{
 			Addr: config.GRPCAddr,
 			Register: func(server *grpc.Server) {
-				adapter := socialapi.RegisterGRPC(server, friendStore)
+				adapter := socialapi.RegisterGRPC(server, friendStore,
+					socialapi.WithStealHints(storage),
+					socialapi.WithInviteSecret([]byte(inviteSecret)),
+					socialapi.WithSocialNotifier(mailNotifier),
+					socialapi.WithFarmAccessRevoker(accessRevoker),
+				)
 				adapter.StartDistributedInvalidations(ctx)
 			},
 		},
+		GRPCPool: grpcPool,
 	}).Run(ctx)
 }

@@ -1,8 +1,7 @@
-package farmrpc
+package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,8 +10,6 @@ import (
 	"time"
 
 	farmv1 "farm/server/gen/farm/v1"
-	"farm/server/shared/clientwire"
-	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 
 	"google.golang.org/grpc"
@@ -20,50 +17,39 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// GRPCClient implements Client over FarmCommandService.
-type GRPCClient struct {
+// FarmClient forwards authenticated client commands over the typed Farm RPC
+// contract. The adapter belongs to Gateway, the consumer of that contract.
+type FarmClient struct {
 	pool    *grpcx.Pool
 	targets map[string]string
 	mu      sync.Mutex
 	streams map[string]*commandStream
 }
 
-// NewGRPCClient constructs a routed Farm command client.
-func NewGRPCClient(pool *grpcx.Pool, targets map[string]string) *GRPCClient {
+// NewFarmClient constructs a routed Farm command client.
+func NewFarmClient(pool *grpcx.Pool, targets map[string]string) *FarmClient {
 	copied := make(map[string]string, len(targets))
 	for farmID, target := range targets {
 		copied[farmID] = target
 	}
-	return &GRPCClient{pool: pool, targets: copied, streams: make(map[string]*commandStream)}
+	return &FarmClient{pool: pool, targets: copied, streams: make(map[string]*commandStream)}
 }
 
 // Execute forwards one command to the Farm instance that owns FarmUID.
-func (client *GRPCClient) Execute(ctx context.Context, farmID string, command CommandRequest) (CommandResponse, error) {
+func (client *FarmClient) Execute(ctx context.Context, farmID string, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
 	if client == nil || client.pool == nil {
-		return CommandResponse{}, fmt.Errorf("farmrpc: gRPC client is nil")
+		return nil, fmt.Errorf("gateway: Farm gRPC client is nil")
 	}
 	target := client.targets[farmID]
 	if target == "" {
-		return CommandResponse{}, fmt.Errorf("farmrpc: no gRPC target configured for %q", farmID)
+		return nil, fmt.Errorf("gateway: no Farm gRPC target configured for %q", farmID)
 	}
 	conn, err := client.pool.Conn(ctx, target)
 	if err != nil {
-		return CommandResponse{}, fmt.Errorf("farmrpc: dial %q: %w", farmID, err)
+		return nil, fmt.Errorf("gateway: dial Farm %q: %w", farmID, err)
 	}
-	protoOperation, ok := operationToProtoEnum(command.Operation)
-	if !ok {
-		return CommandResponse{}, fmt.Errorf("farmrpc: unsupported operation %q", command.Operation)
-	}
-	request := &farmv1.ExecuteRequest{
-		Operation:      protoOperation,
-		FarmUid:        command.FarmUID,
-		Originator:     connRefToProto(command.Originator),
-		PayloadJson:    command.Payload,
-		PreferPrepared: command.PreferPrepared,
-	}
-	if command.ClientCommand != 0 && command.ClientRequest != nil {
-		request.PayloadJson = nil
-		request.ClientCommand = &farmv1.ClientCommand{Command: command.ClientCommand, Request: command.ClientRequest}
+	if request == nil || request.Envelope == nil {
+		return nil, fmt.Errorf("gateway: nil typed Farm request")
 	}
 	commandStream, err := client.streamFor(target, conn)
 	if err != nil {
@@ -71,9 +57,9 @@ func (client *GRPCClient) Execute(ctx context.Context, farmID string, command Co
 		// keeps rolling upgrades compatible with an older Farm server.
 		response, unaryErr := farmv1.NewFarmCommandServiceClient(conn).Execute(ctx, request)
 		if unaryErr != nil {
-			return CommandResponse{}, fmt.Errorf("farmrpc: create stream: %v; unary execute: %w", err, unaryErr)
+			return nil, fmt.Errorf("gateway: create Farm stream: %v; unary execute: %w", err, unaryErr)
 		}
-		return commandResponseFromProto(response, command.ClientCommand), nil
+		return response, nil
 	}
 	response, err := commandStream.execute(ctx, request)
 	if err != nil {
@@ -81,46 +67,22 @@ func (client *GRPCClient) Execute(ctx context.Context, farmID string, command Co
 		// still healthy and may have thousands of unrelated in-flight commands;
 		// tearing it down here would turn one timeout into a connection-wide outage.
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return CommandResponse{}, fmt.Errorf("farmrpc: execute command: %w", err)
+			return nil, fmt.Errorf("gateway: execute Farm command: %w", err)
 		}
 		client.discardStream(target, commandStream)
 		if status.Code(err) == codes.Unimplemented {
 			response, unaryErr := farmv1.NewFarmCommandServiceClient(conn).Execute(ctx, request)
 			if unaryErr == nil {
-				return commandResponseFromProto(response, command.ClientCommand), nil
+				return response, nil
 			}
-			return CommandResponse{}, fmt.Errorf("farmrpc: stream unsupported: %v; unary execute: %w", err, unaryErr)
+			return nil, fmt.Errorf("gateway: Farm stream unsupported: %v; unary execute: %w", err, unaryErr)
 		}
-		return CommandResponse{}, fmt.Errorf("farmrpc: execute command: %w", err)
+		return nil, fmt.Errorf("gateway: execute Farm command: %w", err)
 	}
-	return commandResponseFromProto(response, command.ClientCommand), nil
+	return response, nil
 }
 
-func commandResponseFromProto(response *farmv1.ExecuteResponse, command uint32) CommandResponse {
-	if response == nil {
-		return CommandResponse{Err: errcode.Internal}
-	}
-	result := CommandResponse{
-		Err:             errcode.Code(response.Err),
-		Payload:         json.RawMessage(response.PayloadJson),
-		FarmSeq:         response.FarmSeq,
-		PreparedPayload: response.PreparedPayload,
-		PreparedField:   response.PreparedField,
-		ClientResponse:  response.ClientResponse,
-	}
-	if result.ClientResponse != nil && !isHotActionCommand(command) {
-		if payload, err := clientwire.CommandResponseToJSON(command, result.ClientResponse); err == nil {
-			result.Payload = payload
-		}
-	}
-	return result
-}
-
-func isHotActionCommand(command uint32) bool {
-	return command >= 206 && command <= 220 && command%2 == 0 || command == 302 || command == 304
-}
-
-func (client *GRPCClient) streamFor(target string, conn grpc.ClientConnInterface) (*commandStream, error) {
+func (client *FarmClient) streamFor(target string, conn grpc.ClientConnInterface) (*commandStream, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if current := client.streams[target]; current != nil && !current.failed() {
@@ -134,23 +96,23 @@ func (client *GRPCClient) streamFor(target string, conn grpc.ClientConnInterface
 	return stream, nil
 }
 
-func (client *GRPCClient) discardStream(target string, stream *commandStream) {
+func (client *FarmClient) discardStream(target string, stream *commandStream) {
 	client.mu.Lock()
 	if client.streams[target] == stream {
 		delete(client.streams, target)
 	}
 	client.mu.Unlock()
-	stream.stop(fmt.Errorf("farmrpc: stream discarded"))
+	stream.stop(fmt.Errorf("gateway: Farm stream discarded"))
 }
 
 type streamCall struct {
 	ctx     context.Context
 	id      uint64
-	request *farmv1.ExecuteRequest
+	request *farmv1.ClientCommandRequest
 }
 
 type streamResult struct {
-	response *farmv1.ExecuteResponse
+	response *farmv1.ClientCommandResponse
 	err      error
 }
 
@@ -213,7 +175,7 @@ func newCommandStream(client farmv1.FarmCommandServiceClient) (*commandStream, e
 	return commandStream, nil
 }
 
-func (stream *commandStream) execute(ctx context.Context, request *farmv1.ExecuteRequest) (*farmv1.ExecuteResponse, error) {
+func (stream *commandStream) execute(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
 	var index uint32
 	select {
 	case index = <-stream.free:
@@ -318,18 +280,18 @@ func (stream *commandStream) receiveLoop() {
 		batch, err := stream.stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				err = fmt.Errorf("farmrpc: command stream closed")
+				err = fmt.Errorf("gateway: Farm command stream closed")
 			}
 			stream.stop(err)
 			return
 		}
 		if batch == nil || len(batch.Responses) == 0 || len(batch.Responses) > commandStreamBatchMax {
-			stream.stop(fmt.Errorf("farmrpc: malformed stream response"))
+			stream.stop(fmt.Errorf("gateway: malformed Farm stream response"))
 			return
 		}
 		for _, response := range batch.Responses {
 			if response == nil || response.RequestId == 0 {
-				stream.stop(fmt.Errorf("farmrpc: malformed stream response item"))
+				stream.stop(fmt.Errorf("gateway: malformed Farm stream response item"))
 				return
 			}
 			stream.complete(response.RequestId, streamResult{response: response.Response})
@@ -394,12 +356,7 @@ func (stream *commandStream) failure() error {
 	stream.errMu.Lock()
 	defer stream.errMu.Unlock()
 	if stream.err == nil {
-		return fmt.Errorf("farmrpc: command stream unavailable")
+		return fmt.Errorf("gateway: Farm command stream unavailable")
 	}
 	return stream.err
-}
-
-// RegisterCommandService registers FarmCommandService on a gRPC server.
-func RegisterCommandService(server *grpc.Server, handler *Handler, owns func(uint64) bool) {
-	farmv1.RegisterFarmCommandServiceServer(server, NewCommandServer(handler, owns))
 }

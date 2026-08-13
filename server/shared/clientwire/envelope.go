@@ -17,7 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Protocol push command numbers (docs/design/protocol.md §5).
+// Protocol push command numbers shared by the public Protobuf contract.
 const (
 	CommandFarmDelta   uint32 = 9000
 	CommandPlayerDelta uint32 = 9002
@@ -26,23 +26,13 @@ const (
 	CommandTaskNotify  uint32 = 9008
 )
 
-// Envelope is the transport-neutral Gateway representation. Payload is kept
-// only for in-process compatibility with existing handlers and tests; public
-// WebSocket frames always use one of the typed Protobuf fields below.
+// Envelope is a compatibility adapter used by command-line test tools. Public
+// WebSocket and all service-to-service paths use WireEnvelope directly.
 type Envelope struct {
-	Cmd       uint32          `json:"cmd"`
-	ClientSeq uint32          `json:"client_seq"`
-	Err       errcode.Code    `json:"err"`
-	Payload   json.RawMessage `json:"payload"`
-	// PreparedPayload is an already-marshaled typed Protobuf oneof body. It is
-	// never accepted from clients and lets Farm snapshots cross Gateway without
-	// a JSON decode/re-encode. PreparedField is the WireEnvelope oneof field.
-	PreparedPayload []byte `json:"-"`
-	PreparedField   uint32 `json:"-"`
-	// PreparedSuffix contains trusted protobuf fields appended to the prepared
-	// oneof body by Gateway. Keeping it separate avoids copying a large Farm
-	// snapshot merely to add the small relation/mutable fields.
-	PreparedSuffix   []byte                     `json:"-"`
+	Cmd              uint32                     `json:"cmd"`
+	ClientSeq        uint32                     `json:"client_seq"`
+	Err              errcode.Code               `json:"err"`
+	Payload          json.RawMessage            `json:"payload"`
 	EnterFarmRequest *publicv3.EnterFarmRequest `json:"-"`
 	SyncFarmRequest  *publicv3.SyncFarmRequest  `json:"-"`
 	CommandRequest   *publicv3.CommandRequest   `json:"-"`

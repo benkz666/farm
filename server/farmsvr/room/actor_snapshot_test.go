@@ -2,10 +2,10 @@ package room
 
 import (
 	"bytes"
-	"encoding/json"
 	"testing"
 
 	"farm/server/domain/farm"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
 
 	"google.golang.org/protobuf/proto"
@@ -134,94 +134,61 @@ func TestPlotPlanMergesOnlySamePlot(t *testing.T) {
 	}
 }
 
-func TestEncodedSnapshotReusesCurrentVersionAndInvalidatesOnWrite(t *testing.T) {
+func TestSnapshotProtoReusesCurrentVersionAndInvalidatesOnWrite(t *testing.T) {
 	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
-	first, err := actor.EncodedSnapshot()
+	first, err := actor.SnapshotProto()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := actor.EncodedSnapshot()
+	second, err := actor.SnapshotProto()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) == 0 || &first[0] != &second[0] {
-		t.Fatal("unchanged aggregate did not reuse encoded snapshot")
+	if first != second {
+		t.Fatal("unchanged aggregate did not reuse protobuf snapshot")
 	}
 
 	actor.Aggregate.Coin = 9_007_199_254_740_993
 	actor.MarkDirty()
-	third, err := actor.EncodedSnapshot()
+	third, err := actor.SnapshotProto()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if &first[0] == &third[0] {
-		t.Fatal("dirty aggregate reused stale encoded snapshot")
+	if first == third {
+		t.Fatal("dirty aggregate reused stale protobuf snapshot")
 	}
-	var decoded farm.FarmSnapshotJSON
-	if err := json.Unmarshal(third, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Coin != actor.Aggregate.Coin {
-		t.Fatalf("coin=%d, want %d", decoded.Coin, actor.Aggregate.Coin)
+	if third.Coin != actor.Aggregate.Coin {
+		t.Fatalf("coin=%d, want %d", third.Coin, actor.Aggregate.Coin)
 	}
 }
 
-func TestEncodedSnapshotRebuildsWhenAggregateSequenceAdvances(t *testing.T) {
+func TestSnapshotProtoRebuildsWhenAggregateSequenceAdvances(t *testing.T) {
 	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
-	first, err := actor.EncodedSnapshot()
+	first, err := actor.SnapshotProto()
 	if err != nil {
 		t.Fatal(err)
 	}
 	actor.Aggregate.Coin = 1234
 	actor.Aggregate.FarmSeq++
-	second, err := actor.EncodedSnapshot()
+	second, err := actor.SnapshotProto()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Equal(first, second) {
-		t.Fatal("advanced farm_seq reused stale snapshot")
-	}
-	var decoded farm.FarmSnapshotJSON
-	if err := json.Unmarshal(second, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if decoded.Coin != 1234 {
-		t.Fatalf("decoded snapshot = %#v", decoded)
-	}
-}
-
-func TestSnapshotEncodingVersionsAreIndependent(t *testing.T) {
-	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
-	jsonBefore, err := actor.EncodedSnapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate a version advance before a caller asks only for Protobuf. The
-	// Protobuf cache must not make the older JSON cache look current.
-	actor.Aggregate.Coin = 4321
-	actor.Aggregate.FarmSeq++
-	if _, err := actor.EncodedSnapshotProto(); err != nil {
-		t.Fatal(err)
-	}
-	jsonAfter, err := actor.EncodedSnapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(jsonBefore, jsonAfter) {
-		t.Fatal("protobuf rebuild incorrectly promoted stale JSON cache")
+	if first == second || second.Coin != 1234 {
+		t.Fatalf("advanced farm_seq reused stale snapshot: %#v", second)
 	}
 }
 
 func BenchmarkSnapshotEncoding(b *testing.B) {
 	aggregate := farm.NewAggregate(42, "alice")
 	actor := &FarmActor{Aggregate: aggregate}
-	if _, err := actor.EncodedSnapshot(); err != nil {
+	if _, err := actor.SnapshotProto(); err != nil {
 		b.Fatal(err)
 	}
 	b.Run("rebuild", func(b *testing.B) {
 		for range b.N {
-			encoded, err := json.Marshal(aggregate.Snapshot())
+			message := clientwire.FarmSnapshotToProto(aggregate.Snapshot())
+			encoded, err := proto.Marshal(message)
 			if err != nil || len(encoded) == 0 {
 				b.Fatal(err)
 			}
@@ -229,8 +196,8 @@ func BenchmarkSnapshotEncoding(b *testing.B) {
 	})
 	b.Run("preencoded", func(b *testing.B) {
 		for range b.N {
-			encoded, err := actor.EncodedSnapshot()
-			if err != nil || !bytes.HasPrefix(encoded, []byte(`{"owner_uid":`)) {
+			message, err := actor.SnapshotProto()
+			if err != nil || message.OwnerUid != aggregate.UID {
 				b.Fatal(err)
 			}
 		}

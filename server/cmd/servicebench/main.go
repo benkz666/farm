@@ -19,8 +19,10 @@ import (
 	"time"
 
 	"farm/server/gateway"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
 
@@ -391,7 +393,7 @@ func runGatewayStartupChain(ctx context.Context, httpClient *http.Client, accoun
 		{gateway.CommandMailList, json.RawMessage(`{}`), &steps.mailList},
 	}
 	for _, command := range commands {
-		request := gateway.Envelope{Cmd: command.command, ClientSeq: client.nextSeq, Payload: command.payload}
+		request := clientwire.Envelope{Cmd: command.command, ClientSeq: client.nextSeq, Payload: command.payload}
 		client.nextSeq++
 		stepStarted := time.Now()
 		response, exchangeErr := client.exchange(request)
@@ -658,7 +660,7 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 				if err := waitUntil(ctx, due); err != nil {
 					return
 				}
-				var request gateway.Envelope
+				var request clientwire.Envelope
 				if oneShot {
 					request = client.requestAt(operation, round)
 				} else {
@@ -781,7 +783,7 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 		searchUsername = account.Username
 	}
 	client := &gatewayBenchConnection{conn: conn, nextSeq: 1, account: account, timeProfile: timeProfile, searchUsername: searchUsername}
-	handshake := gateway.Envelope{
+	handshake := clientwire.Envelope{
 		Cmd:       gateway.CommandHandshake,
 		ClientSeq: client.nextSeq,
 		Payload: json.RawMessage(fmt.Sprintf(
@@ -826,7 +828,7 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 }
 
 func (client *gatewayBenchConnection) prewarmFarm(ownerUID string) error {
-	response, err := client.exchange(gateway.Envelope{
+	response, err := client.exchange(clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: client.nextSeq,
 		Payload:   json.RawMessage(fmt.Sprintf(`{"owner_uid":%q}`, ownerUID)),
@@ -852,12 +854,12 @@ func (client *gatewayBenchConnection) prewarmFarm(ownerUID string) error {
 	return nil
 }
 
-func (client *gatewayBenchConnection) request(operation string) gateway.Envelope {
+func (client *gatewayBenchConnection) request(operation string) clientwire.Envelope {
 	return client.requestAt(operation, 0)
 }
 
-func (client *gatewayBenchConnection) requestAt(operation string, actionIndex int) gateway.Envelope {
-	request := gateway.Envelope{ClientSeq: client.nextSeq}
+func (client *gatewayBenchConnection) requestAt(operation string, actionIndex int) clientwire.Envelope {
+	request := clientwire.Envelope{ClientSeq: client.nextSeq}
 	client.nextSeq++
 	plotIndex := client.account.PlotIndex
 	if len(client.account.PlotIndexes) > 0 {
@@ -1018,27 +1020,27 @@ func validGatewayWarmupMode(mode string) bool {
 	return mode == gatewayWarmupFull || mode == gatewayWarmupSessionOnly
 }
 
-func (client *gatewayBenchConnection) exchange(request gateway.Envelope) (gateway.Envelope, error) {
-	frame, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+func (client *gatewayBenchConnection) exchange(request clientwire.Envelope) (clientwire.Envelope, error) {
+	frame, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	_ = client.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if err := client.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	for {
 		_ = client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		messageType, data, err := client.conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, err
+			return clientwire.Envelope{}, err
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(data)
+		envelopes, err := clientwire.DecodeBinaryBatch(data)
 		if err != nil {
-			return gateway.Envelope{}, err
+			return clientwire.Envelope{}, err
 		}
 		for _, response := range envelopes {
 			if response.Cmd == request.Cmd && response.ClientSeq == request.ClientSeq {
@@ -1054,17 +1056,16 @@ func runFarmStream(ctx context.Context, conn grpc.ClientConnInterface, qps int, 
 	if err != nil {
 		return result{}, err
 	}
-	op := farmv1.Operation_OPERATION_SYNC_FARM
-	payload := []byte(`{"from_seq":0}`)
+	cmd := uint32(gateway.CommandSyncFarm)
+	fromSeq := uint64(0)
 	switch operation {
 	case "enter":
-		op = farmv1.Operation_OPERATION_ENTER_FARM
-		payload = nil
+		cmd = gateway.CommandEnterFarm
 	case "sync":
 	case "sync-snapshot":
 		// Ahead-of-server sequence deterministically selects the full-snapshot
 		// recovery path without depending on fixture FarmSeq or delta-ring state.
-		payload = []byte(`{"from_seq":18446744073709551615}`)
+		fromSeq = ^uint64(0)
 	default:
 		return result{}, fmt.Errorf("unsupported farm operation %q", operation)
 	}
@@ -1089,8 +1090,8 @@ func runFarmStream(ctx context.Context, conn grpc.ClientConnInterface, qps int, 
 			pendingMu.Unlock()
 			if ok {
 				code := int32(-1)
-				if response.GetResponse() != nil {
-					code = response.GetResponse().GetErr()
+				if response.GetResponse().GetEnvelope() != nil {
+					code = response.GetResponse().GetEnvelope().GetErr()
 				}
 				recorded.add(time.Since(request.started), code == 0, code)
 				<-semaphore
@@ -1120,17 +1121,29 @@ sendLoop:
 			}
 			sent++
 			requestID := sent
+			uid := uidBase + requestID%uidCount
 			requestStarted := time.Now()
 			pendingMu.Lock()
 			pending[requestID] = pendingRequest{started: requestStarted}
 			pendingMu.Unlock()
 			wait.Add(1)
+			wireEnvelope := &publicv3.WireEnvelope{Cmd: cmd, ClientSeq: uint32(requestID)}
+			if cmd == gateway.CommandEnterFarm {
+				wireEnvelope.Payload = &publicv3.WireEnvelope_EnterFarmRequest{
+					EnterFarmRequest: &publicv3.EnterFarmRequest{OwnerUid: uid},
+				}
+			} else {
+				wireEnvelope.Payload = &publicv3.WireEnvelope_SyncFarmRequest{
+					SyncFarmRequest: &publicv3.SyncFarmRequest{OwnerUid: uid, FromSeq: fromSeq},
+				}
+			}
 			if err := stream.Send(&farmv1.StreamExecuteRequest{
 				RequestId: requestID,
-				Request: &farmv1.ExecuteRequest{
-					Operation:   op,
-					FarmUid:     uidBase + requestID%uidCount,
-					PayloadJson: payload,
+				Request: &farmv1.ClientCommandRequest{
+					Uid:           uid,
+					ActiveFarmUid: uid,
+					RouteUid:      uid,
+					Envelope:      wireEnvelope,
 				},
 			}); err != nil {
 				return result{}, err

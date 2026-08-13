@@ -1,4 +1,4 @@
-// Package presence stores the Gateway currently owning each WebSocket connection.
+// Package presence stores transport leases shared by Gateway and push producers.
 //
 // Entries are per-member leases (Redis sorted set: member=gatewayID:connID,
 // score=expiresAtUnixMilli). DefaultLeaseTTL is 2m so a quiet-but-alive socket

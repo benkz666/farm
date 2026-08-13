@@ -18,6 +18,7 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/gateway"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 )
@@ -136,7 +137,7 @@ type benchPlayer struct {
 
 	// resp 只投递带 client_seq 的应答；服务端推送（FarmDelta 等 client_seq=0）
 	// 由读协程直接丢弃，从而不会在连接上堆积、也不会挤进被测的那一次读。
-	resp chan gateway.Envelope
+	resp chan clientwire.Envelope
 
 	dead    chan struct{}
 	readErr error
@@ -162,7 +163,7 @@ func newBenchPlayer(baseURL string) (*benchPlayer, error) {
 		login: login,
 		conn:  conn,
 		seq:   2, // 握手占用了 client_seq=1
-		resp:  make(chan gateway.Envelope, benchResponseBuffer),
+		resp:  make(chan clientwire.Envelope, benchResponseBuffer),
 		dead:  make(chan struct{}),
 	}
 	go player.readLoop()
@@ -180,7 +181,7 @@ func (p *benchPlayer) readLoop() {
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(frame)
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
 		if err != nil {
 			continue
 		}
@@ -198,7 +199,7 @@ func (p *benchPlayer) readLoop() {
 }
 
 // await 等待与 cmd/seq 配对的应答，沿途丢弃上一次请求的迟到应答。
-func (p *benchPlayer) await(cmd, seq uint32, timeout time.Duration) (gateway.Envelope, error) {
+func (p *benchPlayer) await(cmd, seq uint32, timeout time.Duration) (clientwire.Envelope, error) {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	for {
@@ -208,32 +209,32 @@ func (p *benchPlayer) await(cmd, seq uint32, timeout time.Duration) (gateway.Env
 				return envelope, nil
 			}
 		case <-p.dead:
-			return gateway.Envelope{}, fmt.Errorf("连接已断开: %w", p.readErr)
+			return clientwire.Envelope{}, fmt.Errorf("连接已断开: %w", p.readErr)
 		case <-timer.C:
-			return gateway.Envelope{}, errBenchResponseTimeout
+			return clientwire.Envelope{}, errBenchResponseTimeout
 		}
 	}
 }
 
 // benchExchange 发一条命令并等应答，遇限流退避重试。不校验 Err，便于调用方分支。
-func benchExchange(p *benchPlayer, cmd uint32, payload map[string]any) (gateway.Envelope, error) {
+func benchExchange(p *benchPlayer, cmd uint32, payload map[string]any) (clientwire.Envelope, error) {
 	for attempt := 0; attempt < benchRateLimitRetries; attempt++ {
 		seq := p.seq
 		p.seq++
-		frame, err := gateway.EncodeBinaryBatch([]gateway.Envelope{{
+		frame, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{{
 			Cmd:       cmd,
 			ClientSeq: seq,
 			Payload:   mustJSON(payload),
 		}})
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("编码 cmd=%d: %w", cmd, err)
+			return clientwire.Envelope{}, fmt.Errorf("编码 cmd=%d: %w", cmd, err)
 		}
 		if err := p.conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
-			return gateway.Envelope{}, fmt.Errorf("发送 cmd=%d: %w", cmd, err)
+			return clientwire.Envelope{}, fmt.Errorf("发送 cmd=%d: %w", cmd, err)
 		}
 		envelope, err := p.await(cmd, seq, benchResponseTimeout)
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("等待 cmd=%d 应答: %w", cmd, err)
+			return clientwire.Envelope{}, fmt.Errorf("等待 cmd=%d 应答: %w", cmd, err)
 		}
 		if envelope.Err == errcode.RateLimited {
 			time.Sleep(benchRateLimitBackoff)
@@ -241,16 +242,16 @@ func benchExchange(p *benchPlayer, cmd uint32, payload map[string]any) (gateway.
 		}
 		return envelope, nil
 	}
-	return gateway.Envelope{}, fmt.Errorf("cmd=%d 连续 %d 次被限流", cmd, benchRateLimitRetries)
+	return clientwire.Envelope{}, fmt.Errorf("cmd=%d 连续 %d 次被限流", cmd, benchRateLimitRetries)
 }
 
-func benchMustExchange(p *benchPlayer, cmd uint32, payload map[string]any) (gateway.Envelope, error) {
+func benchMustExchange(p *benchPlayer, cmd uint32, payload map[string]any) (clientwire.Envelope, error) {
 	envelope, err := benchExchange(p, cmd, payload)
 	if err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	if envelope.Err != errcode.OK {
-		return gateway.Envelope{}, fmt.Errorf("cmd=%d 返回错误码 %d", cmd, envelope.Err)
+		return clientwire.Envelope{}, fmt.Errorf("cmd=%d 返回错误码 %d", cmd, envelope.Err)
 	}
 	return envelope, nil
 }
@@ -637,7 +638,7 @@ func benchFireRound(visitors []*benchVisitor, ownerUID uint64) []benchOutcome {
 func (v *benchVisitor) waterOnce(ownerUID uint64, ready *sync.WaitGroup, gun <-chan struct{}) benchOutcome {
 	seq := v.player.seq
 	v.player.seq++
-	frame, encodeErr := gateway.EncodeBinaryBatch([]gateway.Envelope{{
+	frame, encodeErr := clientwire.EncodeBinaryBatch([]clientwire.Envelope{{
 		Cmd:       gateway.CommandWater,
 		ClientSeq: seq,
 		Payload: mustJSON(map[string]any{

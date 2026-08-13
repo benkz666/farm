@@ -6,8 +6,8 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
 	"farm/server/shared/errcode"
+	"farm/server/shared/presence"
 )
 
 func TestOwnerRejectsNonFriendAction(t *testing.T) {

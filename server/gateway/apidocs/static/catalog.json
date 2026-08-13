@@ -554,7 +554,7 @@
       "reason": "农场变化广播",
       "repeatable": true,
       "dataPrerequisite": "按场景触发服务端推送并保持接收连接在线",
-      "automatedTest": "go test ./gateway -run TestReceiveFarmDeltaBatchSkipsInvalidConnections",
+      "automatedTest": "go test ./gateway -run TestPushServerDeliversTypedFarmDelta",
       "currentResult": "not-run"
     },
     {
@@ -567,7 +567,7 @@
       "reason": "玩家资产变化",
       "repeatable": true,
       "dataPrerequisite": "按场景触发服务端推送并保持接收连接在线",
-      "automatedTest": "go test ./gateway -run TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta",
+      "automatedTest": "go test ./gateway -run TestPushServerDeliversPlayerDelta",
       "currentResult": "not-run"
     },
     {
@@ -580,7 +580,7 @@
       "reason": "新邮件或社交提示",
       "repeatable": true,
       "dataPrerequisite": "按场景触发服务端推送并保持接收连接在线",
-      "automatedTest": "go test ./gateway -run TestGRPCPushMailNotify",
+      "automatedTest": "go test ./gateway -run TestPushServerDeliversMailNotify",
       "currentResult": "not-run"
     },
     {
@@ -593,7 +593,7 @@
       "reason": "同账号新会话踢下线",
       "repeatable": true,
       "dataPrerequisite": "按场景触发服务端推送并保持接收连接在线",
-      "automatedTest": "go test ./gateway -run TestGatewaySecondLocalSessionKicksFirst",
+      "automatedTest": "go test ./gateway -run TestPushServerKicksSession",
       "currentResult": "not-run"
     },
     {
@@ -606,7 +606,7 @@
       "reason": "任务进度变化",
       "repeatable": true,
       "dataPrerequisite": "按场景触发服务端推送并保持接收连接在线",
-      "automatedTest": "go test ./gateway -run TestSuccessfulHarvestAdvancesTaskAndPublishesTaskNotify",
+      "automatedTest": "go test ./gateway -run TestPushServerDeliversTaskNotify",
       "currentResult": "not-run"
     }
   ]

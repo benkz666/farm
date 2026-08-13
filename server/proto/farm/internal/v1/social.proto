@@ -8,6 +8,10 @@ import "farm/internal/v1/common.proto";
 
 // SocialService is the typed friendship boundary between Gateway/Farm and Social.
 service SocialService {
+  // ExecuteClientCommand is the Gateway-facing boundary for every public
+  // social command. Lower-level typed methods remain available to Farm for
+  // authorization and cross-farm orchestration.
+  rpc ExecuteClientCommand(ClientCommandRequest) returns (ClientCommandResponse);
   rpc AreFriends(AreFriendsRequest) returns (AreFriendsResponse);
   rpc AddFriends(PairRequest) returns (Empty);
   rpc RemoveFriends(PairRequest) returns (Empty);
@@ -19,7 +23,6 @@ service SocialService {
   rpc AcceptFriendRequest(PairRequest) returns (Empty);
   rpc RejectFriendRequest(PairRequest) returns (Empty);
 
-  // Reserved for future cache invalidation; not implemented in P3.
   rpc WatchFriendInvalidations(UidRequest) returns (stream FriendInvalidation);
 }
 
@@ -71,4 +74,13 @@ message ListFriendRequestsResponse {
 message FriendInvalidation {
   uint64 uid = 1;
   uint64 peer_uid = 2;
+}
+
+// InviteTokenPayload is signed by Social and embedded in the public invite
+// token. Protobuf replaces the former JSON token body so the social boundary
+// has one schema source of truth.
+message InviteTokenPayload {
+  uint64 inviter_uid = 1;
+  bytes nonce = 2;
+  int64 expires_at_ms = 3;
 }

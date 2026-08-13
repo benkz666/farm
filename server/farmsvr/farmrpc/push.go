@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
 	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
+	"farm/server/shared/presence"
 	"farm/server/shared/store"
 	"farm/server/shared/telemetry"
 )
@@ -31,51 +31,10 @@ const (
 	deltaLookupBatchSize      = 256
 )
 
-// DeltaPushRequest is the legacy single-connection Farm→Gateway callback.
-// Prefer PushBatch for new fan-out paths.
-type DeltaPushRequest struct {
-	ConnectionID uint64         `json:"connection_id"`
-	Delta        farm.FarmDelta `json:"delta"`
-}
-
-// PushBatch is the internal Gateway push unit from protocol.md §2.5. Delta is
-// the production typed payload; Envelope remains as an in-process test seam.
+// PushBatch is the typed Farm-to-Gateway fan-out unit.
 type PushBatch struct {
-	ConnIDs  []uint64            `json:"conn_ids"`
-	Delta    *publicv3.FarmDelta `json:"-"`
-	Envelope []byte              `json:"envelope,omitempty"`
-}
-
-// PlayerDeltaPushRequest is sent to the Gateway that owns a player's WebSocket.
-// UID is repeated so the Gateway can reject a stale or forged connection ID.
-type PlayerDeltaPushRequest struct {
-	ConnectionID uint64           `json:"connection_id"`
-	UID          uint64           `json:"uid"`
-	Delta        farm.PlayerDelta `json:"delta"`
-}
-
-// TaskNotifyPushRequest is sent to the Gateway that owns a player's WebSocket.
-// UID is repeated so the Gateway can reject a stale or forged connection ID.
-type TaskNotifyPushRequest struct {
-	ConnectionID uint64     `json:"connection_id"`
-	UID          uint64     `json:"uid"`
-	Task         store.Task `json:"task"`
-}
-
-// MailNotifyPushRequest is a refresh hint for the Gateway owning one player
-// session. Kind is advisory only; clients reload MailList for authority.
-type MailNotifyPushRequest struct {
-	ConnectionID uint64 `json:"connection_id"`
-	UID          uint64 `json:"uid"`
-	Kind         string `json:"kind"`
-}
-
-// SessionKickPushRequest asks the Gateway owning an old connection to notify
-// and close it after a newer login replaces the player's online lease.
-type SessionKickPushRequest struct {
-	ConnectionID uint64       `json:"connection_id"`
-	UID          uint64       `json:"uid"`
-	Reason       errcode.Code `json:"reason"`
+	ConnIDs []uint64
+	Delta   *publicv3.FarmDelta
 }
 
 // DeltaPublisher fans a FarmDelta out after an authoritative mutation commits.
@@ -244,11 +203,6 @@ type DeltaBatchPusher interface {
 	PushBatch(ctx context.Context, gatewayID string, batch PushBatch) error
 }
 
-// FarmDeltaEncoder builds the typed FarmDelta payload once per publish.
-type FarmDeltaEncoder interface {
-	EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error)
-}
-
 // PlayerDeltaPublisher fans personal-state changes to every active connection
 // for one player, regardless of which farm room that player is viewing.
 type PlayerDeltaPublisher interface {
@@ -288,12 +242,44 @@ type SessionKickPusher interface {
 	PushSessionKick(ctx context.Context, ref presence.ConnRef, uid uint64, reason errcode.Code) error
 }
 
+// FarmAccessPusher removes one viewer from an owner farm room on its Gateway.
+type FarmAccessPusher interface {
+	RevokeFarmAccess(context.Context, presence.ConnRef, uint64, uint64) error
+}
+
+// FarmAccessRevoker resolves the viewer's active connections and removes their
+// stale room subscription after Social commits an unfriend.
+type FarmAccessRevoker struct {
+	registry *presence.Registry
+	pusher   FarmAccessPusher
+}
+
+func NewFarmAccessRevoker(registry *presence.Registry, pusher FarmAccessPusher) *FarmAccessRevoker {
+	return &FarmAccessRevoker{registry: registry, pusher: pusher}
+}
+
+func (revoker *FarmAccessRevoker) RevokeFarmAccess(ctx context.Context, viewerUID, ownerUID uint64) error {
+	if revoker == nil || revoker.registry == nil || revoker.pusher == nil || viewerUID == 0 || ownerUID == 0 {
+		return fmt.Errorf("farmrpc: Farm access revoker is not configured")
+	}
+	refs, err := revoker.registry.Lookup(ctx, viewerUID)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, ref := range refs {
+		if err := revoker.pusher.RevokeFarmAccess(ctx, ref, viewerUID, ownerUID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // FanoutPublisher resolves room subscribers from the shared connection registry,
-// encodes the Envelope once, and pushes one batch per Gateway.
+// builds one typed delta, and pushes one batch per Gateway.
 type FanoutPublisher struct {
 	registry *presence.Registry
 	pusher   DeltaBatchPusher
-	encoder  FarmDeltaEncoder
 	metrics  *telemetry.Metrics
 }
 
@@ -380,15 +366,7 @@ func (p *FanoutPublisher) publishResolved(ctx context.Context, delta farm.FarmDe
 
 	encodeStart := time.Now()
 	typedDelta := clientwire.FarmDeltaToProto(delta)
-	var envelope []byte
-	var err error
-	if p.encoder != nil {
-		envelope, err = p.encoder.EncodeFarmDelta(delta)
-	}
 	encodeDur := time.Since(encodeStart)
-	if err != nil {
-		return err
-	}
 
 	type job struct {
 		gatewayID string
@@ -432,9 +410,8 @@ func (p *FanoutPublisher) publishResolved(ctx context.Context, delta farm.FarmDe
 					continue
 				}
 				err := p.pusher.PushBatch(ctx, item.gatewayID, PushBatch{
-					ConnIDs:  item.connIDs,
-					Delta:    typedDelta,
-					Envelope: envelope,
+					ConnIDs: item.connIDs,
+					Delta:   typedDelta,
 				})
 				recordErr(err)
 			}

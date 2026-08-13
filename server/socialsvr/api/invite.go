@@ -1,12 +1,5 @@
-// Package social 实现期 3 好友相关的纯函数：分享链接凭证的签发与校验。
-//
-// 凭证格式遵循 docs/design/protocol.md 3.3 节：
-//
-//	payload = base64url(JSON{inviter_uid, nonce, exp})
-//	sig     = base64url(HMAC-SHA256(server_key, payload)[:16])
-//	token   = payload + "." + sig
-//
-// 凭证无状态、不落库，过期由 exp（签发时刻 + 7 天）控制；吊销只能靠轮换 server_key。
+// Package api owns signed friend-invite tokens. The signed body is Protobuf;
+// service and token contracts therefore share the same generated schema.
 package api
 
 import (
@@ -14,12 +7,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // InviteTTL 是分享凭证的有效期，对应策划 18.7 与 protocol 3.3 的 7 天。
@@ -27,13 +22,6 @@ const InviteTTL int64 = 7 * 24 * 60 * 60 * 1000 // 毫秒
 
 // sigSize 取 HMAC-SHA256 输出前 16 字节作为签名，与 protocol 3.3 一致。
 const sigSize = 16
-
-// invitePayload 是凭证 payload 部分的明文结构。
-type invitePayload struct {
-	InviterUID uint64 `json:"inviter_uid"`
-	Nonce      string `json:"nonce"`
-	Exp        int64  `json:"exp"`
-}
 
 // IssueInvite 用 server_key 为 inviterUID 签发一张 7 天有效的分享凭证。
 // now 为毫秒墙钟时间。secret 不可为空，否则返回错误以防误用弱密钥。
@@ -47,12 +35,12 @@ func IssueInvite(inviterUID uint64, now int64, secret []byte) (string, error) {
 		return "", fmt.Errorf("social: generate invite nonce: %w", err)
 	}
 
-	p := invitePayload{
-		InviterUID: inviterUID,
-		Nonce:      nonce,
-		Exp:        now + InviteTTL,
+	p := &farmv1.InviteTokenPayload{
+		InviterUid:  inviterUID,
+		Nonce:       nonce,
+		ExpiresAtMs: now + InviteTTL,
 	}
-	payload, err := json.Marshal(p)
+	payload, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("social: marshal invite payload: %w", err)
 	}
@@ -85,14 +73,14 @@ func ParseInvite(token string, secret []byte, now int64) (uint64, errcode.Code) 
 		return 0, errcode.InviteInvalid
 	}
 
-	var p invitePayload
-	if err := json.Unmarshal(payload, &p); err != nil {
+	p := &farmv1.InviteTokenPayload{}
+	if err := proto.Unmarshal(payload, p); err != nil || p.InviterUid == 0 || len(p.Nonce) != 16 || p.ExpiresAtMs <= 0 {
 		return 0, errcode.InviteInvalid
 	}
-	if now > p.Exp {
+	if now > p.ExpiresAtMs {
 		return 0, errcode.InviteExpired
 	}
-	return p.InviterUID, errcode.OK
+	return p.InviterUid, errcode.OK
 }
 
 // sign 用 secret 对 msg 计算 HMAC-SHA256 并取前 sigSize 字节，再做 base64url 编码。
@@ -104,10 +92,10 @@ func sign(msg string, secret []byte) string {
 }
 
 // randomNonce 生成 16 字节随机 nonce 并以 base64url 表示。
-func randomNonce() (string, error) {
+func randomNonce() ([]byte, error) {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
+		return nil, err
 	}
-	return base64.RawURLEncoding.EncodeToString(buf[:]), nil
+	return append([]byte(nil), buf[:]...), nil
 }

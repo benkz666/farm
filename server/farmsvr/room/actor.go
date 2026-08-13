@@ -2,10 +2,10 @@
 package room
 
 import (
-	"encoding/json"
 	"errors"
 
 	"farm/server/domain/farm"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
@@ -39,13 +39,8 @@ type FarmActor struct {
 	dirtyItems   map[farm.ItemKey]stampedItemCount
 	dirtyCodex   map[uint16]uint64
 
-	// snapshotJSON is the immutable, client-visible full snapshot for
-	// snapshotSeq. Actor serialization makes it safe to reuse until a write
-	// invalidates it; the response builder copies it into its own payload.
-	snapshotJSONSeq  uint64
-	snapshotJSON     json.RawMessage
 	snapshotProtoSeq uint64
-	snapshotProto    []byte
+	snapshotMessage  *publicv3.FarmSnapshot
 }
 
 // MarkDirty 标记当前回调已真实改动聚合；纯读路径不得调用。
@@ -65,45 +60,23 @@ func (a *FarmActor) InvalidateSnapshot() {
 	if a == nil {
 		return
 	}
-	a.snapshotJSON = nil
-	a.snapshotProto = nil
+	a.snapshotMessage = nil
 }
 
-// EncodedSnapshotProto returns the typed Protobuf snapshot cached at the same
-// aggregate version as EncodedSnapshot.
-func (a *FarmActor) EncodedSnapshotProto() ([]byte, error) {
+// SnapshotProto returns the immutable typed snapshot for the current
+// aggregate version. The Actor invalidates this message on every mutation, so
+// concurrent gRPC responses may safely marshal an older immutable value while
+// a newer Actor version is being created.
+func (a *FarmActor) SnapshotProto() (*publicv3.FarmSnapshot, error) {
 	if a == nil || a.Aggregate == nil {
 		return nil, errors.New("room: actor aggregate is nil")
 	}
-	if len(a.snapshotProto) > 0 && a.snapshotProtoSeq == a.Aggregate.FarmSeq {
-		return a.snapshotProto, nil
-	}
-	encoded, err := clientwire.MarshalFarmSnapshotPayload(a.Aggregate.Snapshot())
-	if err != nil {
-		return nil, err
+	if a.snapshotMessage != nil && a.snapshotProtoSeq == a.Aggregate.FarmSeq {
+		return a.snapshotMessage, nil
 	}
 	a.snapshotProtoSeq = a.Aggregate.FarmSeq
-	a.snapshotProto = encoded
-	return a.snapshotProto, nil
-}
-
-// EncodedSnapshot returns the pre-encoded full snapshot for the current
-// aggregate version. The returned bytes are immutable and may only be used
-// while respecting the Actor ownership contract.
-func (a *FarmActor) EncodedSnapshot() (json.RawMessage, error) {
-	if a == nil || a.Aggregate == nil {
-		return nil, errors.New("room: actor aggregate is nil")
-	}
-	if len(a.snapshotJSON) > 0 && a.snapshotJSONSeq == a.Aggregate.FarmSeq {
-		return a.snapshotJSON, nil
-	}
-	encoded, err := json.Marshal(a.Aggregate.Snapshot())
-	if err != nil {
-		return nil, err
-	}
-	a.snapshotJSONSeq = a.Aggregate.FarmSeq
-	a.snapshotJSON = encoded
-	return a.snapshotJSON, nil
+	a.snapshotMessage = clientwire.FarmSnapshotToProto(a.Aggregate.Snapshot())
+	return a.snapshotMessage, nil
 }
 
 func (a *FarmActor) consumeDirty() bool {

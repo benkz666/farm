@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
+	"farm/server/shared/presence"
 	"farm/server/shared/store"
 
 	"google.golang.org/grpc/codes"
@@ -82,6 +83,24 @@ func (client *GatewayPushClient) service(ctx context.Context, gatewayID string) 
 	return farmv1.NewGatewayPushServiceClient(conn), nil
 }
 
+func (client *GatewayPushClient) deliverPush(
+	ctx context.Context,
+	ref presence.ConnRef,
+	uid uint64,
+	envelope *publicv3.WireEnvelope,
+) error {
+	service, err := client.service(ctx, ref.GatewayID)
+	if err != nil {
+		return err
+	}
+	_, err = service.DeliverPush(ctx, &farmv1.DeliverPushRequest{
+		ConnectionId: ref.ConnID,
+		Uid:          uid,
+		Envelope:     envelope,
+	})
+	return err
+}
+
 func (client *GatewayPushClient) target(ctx context.Context, gatewayID string) (string, error) {
 	gatewayID = strings.TrimSpace(gatewayID)
 	if gatewayID == "" {
@@ -144,17 +163,12 @@ func (pusher *GRPCDeltaPusher) PushBatch(ctx context.Context, gatewayID string, 
 	}
 	var lastErr error
 	for attempt := 1; attempt <= deltaPushMaxAttempts; attempt++ {
-		delta := batch.Delta
-		if delta == nil && len(batch.Envelope) != 0 {
-			decoded, decodeErr := clientwire.DecodeFarmDelta(batch.Envelope)
-			if decodeErr != nil {
-				return fmt.Errorf("farmrpc: decode FarmDelta batch: %w", decodeErr)
-			}
-			delta = clientwire.FarmDeltaToProto(decoded)
+		if batch.Delta == nil {
+			return fmt.Errorf("farmrpc: push Delta batch: missing typed delta")
 		}
 		_, pushErr := service.PushFarmDeltaBatch(ctx, &farmv1.PushFarmDeltaBatchRequest{
 			ConnIds: batch.ConnIDs,
-			Delta:   delta,
+			Delta:   batch.Delta,
 		})
 		if pushErr == nil {
 			return nil
@@ -195,14 +209,11 @@ func (pusher *GRPCPlayerDeltaPusher) PushPlayerDelta(ctx context.Context, ref pr
 	if pusher == nil || pusher.client == nil {
 		return fmt.Errorf("farmrpc: gRPC PlayerDelta pusher is nil")
 	}
-	service, err := pusher.client.service(ctx, ref.GatewayID)
-	if err != nil {
-		return err
-	}
-	_, err = service.PushPlayerDelta(ctx, &farmv1.PushPlayerDeltaRequest{
-		ConnectionId: ref.ConnID,
-		Uid:          uid,
-		Delta:        clientwire.PlayerDeltaToProto(delta),
+	err := pusher.client.deliverPush(ctx, ref, uid, &publicv3.WireEnvelope{
+		Cmd: clientwire.CommandPlayerDelta,
+		Payload: &publicv3.WireEnvelope_PlayerDelta{
+			PlayerDelta: clientwire.PlayerDeltaToProto(delta),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("farmrpc: push PlayerDelta: %w", err)
@@ -225,14 +236,11 @@ func (pusher *GRPCTaskNotifyPusher) PushTaskNotify(ctx context.Context, ref pres
 	if pusher == nil || pusher.client == nil {
 		return fmt.Errorf("farmrpc: gRPC TaskNotify pusher is nil")
 	}
-	service, err := pusher.client.service(ctx, ref.GatewayID)
-	if err != nil {
-		return err
-	}
-	_, err = service.PushTaskNotify(ctx, &farmv1.PushTaskNotifyRequest{
-		ConnectionId: ref.ConnID,
-		Uid:          uid,
-		Task:         taskToProto(task),
+	err := pusher.client.deliverPush(ctx, ref, uid, &publicv3.WireEnvelope{
+		Cmd: clientwire.CommandTaskNotify,
+		Payload: &publicv3.WireEnvelope_TaskNotify{
+			TaskNotify: taskToProto(task),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("farmrpc: push TaskNotify: %w", err)
@@ -255,14 +263,11 @@ func (pusher *GRPCMailNotifyPusher) PushMailNotify(ctx context.Context, ref pres
 	if pusher == nil || pusher.client == nil {
 		return fmt.Errorf("farmrpc: gRPC MailNotify pusher is nil")
 	}
-	service, err := pusher.client.service(ctx, ref.GatewayID)
-	if err != nil {
-		return err
-	}
-	_, err = service.PushMailNotify(ctx, &farmv1.PushMailNotifyRequest{
-		ConnectionId: ref.ConnID,
-		Uid:          uid,
-		Kind:         kind,
+	err := pusher.client.deliverPush(ctx, ref, uid, &publicv3.WireEnvelope{
+		Cmd: clientwire.CommandMailNotify,
+		Payload: &publicv3.WireEnvelope_MailNotify{
+			MailNotify: &publicv3.MailNotify{Kind: kind},
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("farmrpc: push MailNotify: %w", err)
@@ -300,8 +305,32 @@ func (pusher *GRPCSessionKickPusher) PushSessionKick(ctx context.Context, ref pr
 	return nil
 }
 
-func taskToProto(task store.Task) *farmv1.Task {
-	return &farmv1.Task{
+// GRPCFarmAccessPusher removes a stale farm-room subscription on one Gateway.
+type GRPCFarmAccessPusher struct{ client *GatewayPushClient }
+
+func NewGRPCFarmAccessPusher(client *GatewayPushClient) *GRPCFarmAccessPusher {
+	return &GRPCFarmAccessPusher{client: client}
+}
+
+func (pusher *GRPCFarmAccessPusher) RevokeFarmAccess(ctx context.Context, ref presence.ConnRef, viewerUID, ownerUID uint64) error {
+	if pusher == nil || pusher.client == nil {
+		return fmt.Errorf("farmrpc: gRPC Farm access pusher is nil")
+	}
+	service, err := pusher.client.service(ctx, ref.GatewayID)
+	if err != nil {
+		return err
+	}
+	_, err = service.RevokeFarmAccess(ctx, &farmv1.RevokeFarmAccessRequest{
+		ConnectionId: ref.ConnID, ViewerUid: viewerUID, OwnerUid: ownerUID,
+	})
+	if err != nil {
+		return fmt.Errorf("farmrpc: revoke Farm access: %w", err)
+	}
+	return nil
+}
+
+func taskToProto(task store.Task) *publicv3.Task {
+	return &publicv3.Task{
 		Id:         task.ID,
 		DayKey:     task.DayKey,
 		Kind:       task.Kind,

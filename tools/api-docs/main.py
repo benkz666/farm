@@ -170,11 +170,11 @@ def command_prerequisite(cmd):
 
 def push_automated_test(cmd):
     tests = {
-        9000: "go test ./gateway -run TestReceiveFarmDeltaBatchSkipsInvalidConnections",
-        9002: "go test ./gateway -run TestVisitorWaterUsesCrossOwnerDecisionAndReceivesDelta",
-        9004: "go test ./gateway -run TestGRPCPushMailNotify",
-        9006: "go test ./gateway -run TestGatewaySecondLocalSessionKicksFirst",
-        9008: "go test ./gateway -run TestSuccessfulHarvestAdvancesTaskAndPublishesTaskNotify",
+        9000: "go test ./gateway -run TestPushServerDeliversTypedFarmDelta",
+        9002: "go test ./gateway -run TestPushServerDeliversPlayerDelta",
+        9004: "go test ./gateway -run TestPushServerDeliversMailNotify",
+        9006: "go test ./gateway -run TestPushServerKicksSession",
+        9008: "go test ./gateway -run TestPushServerDeliversTaskNotify",
     }
     return tests[cmd]
 

@@ -10,10 +10,10 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/outbox"
+	"farm/server/shared/presence"
 	"farm/server/shared/telemetry"
 )
 

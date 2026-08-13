@@ -7,15 +7,15 @@ option go_package = "farm/server/gen/farm/v1;farmv1";
 import "farm/internal/v1/common.proto";
 import "farm/public/v3/client.proto";
 
-// GatewayPushService delivers typed push payloads to the Gateway that owns the
-// target WebSocket connection. Gateway adds the public envelope and batches
-// records only at the final client boundary.
+// GatewayPushService is a transport-only callback boundary. Application
+// services construct the complete public Protobuf envelope; Gateway only
+// resolves a local connection, enqueues bytes and applies connection-control
+// directives.
 service GatewayPushService {
   rpc PushFarmDeltaBatch(PushFarmDeltaBatchRequest) returns (Empty);
-  rpc PushPlayerDelta(PushPlayerDeltaRequest) returns (Empty);
-  rpc PushTaskNotify(PushTaskNotifyRequest) returns (Empty);
-  rpc PushMailNotify(PushMailNotifyRequest) returns (Empty);
+  rpc DeliverPush(DeliverPushRequest) returns (Empty);
   rpc PushSessionKick(PushSessionKickRequest) returns (Empty);
+  rpc RevokeFarmAccess(RevokeFarmAccessRequest) returns (Empty);
 }
 
 message PushFarmDeltaBatchRequest {
@@ -23,37 +23,20 @@ message PushFarmDeltaBatchRequest {
   farm.public.v3.FarmDelta delta = 2;
 }
 
-message PushPlayerDeltaRequest {
+message DeliverPushRequest {
   uint64 connection_id = 1;
   uint64 uid = 2;
-  farm.public.v3.PlayerDelta delta = 3;
-}
-
-message Task {
-  uint32 id = 1;
-  int64 day_key = 2;
-  string kind = 3;
-  string title = 4;
-  uint32 progress = 5;
-  uint32 target = 6;
-  int64 reward_coin = 7;
-  bool claimed = 8;
-}
-
-message PushTaskNotifyRequest {
-  uint64 connection_id = 1;
-  uint64 uid = 2;
-  Task task = 3;
-}
-
-message PushMailNotifyRequest {
-  uint64 connection_id = 1;
-  uint64 uid = 2;
-  string kind = 3;
+  farm.public.v3.WireEnvelope envelope = 3;
 }
 
 message PushSessionKickRequest {
   uint64 connection_id = 1;
   uint64 uid = 2;
   int32 reason = 3;
+}
+
+message RevokeFarmAccessRequest {
+  uint64 connection_id = 1;
+  uint64 viewer_uid = 2;
+  uint64 owner_uid = 3;
 }

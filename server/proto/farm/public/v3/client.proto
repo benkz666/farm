@@ -31,8 +31,8 @@ message WireEnvelope {
 }
 
 // CommandRequest is the typed field set shared by the command-numbered public
-// protocol. The envelope cmd selects the legal subset; Gateway performs the
-// command-specific validation.
+// protocol. The envelope cmd selects the legal subset; Farm or Social performs
+// command-specific validation after Gateway authenticates and routes it.
 message CommandRequest {
   string auth_token = 1;
   uint64 resume_farm_uid = 2;

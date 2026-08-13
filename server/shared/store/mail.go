@@ -3,51 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
-
-// ListMailsEncoded returns the cached JSON array used by the Farm hot path.
-// The encoded view shares the mailbox generation barrier with ListMails, so a
-// committed write cannot leave a stale pre-encoded response behind.
-func (s *Store) ListMailsEncoded(ctx context.Context, uid uint64) ([]byte, error) {
-	for attempt := 0; attempt < 3; attempt++ {
-		if encoded, ok := s.mailbox.encoded.get(uid, time.Now()); ok {
-			return append([]byte(nil), encoded...), nil
-		}
-		generation := s.mailboxGeneration(uid)
-		mails, err := s.ListMails(ctx, uid)
-		if err != nil {
-			return nil, err
-		}
-		encoded, err := json.Marshal(mails)
-		if err != nil {
-			return nil, fmt.Errorf("store: encode mail list: %w", err)
-		}
-		state := &s.mailbox.state[mailboxStateIndex(uid)]
-		state.mu.Lock()
-		if state.version == generation {
-			s.mailbox.encoded.put(uid, append([]byte(nil), encoded...), time.Now())
-			state.mu.Unlock()
-			return encoded, nil
-		}
-		state.mu.Unlock()
-	}
-	// A mailbox receiving sustained writes is still readable. Bypass the
-	// encoded cache after bounded retries instead of surfacing an internal
-	// invalidation sentinel to the client.
-	mails, err := s.ListMails(ctx, uid)
-	if err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(mails)
-	if err != nil {
-		return nil, fmt.Errorf("store: encode mail list: %w", err)
-	}
-	return encoded, nil
-}
 
 // ListMails 返回玩家的个人邮件，附件与已读状态分别由 Claimed / Read 明示。
 func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {

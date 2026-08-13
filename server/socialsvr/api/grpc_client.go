@@ -28,6 +28,20 @@ func (client *GRPCClient) service(ctx context.Context) (farmv1.SocialServiceClie
 	return farmv1.NewSocialServiceClient(conn), nil
 }
 
+// ExecuteClientCommand forwards one authenticated public social command using
+// the same typed Protobuf envelope used on the WebSocket boundary.
+func (client *GRPCClient) ExecuteClientCommand(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	service, err := client.service(ctx)
+	if err != nil {
+		return nil, err
+	}
+	response, err := service.ExecuteClientCommand(ctx, request)
+	if err != nil {
+		return nil, rpcerr.FromGRPC(err)
+	}
+	return response, nil
+}
+
 func (client *GRPCClient) AreFriends(ctx context.Context, uid, peerUID uint64) (bool, error) {
 	service, err := client.service(ctx)
 	if err != nil {

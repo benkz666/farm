@@ -101,12 +101,3 @@ func TestCloneMailsCachesEmptyMailboxWithoutNil(t *testing.T) {
 		t.Fatalf("cloneMails(nil) = %#v, want non-nil empty slice", mails)
 	}
 }
-
-func TestDeleteLocalMailboxInvalidatesEncodedValue(t *testing.T) {
-	storage := &Store{}
-	storage.mailbox.encoded.put(99, []byte(`[]`), time.Now())
-	storage.deleteLocalMailbox(99)
-	if encoded, ok := storage.mailbox.encoded.get(99, time.Now()); ok {
-		t.Fatalf("encoded mailbox survived invalidation: %s", encoded)
-	}
-}

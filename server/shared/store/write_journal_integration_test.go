@@ -25,11 +25,6 @@ func TestFarmWriteJournalProjectsFarmAndTaskToMySQL(t *testing.T) {
 	if cacheAddr == "" {
 		cacheAddr = "127.0.0.1:6379"
 	}
-	eventAddr := os.Getenv("FARM_EVENT_REDIS_ADDR")
-	if eventAddr == "" {
-		eventAddr = "127.0.0.1:6380"
-	}
-
 	base, closeBase, err := Open(ctx, dsn, cacheAddr, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +60,7 @@ func TestFarmWriteJournalProjectsFarmAndTaskToMySQL(t *testing.T) {
 	config.Shards = 2
 	config.BatchSize = 16
 	config.Block = 10 * time.Millisecond
-	journal, closeJournal, err := OpenFarmWriteJournal(ctx, base, eventAddr, config)
+	journal, closeJournal, err := OpenFarmWriteJournal(ctx, base, cacheAddr, config)
 	if err != nil {
 		t.Fatal(err)
 	}

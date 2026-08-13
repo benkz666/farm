@@ -175,7 +175,6 @@ type Store struct {
 	farmTTL        time.Duration
 	taskInit       dailyTaskInitCache
 	taskRead       boundedTTLCache[taskReadKey, []Task]
-	taskEncoded    boundedTTLCache[taskReadKey, []byte]
 	taskCacheState [taskCacheStateShardCount]taskCacheState
 	mailbox        mailboxCache
 }
@@ -201,11 +200,8 @@ func New(db *sql.DB, rdb *redis.Client, farmTTL time.Duration) *Store {
 	}
 	storage := &Store{db: db, rdb: rdb, farmTTL: farmTTL}
 	storage.taskRead.capacity = defaultReadCacheCapacity
-	storage.taskEncoded.capacity = defaultReadCacheCapacity
 	storage.mailbox.local.ttl = mailLocalCacheTTL
 	storage.mailbox.local.capacity = mailLocalCacheCapacity
-	storage.mailbox.encoded.ttl = mailLocalCacheTTL
-	storage.mailbox.encoded.capacity = mailLocalCacheCapacity
 	return storage
 }
 

@@ -73,6 +73,35 @@ func (client *GRPCClient) service(ctx context.Context, uid uint64) (farmv1.Cross
 	return farmv1.NewCrossFarmServiceClient(conn), nil
 }
 
+// AdvanceTask delivers a typed side effect to the Farm shard that owns uid.
+func (client *GRPCClient) AdvanceTask(ctx context.Context, uid uint64, taskID, amount uint32) error {
+	if client == nil || client.pool == nil || client.route == nil || uid == 0 || taskID == 0 || amount == 0 {
+		return fmt.Errorf("crossfarm: invalid task advancement")
+	}
+	farmID, err := client.route.FarmID(uid)
+	if err != nil {
+		return err
+	}
+	target := client.targets[farmID]
+	if target == "" {
+		return fmt.Errorf("crossfarm: no gRPC target configured for %q", farmID)
+	}
+	conn, err := client.pool.Conn(ctx, target)
+	if err != nil {
+		return fmt.Errorf("crossfarm: dial %q: %w", farmID, err)
+	}
+	response, err := farmv1.NewFarmCommandServiceClient(conn).AdvanceTask(ctx, &farmv1.AdvanceTaskRequest{
+		Uid: uid, TaskId: taskID, Amount: amount,
+	})
+	if err != nil {
+		return err
+	}
+	if code := errcode.Code(response.GetErr()); code != errcode.OK {
+		return fmt.Errorf("crossfarm: advance task rejected: %d", code)
+	}
+	return nil
+}
+
 // ReserveCrossVisitor durably reserves visitor resources through the typed
 // cross-farm boundary, avoiding the generic JSON Farm command hot path.
 func (client *GRPCClient) ReserveCrossVisitor(ctx context.Context, action CrossAction, dayID uint32) (errcode.Code, error) {

@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	FarmCommandService_Execute_FullMethodName            = "/farm.internal.v1.FarmCommandService/Execute"
+	FarmCommandService_AdvanceTask_FullMethodName        = "/farm.internal.v1.FarmCommandService/AdvanceTask"
 	FarmCommandService_ExecuteStream_FullMethodName      = "/farm.internal.v1.FarmCommandService/ExecuteStream"
 	FarmCommandService_ExecuteBatchStream_FullMethodName = "/farm.internal.v1.FarmCommandService/ExecuteBatchStream"
 )
@@ -28,11 +29,13 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Client-originated commands use the same
-// typed payload as the public WebSocket boundary.
+// FarmCommandService owns every Farm-facing client command. Gateway forwards
+// the typed public envelope without translating business payloads.
 type FarmCommandServiceClient interface {
-	Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error)
+	Execute(ctx context.Context, in *ClientCommandRequest, opts ...grpc.CallOption) (*ClientCommandResponse, error)
+	// AdvanceTask delivers a cross-shard Farm-owned side effect (for example,
+	// advancing the visitor's task after entering a friend's farm).
+	AdvanceTask(ctx context.Context, in *AdvanceTaskRequest, opts ...grpc.CallOption) (*AdvanceTaskResponse, error)
 	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
 	// request_id correlates responses because commands for different farms may
 	// complete out of order; commands for one farm_uid remain ordered.
@@ -50,10 +53,20 @@ func NewFarmCommandServiceClient(cc grpc.ClientConnInterface) FarmCommandService
 	return &farmCommandServiceClient{cc}
 }
 
-func (c *farmCommandServiceClient) Execute(ctx context.Context, in *ExecuteRequest, opts ...grpc.CallOption) (*ExecuteResponse, error) {
+func (c *farmCommandServiceClient) Execute(ctx context.Context, in *ClientCommandRequest, opts ...grpc.CallOption) (*ClientCommandResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExecuteResponse)
+	out := new(ClientCommandResponse)
 	err := c.cc.Invoke(ctx, FarmCommandService_Execute_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *farmCommandServiceClient) AdvanceTask(ctx context.Context, in *AdvanceTaskRequest, opts ...grpc.CallOption) (*AdvanceTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdvanceTaskResponse)
+	err := c.cc.Invoke(ctx, FarmCommandService_AdvanceTask_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +103,13 @@ type FarmCommandService_ExecuteBatchStreamClient = grpc.BidiStreamingClient[Stre
 // All implementations must embed UnimplementedFarmCommandServiceServer
 // for forward compatibility.
 //
-// FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Client-originated commands use the same
-// typed payload as the public WebSocket boundary.
+// FarmCommandService owns every Farm-facing client command. Gateway forwards
+// the typed public envelope without translating business payloads.
 type FarmCommandServiceServer interface {
-	Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error)
+	Execute(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error)
+	// AdvanceTask delivers a cross-shard Farm-owned side effect (for example,
+	// advancing the visitor's task after entering a friend's farm).
+	AdvanceTask(context.Context, *AdvanceTaskRequest) (*AdvanceTaskResponse, error)
 	// ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
 	// request_id correlates responses because commands for different farms may
 	// complete out of order; commands for one farm_uid remain ordered.
@@ -112,8 +127,11 @@ type FarmCommandServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedFarmCommandServiceServer struct{}
 
-func (UnimplementedFarmCommandServiceServer) Execute(context.Context, *ExecuteRequest) (*ExecuteResponse, error) {
+func (UnimplementedFarmCommandServiceServer) Execute(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Execute not implemented")
+}
+func (UnimplementedFarmCommandServiceServer) AdvanceTask(context.Context, *AdvanceTaskRequest) (*AdvanceTaskResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AdvanceTask not implemented")
 }
 func (UnimplementedFarmCommandServiceServer) ExecuteStream(grpc.BidiStreamingServer[StreamExecuteRequest, StreamExecuteResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method ExecuteStream not implemented")
@@ -143,7 +161,7 @@ func RegisterFarmCommandServiceServer(s grpc.ServiceRegistrar, srv FarmCommandSe
 }
 
 func _FarmCommandService_Execute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExecuteRequest)
+	in := new(ClientCommandRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -155,7 +173,25 @@ func _FarmCommandService_Execute_Handler(srv interface{}, ctx context.Context, d
 		FullMethod: FarmCommandService_Execute_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FarmCommandServiceServer).Execute(ctx, req.(*ExecuteRequest))
+		return srv.(FarmCommandServiceServer).Execute(ctx, req.(*ClientCommandRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FarmCommandService_AdvanceTask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdvanceTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FarmCommandServiceServer).AdvanceTask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FarmCommandService_AdvanceTask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FarmCommandServiceServer).AdvanceTask(ctx, req.(*AdvanceTaskRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -184,6 +220,10 @@ var FarmCommandService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Execute",
 			Handler:    _FarmCommandService_Execute_Handler,
+		},
+		{
+			MethodName: "AdvanceTask",
+			Handler:    _FarmCommandService_AdvanceTask_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -4,6 +4,8 @@ package farm.internal.v1;
 
 option go_package = "farm/server/gen/farm/v1;farmv1";
 
+import "farm/public/v3/client.proto";
+
 // ConnRef identifies a WebSocket connection on a specific Gateway instance.
 message ConnRef {
   uint64 conn_id = 1;
@@ -13,9 +15,47 @@ message ConnRef {
 // Empty is used for RPCs with no request or response payload.
 message Empty {}
 
-// BusinessError carries a protocol error code in the farm command response path.
-// Social RPCs map store/protocol errors to gRPC status instead.
-message BusinessError {
-  // Protocol error code aligned with docs/design/protocol.md §4.
-  int32 code = 1;
+// ClientCommandRequest is the only Gateway-to-business-service request
+// contract. Gateway authenticates the connection and supplies transport
+// metadata, while Farm/Social own all command validation and business logic.
+message ClientCommandRequest {
+  uint64 uid = 1;
+  ConnRef originator = 2;
+  uint64 active_farm_uid = 3;
+  uint64 route_uid = 4;
+  farm.public.v3.WireEnvelope envelope = 5;
+}
+
+enum RoomAction {
+  ROOM_ACTION_UNSPECIFIED = 0;
+  ROOM_ACTION_SUBSCRIBE = 1;
+  ROOM_ACTION_UNSUBSCRIBE = 2;
+}
+
+// ClientCommandResponse contains a complete typed public response. The room
+// fields are transport instructions rather than business payloads; Gateway
+// applies them without inspecting the response body.
+message ClientCommandResponse {
+  farm.public.v3.WireEnvelope envelope = 1;
+  RoomAction room_action = 2;
+  uint64 room_uid = 3;
+  uint64 room_seq = 4;
+  repeated farm.public.v3.WireEnvelope pushes = 5;
+}
+
+// FriendCacheInvalidation is the binary Redis Pub/Sub contract used to keep
+// Social replicas coherent. It is deliberately separate from the public
+// FriendInvalidation stream, which only exposes the affected identities.
+message FriendCacheInvalidation {
+  string source = 1;
+  uint64 uid = 2;
+  uint64 peer_uid = 3;
+  bool known = 4;
+  bool value = 5;
+}
+
+// MailboxCacheInvalidation is the binary Redis Pub/Sub contract used to
+// invalidate process-local mailbox views across Farm replicas.
+message MailboxCacheInvalidation {
+  uint64 uid = 1;
 }

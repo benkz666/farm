@@ -318,8 +318,8 @@ func (*WireEnvelope_SessionKick) isWireEnvelope_Payload() {}
 func (*WireEnvelope_TaskNotify) isWireEnvelope_Payload() {}
 
 // CommandRequest is the typed field set shared by the command-numbered public
-// protocol. The envelope cmd selects the legal subset; Gateway performs the
-// command-specific validation.
+// protocol. The envelope cmd selects the legal subset; Farm or Social performs
+// command-specific validation after Gateway authenticates and routes it.
 type CommandRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AuthToken       string                 `protobuf:"bytes,1,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`

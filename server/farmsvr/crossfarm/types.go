@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
 	"farm/server/shared/errcode"
+	"farm/server/shared/presence"
 )
 
 // ActionKind identifies the owner-farm operation requested by a visitor.

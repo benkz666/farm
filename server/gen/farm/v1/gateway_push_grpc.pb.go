@@ -20,25 +20,24 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	GatewayPushService_PushFarmDeltaBatch_FullMethodName = "/farm.internal.v1.GatewayPushService/PushFarmDeltaBatch"
-	GatewayPushService_PushPlayerDelta_FullMethodName    = "/farm.internal.v1.GatewayPushService/PushPlayerDelta"
-	GatewayPushService_PushTaskNotify_FullMethodName     = "/farm.internal.v1.GatewayPushService/PushTaskNotify"
-	GatewayPushService_PushMailNotify_FullMethodName     = "/farm.internal.v1.GatewayPushService/PushMailNotify"
+	GatewayPushService_DeliverPush_FullMethodName        = "/farm.internal.v1.GatewayPushService/DeliverPush"
 	GatewayPushService_PushSessionKick_FullMethodName    = "/farm.internal.v1.GatewayPushService/PushSessionKick"
+	GatewayPushService_RevokeFarmAccess_FullMethodName   = "/farm.internal.v1.GatewayPushService/RevokeFarmAccess"
 )
 
 // GatewayPushServiceClient is the client API for GatewayPushService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GatewayPushService delivers typed push payloads to the Gateway that owns the
-// target WebSocket connection. Gateway adds the public envelope and batches
-// records only at the final client boundary.
+// GatewayPushService is a transport-only callback boundary. Application
+// services construct the complete public Protobuf envelope; Gateway only
+// resolves a local connection, enqueues bytes and applies connection-control
+// directives.
 type GatewayPushServiceClient interface {
 	PushFarmDeltaBatch(ctx context.Context, in *PushFarmDeltaBatchRequest, opts ...grpc.CallOption) (*Empty, error)
-	PushPlayerDelta(ctx context.Context, in *PushPlayerDeltaRequest, opts ...grpc.CallOption) (*Empty, error)
-	PushTaskNotify(ctx context.Context, in *PushTaskNotifyRequest, opts ...grpc.CallOption) (*Empty, error)
-	PushMailNotify(ctx context.Context, in *PushMailNotifyRequest, opts ...grpc.CallOption) (*Empty, error)
+	DeliverPush(ctx context.Context, in *DeliverPushRequest, opts ...grpc.CallOption) (*Empty, error)
 	PushSessionKick(ctx context.Context, in *PushSessionKickRequest, opts ...grpc.CallOption) (*Empty, error)
+	RevokeFarmAccess(ctx context.Context, in *RevokeFarmAccessRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type gatewayPushServiceClient struct {
@@ -59,30 +58,10 @@ func (c *gatewayPushServiceClient) PushFarmDeltaBatch(ctx context.Context, in *P
 	return out, nil
 }
 
-func (c *gatewayPushServiceClient) PushPlayerDelta(ctx context.Context, in *PushPlayerDeltaRequest, opts ...grpc.CallOption) (*Empty, error) {
+func (c *gatewayPushServiceClient) DeliverPush(ctx context.Context, in *DeliverPushRequest, opts ...grpc.CallOption) (*Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
-	err := c.cc.Invoke(ctx, GatewayPushService_PushPlayerDelta_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *gatewayPushServiceClient) PushTaskNotify(ctx context.Context, in *PushTaskNotifyRequest, opts ...grpc.CallOption) (*Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, GatewayPushService_PushTaskNotify_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *gatewayPushServiceClient) PushMailNotify(ctx context.Context, in *PushMailNotifyRequest, opts ...grpc.CallOption) (*Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, GatewayPushService_PushMailNotify_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, GatewayPushService_DeliverPush_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -99,19 +78,29 @@ func (c *gatewayPushServiceClient) PushSessionKick(ctx context.Context, in *Push
 	return out, nil
 }
 
+func (c *gatewayPushServiceClient) RevokeFarmAccess(ctx context.Context, in *RevokeFarmAccessRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, GatewayPushService_RevokeFarmAccess_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GatewayPushServiceServer is the server API for GatewayPushService service.
 // All implementations must embed UnimplementedGatewayPushServiceServer
 // for forward compatibility.
 //
-// GatewayPushService delivers typed push payloads to the Gateway that owns the
-// target WebSocket connection. Gateway adds the public envelope and batches
-// records only at the final client boundary.
+// GatewayPushService is a transport-only callback boundary. Application
+// services construct the complete public Protobuf envelope; Gateway only
+// resolves a local connection, enqueues bytes and applies connection-control
+// directives.
 type GatewayPushServiceServer interface {
 	PushFarmDeltaBatch(context.Context, *PushFarmDeltaBatchRequest) (*Empty, error)
-	PushPlayerDelta(context.Context, *PushPlayerDeltaRequest) (*Empty, error)
-	PushTaskNotify(context.Context, *PushTaskNotifyRequest) (*Empty, error)
-	PushMailNotify(context.Context, *PushMailNotifyRequest) (*Empty, error)
+	DeliverPush(context.Context, *DeliverPushRequest) (*Empty, error)
 	PushSessionKick(context.Context, *PushSessionKickRequest) (*Empty, error)
+	RevokeFarmAccess(context.Context, *RevokeFarmAccessRequest) (*Empty, error)
 	mustEmbedUnimplementedGatewayPushServiceServer()
 }
 
@@ -125,17 +114,14 @@ type UnimplementedGatewayPushServiceServer struct{}
 func (UnimplementedGatewayPushServiceServer) PushFarmDeltaBatch(context.Context, *PushFarmDeltaBatchRequest) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PushFarmDeltaBatch not implemented")
 }
-func (UnimplementedGatewayPushServiceServer) PushPlayerDelta(context.Context, *PushPlayerDeltaRequest) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PushPlayerDelta not implemented")
-}
-func (UnimplementedGatewayPushServiceServer) PushTaskNotify(context.Context, *PushTaskNotifyRequest) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PushTaskNotify not implemented")
-}
-func (UnimplementedGatewayPushServiceServer) PushMailNotify(context.Context, *PushMailNotifyRequest) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PushMailNotify not implemented")
+func (UnimplementedGatewayPushServiceServer) DeliverPush(context.Context, *DeliverPushRequest) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeliverPush not implemented")
 }
 func (UnimplementedGatewayPushServiceServer) PushSessionKick(context.Context, *PushSessionKickRequest) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PushSessionKick not implemented")
+}
+func (UnimplementedGatewayPushServiceServer) RevokeFarmAccess(context.Context, *RevokeFarmAccessRequest) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RevokeFarmAccess not implemented")
 }
 func (UnimplementedGatewayPushServiceServer) mustEmbedUnimplementedGatewayPushServiceServer() {}
 func (UnimplementedGatewayPushServiceServer) testEmbeddedByValue()                            {}
@@ -176,56 +162,20 @@ func _GatewayPushService_PushFarmDeltaBatch_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GatewayPushService_PushPlayerDelta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PushPlayerDeltaRequest)
+func _GatewayPushService_DeliverPush_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeliverPushRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GatewayPushServiceServer).PushPlayerDelta(ctx, in)
+		return srv.(GatewayPushServiceServer).DeliverPush(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: GatewayPushService_PushPlayerDelta_FullMethodName,
+		FullMethod: GatewayPushService_DeliverPush_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GatewayPushServiceServer).PushPlayerDelta(ctx, req.(*PushPlayerDeltaRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _GatewayPushService_PushTaskNotify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PushTaskNotifyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GatewayPushServiceServer).PushTaskNotify(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GatewayPushService_PushTaskNotify_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GatewayPushServiceServer).PushTaskNotify(ctx, req.(*PushTaskNotifyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _GatewayPushService_PushMailNotify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PushMailNotifyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GatewayPushServiceServer).PushMailNotify(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GatewayPushService_PushMailNotify_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GatewayPushServiceServer).PushMailNotify(ctx, req.(*PushMailNotifyRequest))
+		return srv.(GatewayPushServiceServer).DeliverPush(ctx, req.(*DeliverPushRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -248,6 +198,24 @@ func _GatewayPushService_PushSessionKick_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GatewayPushService_RevokeFarmAccess_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeFarmAccessRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GatewayPushServiceServer).RevokeFarmAccess(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GatewayPushService_RevokeFarmAccess_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GatewayPushServiceServer).RevokeFarmAccess(ctx, req.(*RevokeFarmAccessRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GatewayPushService_ServiceDesc is the grpc.ServiceDesc for GatewayPushService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -260,20 +228,16 @@ var GatewayPushService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _GatewayPushService_PushFarmDeltaBatch_Handler,
 		},
 		{
-			MethodName: "PushPlayerDelta",
-			Handler:    _GatewayPushService_PushPlayerDelta_Handler,
-		},
-		{
-			MethodName: "PushTaskNotify",
-			Handler:    _GatewayPushService_PushTaskNotify_Handler,
-		},
-		{
-			MethodName: "PushMailNotify",
-			Handler:    _GatewayPushService_PushMailNotify_Handler,
+			MethodName: "DeliverPush",
+			Handler:    _GatewayPushService_DeliverPush_Handler,
 		},
 		{
 			MethodName: "PushSessionKick",
 			Handler:    _GatewayPushService_PushSessionKick_Handler,
+		},
+		{
+			MethodName: "RevokeFarmAccess",
+			Handler:    _GatewayPushService_RevokeFarmAccess_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

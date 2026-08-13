@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 
 	"google.golang.org/grpc"
@@ -22,10 +23,7 @@ func TestBearerTokenUnaryInterceptor(t *testing.T) {
 	t.Run("reject missing token", func(t *testing.T) {
 		conn := dialBufconnNoAuth(t, pair.Listener)
 		client := farmv1.NewFarmCommandServiceClient(conn)
-		_, err := client.Execute(context.Background(), &farmv1.ExecuteRequest{
-			Operation: farmv1.Operation_OPERATION_ENTER_FARM,
-			FarmUid:   1,
-		})
+		_, err := client.Execute(context.Background(), commandRequest(1))
 		if status.Code(err) != codes.Unauthenticated {
 			t.Fatalf("status = %v, want Unauthenticated", err)
 		}
@@ -37,15 +35,12 @@ func TestBearerTokenUnaryInterceptor(t *testing.T) {
 			t.Fatalf("pool conn: %v", err)
 		}
 		client := farmv1.NewFarmCommandServiceClient(conn)
-		resp, err := client.Execute(context.Background(), &farmv1.ExecuteRequest{
-			Operation: farmv1.Operation_OPERATION_ENTER_FARM,
-			FarmUid:   1,
-		})
+		resp, err := client.Execute(context.Background(), commandRequest(1))
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
-		if resp.GetErr() != 0 {
-			t.Fatalf("err = %d", resp.GetErr())
+		if resp.GetEnvelope().GetErr() != 0 {
+			t.Fatalf("err = %d", resp.GetEnvelope().GetErr())
 		}
 	})
 }
@@ -54,8 +49,25 @@ type stubCommandServer struct {
 	farmv1.UnimplementedFarmCommandServiceServer
 }
 
-func (stubCommandServer) Execute(context.Context, *farmv1.ExecuteRequest) (*farmv1.ExecuteResponse, error) {
-	return &farmv1.ExecuteResponse{}, nil
+func (stubCommandServer) Execute(_ context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	return &farmv1.ClientCommandResponse{Envelope: &publicv3.WireEnvelope{
+		Cmd:       request.GetEnvelope().GetCmd(),
+		ClientSeq: request.GetEnvelope().GetClientSeq(),
+	}}, nil
+}
+
+func commandRequest(uid uint64) *farmv1.ClientCommandRequest {
+	return &farmv1.ClientCommandRequest{
+		Uid:      uid,
+		RouteUid: uid,
+		Envelope: &publicv3.WireEnvelope{
+			Cmd:       200,
+			ClientSeq: 1,
+			Payload: &publicv3.WireEnvelope_EnterFarmRequest{
+				EnterFarmRequest: &publicv3.EnterFarmRequest{OwnerUid: uid},
+			},
+		},
+	}
 }
 
 func dialBufconnNoAuth(t *testing.T, listener *bufconn.Listener) *grpc.ClientConn {

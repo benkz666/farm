@@ -6,8 +6,9 @@ import (
 	"net/url"
 	"strings"
 
+	publicv3 "farm/server/gen/farm/public/v3"
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
-	socialapi "farm/server/socialsvr/api"
 )
 
 type inviteLandingResponse struct {
@@ -68,21 +69,19 @@ func (g *Gateway) sessionUIDFromRequest(r *http.Request) (uint64, bool) {
 	return uid, true
 }
 
-// acceptInviteForUser 复用 ws_friends 的 ParseInvite + AddFriends 逻辑，
-// 供 HTTP 落地页在已登录会话下直接建立好友关系。
+// acceptInviteForUser adapts the HTTP landing page to Social's typed command
+// boundary. Gateway does not parse tokens or mutate friendship state.
 func (g *Gateway) acceptInviteForUser(ctx context.Context, uid uint64, token string) errcode.Code {
-	if g.friends == nil {
+	if uid == 0 || token == "" || g.socialRPC == nil {
+		return errcode.BadRequest
+	}
+	request := &farmv1.ClientCommandRequest{Uid: uid, RouteUid: uid, Envelope: &publicv3.WireEnvelope{
+		Cmd: CommandAcceptInvite, ClientSeq: 1,
+		Payload: &publicv3.WireEnvelope_CommandRequest{CommandRequest: &publicv3.CommandRequest{InviteToken: token}},
+	}}
+	response, err := g.executeSocialRPC(ctx, request)
+	if err != nil || response == nil || response.Envelope == nil {
 		return errcode.Internal
 	}
-	if len(g.inviteSecret) == 0 {
-		return errcode.Internal
-	}
-	inviterUID, code := socialapi.ParseInvite(token, g.inviteSecret, g.Now())
-	if code != errcode.OK {
-		return code
-	}
-	if inviterUID == 0 {
-		return errcode.InviteInvalid
-	}
-	return g.addFriends(uid, inviterUID)
+	return errcode.Code(response.Envelope.Err)
 }

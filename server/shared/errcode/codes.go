@@ -1,4 +1,4 @@
-// Package errcode 定义与 docs/design/protocol.md 第 4 章一致的协议错误码。
+// Package errcode 定义客户端 Protobuf 契约使用的稳定业务错误码。
 //
 // 约定（见 protocol.md 4.1）：
 //   - 0 表示成功

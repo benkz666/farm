@@ -31,10 +31,11 @@ type Metrics struct {
 	WSWriteQueueFull      prometheus.Counter
 	WSWriteFailures       *prometheus.CounterVec
 	WSRateLimited         *prometheus.CounterVec
-	GatewayWriteLimit     prometheus.Gauge
-	GatewayWritePending   prometheus.Gauge
-	GatewayWriteLag       prometheus.Gauge
-	GatewayBacklogErrors  prometheus.Counter
+	FarmWriteLimit        prometheus.Gauge
+	FarmWritePending      prometheus.Gauge
+	FarmWriteLag          prometheus.Gauge
+	FarmBacklogErrors     prometheus.Counter
+	FarmWriteRejected     prometheus.Counter
 	// Hot successful commands use pre-bound metric children. This avoids two
 	// label string formats plus two MetricVec hash/lock lookups per request.
 	// The maps are immutable after construction and therefore safe for
@@ -129,21 +130,25 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Name: "farm_ws_rate_limited_total",
 		Help: "WebSocket requests rejected by a bounded Gateway admission guard",
 	}, []string{"reason"})
-	m.GatewayWriteLimit = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "farm_gateway_write_admission_limit",
-		Help: "Current per-Gateway write admission limit derived from Redis Stream pressure",
+	m.FarmWriteLimit = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_write_admission_limit",
+		Help: "Current per-Farm foreground write limit derived from local journal pressure",
 	})
-	m.GatewayWritePending = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "farm_gateway_write_journal_pending",
-		Help: "Deployment-wide delivered but unacknowledged write-journal records observed by this Gateway",
+	m.FarmWritePending = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_write_journal_pending",
+		Help: "Delivered but unacknowledged write-journal records on this Farm instance",
 	})
-	m.GatewayWriteLag = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "farm_gateway_write_journal_lag",
-		Help: "Deployment-wide write-journal records not yet delivered to a Projector observed by this Gateway",
+	m.FarmWriteLag = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_write_journal_lag",
+		Help: "Write-journal records not yet delivered to a projector on this Farm instance",
 	})
-	m.GatewayBacklogErrors = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "farm_gateway_write_backlog_sample_errors_total",
-		Help: "Failed Gateway samples of Redis write-journal pending or lag",
+	m.FarmBacklogErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_backlog_sample_errors_total",
+		Help: "Failed Farm samples of Redis write-journal pending or lag",
+	})
+	m.FarmWriteRejected = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_write_admission_rejected_total",
+		Help: "Farm write commands rejected to bound durable-journal pressure",
 	})
 	m.wsRateLimits = make(map[string]prometheus.Counter, len(knownWSRateLimitReasons))
 	for _, reason := range knownWSRateLimitReasons {
@@ -266,7 +271,7 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		m.WSConnections, m.WSRequests, m.WSDuration,
 		m.WSDisconnects, m.WSHandshakeErrors, m.WSSessionReplacements,
 		m.WSWriteQueueDepth, m.WSWriteQueueFull, m.WSWriteFailures, m.WSRateLimited,
-		m.GatewayWriteLimit, m.GatewayWritePending, m.GatewayWriteLag, m.GatewayBacklogErrors,
+		m.FarmWriteLimit, m.FarmWritePending, m.FarmWriteLag, m.FarmBacklogErrors, m.FarmWriteRejected,
 		m.ActorResident, m.ActorMailboxDepth, m.ActorDoBusy,
 		m.ActorLoadDuration, m.ActorLoadErrors,
 		m.ActorSaveDuration, m.ActorSaveErrors,
@@ -319,17 +324,23 @@ func (m *Metrics) SetWriteJournalProjectionLimit(limit int) {
 	}
 }
 
-// SetGatewayWriteAdmission records the control-loop inputs and resulting limit.
+// SetFarmWriteAdmission records the Farm-local control-loop inputs and limit.
 // It runs on the low-frequency sampler rather than the request hot path.
-func (m *Metrics) SetGatewayWriteAdmission(limit int, pending, lag int64, sampleError bool) {
+func (m *Metrics) SetFarmWriteAdmission(limit int, pending, lag int64, sampleError bool) {
 	if m == nil {
 		return
 	}
-	m.GatewayWriteLimit.Set(float64(max(0, limit)))
-	m.GatewayWritePending.Set(float64(max(int64(0), pending)))
-	m.GatewayWriteLag.Set(float64(max(int64(0), lag)))
+	m.FarmWriteLimit.Set(float64(max(0, limit)))
+	m.FarmWritePending.Set(float64(max(int64(0), pending)))
+	m.FarmWriteLag.Set(float64(max(int64(0), lag)))
 	if sampleError {
-		m.GatewayBacklogErrors.Inc()
+		m.FarmBacklogErrors.Inc()
+	}
+}
+
+func (m *Metrics) ObserveFarmWriteRejected() {
+	if m != nil {
+		m.FarmWriteRejected.Inc()
 	}
 }
 
@@ -482,14 +493,14 @@ func (m *Metrics) ObserveWSRateLimited(reason string) {
 		return
 	}
 	switch reason {
-	case "connection", "write_slot", "cross_slot":
+	case "connection":
 	default:
 		reason = "unknown"
 	}
 	m.wsRateLimits[reason].Inc()
 }
 
-var knownWSRateLimitReasons = [...]string{"connection", "write_slot", "cross_slot", "unknown"}
+var knownWSRateLimitReasons = [...]string{"connection", "unknown"}
 
 var knownWSCommands = [...]uint32{
 	100, 102,

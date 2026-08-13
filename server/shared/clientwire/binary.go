@@ -20,10 +20,6 @@ const (
 
 	commandEnterFarm uint32 = 200
 	commandSyncFarm  uint32 = 204
-
-	PreparedEnterFarmResponse uint32 = 13
-	PreparedSyncFarmResponse  uint32 = 14
-	PreparedCommandResponse   uint32 = 17
 )
 
 type enterFarmPayload struct {
@@ -60,30 +56,20 @@ func EncodeBinaryBatch(envelopes []Envelope) ([]byte, error) {
 	return AppendBinaryBatch(nil, envelopes)
 }
 
-// AppendBinaryBatch appends a complete WireBatch directly to dst. Prepared
-// Farm responses are written into their final frame in one pass: the cached
-// snapshot and the small Gateway suffix are never materialized as an
-// intermediate message or repeated-field record.
+// AppendBinaryBatch appends a complete WireBatch directly to dst. It exists
+// for compatibility tooling; production transports use AppendWireBatch.
 func AppendBinaryBatch(dst []byte, envelopes []Envelope) ([]byte, error) {
 	if len(envelopes) == 0 || len(envelopes) > MaxBatchEnvelopes {
 		return nil, fmt.Errorf("wireenv: protobuf batch size must be 1..%d", MaxBatchEnvelopes)
 	}
 	needed := 0
 	for index := range envelopes {
-		if len(envelopes[index].PreparedPayload) > 0 {
-			needed += len(envelopes[index].PreparedPayload) + len(envelopes[index].PreparedSuffix) + 32
-		} else {
-			needed += len(envelopes[index].Payload) + 32
-		}
+		needed += len(envelopes[index].Payload) + 32
 	}
 	dst = growBytes(dst, needed)
 	for index := range envelopes {
 		var err error
-		if len(envelopes[index].PreparedPayload) > 0 {
-			dst, err = appendPreparedProtoRecord(dst, envelopes[index])
-		} else {
-			dst, err = appendProtoRecord(dst, envelopes[index], false)
-		}
+		dst, err = appendProtoRecord(dst, envelopes[index], false)
 		if err != nil {
 			return nil, fmt.Errorf("wireenv: protobuf batch item %d: %w", index, err)
 		}
@@ -113,7 +99,7 @@ func hasTypedPayload(envelope Envelope) bool {
 // typed public response once. Hot handlers can install CommandResponse
 // directly and skip this compatibility conversion.
 func PrepareCommandResponse(envelope *Envelope) error {
-	if envelope == nil || len(envelope.PreparedPayload) != 0 || hasTypedPayload(*envelope) {
+	if envelope == nil || hasTypedPayload(*envelope) {
 		return nil
 	}
 	if envelope.Err != errcode.OK {
@@ -132,9 +118,6 @@ func PrepareCommandResponse(envelope *Envelope) error {
 }
 
 func EncodeTrustedBinaryRecord(envelope Envelope) ([]byte, error) {
-	if len(envelope.PreparedPayload) > 0 {
-		return encodePreparedProtoRecord(envelope)
-	}
 	if !hasTypedPayload(envelope) {
 		payload := bytes.TrimSpace(envelope.Payload)
 		if len(payload) < 2 || payload[0] != '{' || payload[len(payload)-1] != '}' {
@@ -142,60 +125,6 @@ func EncodeTrustedBinaryRecord(envelope Envelope) ([]byte, error) {
 		}
 	}
 	return encodeProtoRecord(envelope, true)
-}
-
-func encodePreparedProtoRecord(envelope Envelope) ([]byte, error) {
-	return appendPreparedProtoRecord(nil, envelope)
-}
-
-func appendPreparedProtoRecord(dst []byte, envelope Envelope) ([]byte, error) {
-	if !IsPreparedResponseField(envelope.PreparedField) {
-		return nil, fmt.Errorf("wireenv: invalid prepared payload field %d", envelope.PreparedField)
-	}
-	if envelope.Err != errcode.OK || len(envelope.PreparedPayload) == 0 {
-		return nil, fmt.Errorf("wireenv: invalid prepared payload")
-	}
-	messageSize := protowire.SizeTag(1) + protowire.SizeVarint(uint64(envelope.Cmd))
-	if envelope.Cmd == 0 {
-		messageSize = 0
-	}
-	if envelope.ClientSeq != 0 {
-		messageSize += protowire.SizeTag(2) + protowire.SizeVarint(uint64(envelope.ClientSeq))
-	}
-	payloadSize := len(envelope.PreparedPayload) + len(envelope.PreparedSuffix)
-	messageSize += protowire.SizeTag(protowire.Number(envelope.PreparedField)) + protowire.SizeBytes(payloadSize)
-	dst = protowire.AppendTag(dst, 1, protowire.BytesType)
-	dst = protowire.AppendVarint(dst, uint64(messageSize))
-	if envelope.Cmd != 0 {
-		dst = protowire.AppendTag(dst, 1, protowire.VarintType)
-		dst = protowire.AppendVarint(dst, uint64(envelope.Cmd))
-	}
-	if envelope.ClientSeq != 0 {
-		dst = protowire.AppendTag(dst, 2, protowire.VarintType)
-		dst = protowire.AppendVarint(dst, uint64(envelope.ClientSeq))
-	}
-	dst = protowire.AppendTag(dst, protowire.Number(envelope.PreparedField), protowire.BytesType)
-	dst = protowire.AppendVarint(dst, uint64(payloadSize))
-	dst = append(dst, envelope.PreparedPayload...)
-	dst = append(dst, envelope.PreparedSuffix...)
-	return dst, nil
-}
-
-// IsPreparedResponseField reports the server-direction oneof bodies that may
-// be forwarded as already-marshaled Protobuf through Gateway.
-func IsPreparedResponseField(field uint32) bool {
-	return field == PreparedEnterFarmResponse ||
-		field == PreparedSyncFarmResponse ||
-		field == PreparedCommandResponse
-}
-
-// MarshalCommandResponsePayload prepares the hot action response once in Farm.
-// Gateway embeds these bytes directly as WireEnvelope.command_response.
-func MarshalCommandResponsePayload(response *publicv3.CommandResponse) ([]byte, error) {
-	if response == nil {
-		return nil, fmt.Errorf("wireenv: nil command response")
-	}
-	return proto.Marshal(response)
 }
 
 func encodeProtoRecord(envelope Envelope, trusted bool) ([]byte, error) {
@@ -271,6 +200,133 @@ func DecodeBinaryBatch(data []byte) ([]Envelope, error) {
 		result = append(result, envelope)
 	}
 	return result, nil
+}
+
+// DecodeWireBatch decodes the public Protobuf frame without creating the
+// historical JSON-compatible Envelope adapter. Gateway uses this path so the
+// client payload stays strongly typed from ingress to the destination service.
+func DecodeWireBatch(data []byte) ([]*publicv3.WireEnvelope, error) {
+	var batch publicv3.WireBatch
+	if len(data) == 0 || proto.Unmarshal(data, &batch) != nil || len(batch.Envelopes) == 0 || len(batch.Envelopes) > MaxBatchEnvelopes {
+		return nil, fmt.Errorf("wireenv: invalid protobuf batch")
+	}
+	if len(batch.ProtoReflect().GetUnknown()) != 0 {
+		return nil, fmt.Errorf("wireenv: unknown protobuf batch field")
+	}
+	for index, envelope := range batch.Envelopes {
+		if err := validateWireEnvelope(envelope); err != nil {
+			return nil, fmt.Errorf("wireenv: protobuf batch item %d: %w", index, err)
+		}
+	}
+	return batch.Envelopes, nil
+}
+
+// EncodeWireBatch marshals complete typed public responses in one frame.
+func EncodeWireBatch(envelopes []*publicv3.WireEnvelope) ([]byte, error) {
+	return AppendWireBatch(nil, envelopes)
+}
+
+// AppendWireBatch appends canonical typed envelopes without crossing the
+// legacy JSON-compatible adapter.
+func AppendWireBatch(dst []byte, envelopes []*publicv3.WireEnvelope) ([]byte, error) {
+	if len(envelopes) == 0 || len(envelopes) > MaxBatchEnvelopes {
+		return nil, fmt.Errorf("wireenv: protobuf batch size must be 1..%d", MaxBatchEnvelopes)
+	}
+	for index, envelope := range envelopes {
+		if err := validateWireEnvelope(envelope); err != nil {
+			return nil, fmt.Errorf("wireenv: invalid protobuf envelope %d", index)
+		}
+		size := proto.Size(envelope)
+		dst = protowire.AppendTag(dst, 1, protowire.BytesType)
+		dst = protowire.AppendVarint(dst, uint64(size))
+		var err error
+		dst, err = proto.MarshalOptions{}.MarshalAppend(dst, envelope)
+		if err != nil {
+			return nil, fmt.Errorf("wireenv: marshal protobuf envelope %d: %w", index, err)
+		}
+	}
+	return dst, nil
+}
+
+// EncodeWireRecord creates one frame-ready repeated-field record for the push
+// coalescer. Records may be concatenated into a WireBatch without decoding.
+func EncodeWireRecord(envelope *publicv3.WireEnvelope) ([]byte, error) {
+	if err := validateWireEnvelope(envelope); err != nil {
+		return nil, err
+	}
+	size := proto.Size(envelope)
+	result := make([]byte, 0, size+protowire.SizeTag(1)+protowire.SizeVarint(uint64(size)))
+	result = protowire.AppendTag(result, 1, protowire.BytesType)
+	result = protowire.AppendVarint(result, uint64(size))
+	return proto.MarshalOptions{}.MarshalAppend(result, envelope)
+}
+
+func validateWireEnvelope(envelope *publicv3.WireEnvelope) error {
+	if envelope == nil || envelope.Err < 0 || len(envelope.ProtoReflect().GetUnknown()) != 0 || envelope.Payload == nil {
+		return fmt.Errorf("wireenv: invalid protobuf envelope")
+	}
+	switch payload := envelope.Payload.(type) {
+	case *publicv3.WireEnvelope_EnterFarmRequest:
+		if envelope.Cmd != commandEnterFarm || payload.EnterFarmRequest == nil ||
+			len(payload.EnterFarmRequest.ProtoReflect().GetUnknown()) != 0 {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_SyncFarmRequest:
+		if envelope.Cmd != commandSyncFarm || payload.SyncFarmRequest == nil ||
+			len(payload.SyncFarmRequest.ProtoReflect().GetUnknown()) != 0 {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_CommandRequest:
+		if err := ValidateCommandRequest(envelope.Cmd, payload.CommandRequest); err != nil {
+			return err
+		}
+	case *publicv3.WireEnvelope_EnterFarmResponse:
+		if envelope.Cmd != commandEnterFarm || payload.EnterFarmResponse == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_SyncFarmResponse:
+		if envelope.Cmd != commandSyncFarm || payload.SyncFarmResponse == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_CommandResponse:
+		if payload.CommandResponse == nil {
+			return fmt.Errorf("wireenv: missing command response")
+		}
+	case *publicv3.WireEnvelope_FarmDelta:
+		if envelope.Cmd != CommandFarmDelta || payload.FarmDelta == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_PlayerDelta:
+		if envelope.Cmd != CommandPlayerDelta || payload.PlayerDelta == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_MailNotify:
+		if envelope.Cmd != CommandMailNotify || payload.MailNotify == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_SessionKick:
+		if envelope.Cmd != CommandSessionKick || payload.SessionKick == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	case *publicv3.WireEnvelope_TaskNotify:
+		if envelope.Cmd != CommandTaskNotify || payload.TaskNotify == nil {
+			return fmt.Errorf("wireenv: payload/cmd mismatch")
+		}
+	default:
+		return fmt.Errorf("wireenv: missing protobuf payload")
+	}
+	return nil
+}
+
+// EnvelopeToProto converts the remaining in-process adapter to the canonical
+// public contract. New service boundaries should use WireEnvelope directly.
+func EnvelopeToProto(envelope Envelope) (*publicv3.WireEnvelope, error) {
+	return envelopeToProto(envelope, true)
+}
+
+// EnvelopeFromProto is kept as a narrow migration seam for internal handlers.
+func EnvelopeFromProto(envelope *publicv3.WireEnvelope) (Envelope, error) {
+	return envelopeFromProto(envelope)
 }
 
 func envelopeToProto(envelope Envelope, trusted bool) (*publicv3.WireEnvelope, error) {
@@ -525,6 +581,11 @@ func snapshotToProto(value farm.FarmSnapshotJSON) *publicv3.FarmSnapshot {
 	return result
 }
 
+// FarmSnapshotToProto converts the domain read model to its public contract.
+func FarmSnapshotToProto(value farm.FarmSnapshotJSON) *publicv3.FarmSnapshot {
+	return snapshotToProto(value)
+}
+
 func snapshotFromProto(value *publicv3.FarmSnapshot) farm.FarmSnapshotJSON {
 	if value == nil {
 		return farm.FarmSnapshotJSON{}
@@ -537,6 +598,11 @@ func snapshotFromProto(value *publicv3.FarmSnapshot) farm.FarmSnapshotJSON {
 		result.Plots = append(result.Plots, plotFromProto(plot))
 	}
 	return result
+}
+
+// FarmSnapshotFromProto converts the public snapshot to the domain read model.
+func FarmSnapshotFromProto(value *publicv3.FarmSnapshot) farm.FarmSnapshotJSON {
+	return snapshotFromProto(value)
 }
 
 func plotToProto(value farm.PlotSnapshot) *publicv3.PlotSnapshot {
@@ -573,118 +639,4 @@ func FarmDeltaFromProto(value *publicv3.FarmDelta) farm.FarmDelta {
 		result.GuardDog = &farm.GuardDogSnapshot{ActiveDog: farm.DogType(value.GuardDog.ActiveDog), BowlEmptyAt: value.GuardDog.BowlEmptyAt}
 	}
 	return result
-}
-
-// MarshalFarmSnapshotPayload caches the typed FarmSnapshot submessage at the
-// Actor version boundary. The returned bytes are immutable.
-func MarshalFarmSnapshotPayload(snapshot farm.FarmSnapshotJSON) ([]byte, error) {
-	return proto.Marshal(snapshotToProto(snapshot))
-}
-
-// MarshalEnterFarmResponsePayload embeds an already-marshaled snapshot without
-// decoding it. Gateway-owned fields are appended later.
-func MarshalEnterFarmResponsePayload(snapshot []byte, farmSeq uint64, serverTime int64, timeProfile string) ([]byte, error) {
-	if len(snapshot) == 0 {
-		return nil, fmt.Errorf("wireenv: invalid EnterFarm payload")
-	}
-	result := make([]byte, 0, len(snapshot)+len(timeProfile)+32)
-	result = protowire.AppendTag(result, 1, protowire.BytesType)
-	result = protowire.AppendBytes(result, snapshot)
-	result = protowire.AppendTag(result, 2, protowire.VarintType)
-	result = protowire.AppendVarint(result, farmSeq)
-	result = protowire.AppendTag(result, 3, protowire.VarintType)
-	result = protowire.AppendVarint(result, uint64(serverTime))
-	if timeProfile != "" {
-		result = protowire.AppendTag(result, 4, protowire.BytesType)
-		result = protowire.AppendString(result, timeProfile)
-	}
-	return result, nil
-}
-
-func MarshalSyncFarmCaughtUpPayload(farmSeq uint64, serverTime int64, timeProfile string, mutable bool) ([]byte, error) {
-	result := make([]byte, 0, len(timeProfile)+32)
-	result = protowire.AppendTag(result, 3, protowire.VarintType)
-	result = protowire.AppendVarint(result, farmSeq)
-	result = protowire.AppendTag(result, 4, protowire.VarintType)
-	result = protowire.AppendVarint(result, uint64(serverTime))
-	if timeProfile != "" {
-		result = protowire.AppendTag(result, 5, protowire.BytesType)
-		result = protowire.AppendString(result, timeProfile)
-	}
-	if mutable {
-		result = protowire.AppendTag(result, 6, protowire.VarintType)
-		result = protowire.AppendVarint(result, 1)
-	}
-	return result, nil
-}
-
-func MarshalSyncFarmSnapshotPayload(snapshot []byte, farmSeq uint64, serverTime int64, timeProfile string) ([]byte, error) {
-	if len(snapshot) == 0 {
-		return nil, fmt.Errorf("wireenv: invalid SyncFarm snapshot payload")
-	}
-	result := make([]byte, 0, len(snapshot)+len(timeProfile)+32)
-	result = protowire.AppendTag(result, 2, protowire.BytesType)
-	result = protowire.AppendBytes(result, snapshot)
-	result = protowire.AppendTag(result, 3, protowire.VarintType)
-	result = protowire.AppendVarint(result, farmSeq)
-	result = protowire.AppendTag(result, 4, protowire.VarintType)
-	result = protowire.AppendVarint(result, uint64(serverTime))
-	if timeProfile != "" {
-		result = protowire.AppendTag(result, 5, protowire.BytesType)
-		result = protowire.AppendString(result, timeProfile)
-	}
-	return result, nil
-}
-
-func AppendEnterFarmGatewayFields(payload []byte, mutable bool, relation string) ([]byte, error) {
-	if len(payload) == 0 || relation == "" {
-		return nil, fmt.Errorf("wireenv: invalid Gateway EnterFarm fields")
-	}
-	result := make([]byte, 0, len(payload)+len(relation)+8)
-	result = append(result, payload...)
-	if mutable {
-		result = protowire.AppendTag(result, 5, protowire.VarintType)
-		result = protowire.AppendVarint(result, 1)
-	}
-	result = protowire.AppendTag(result, 6, protowire.BytesType)
-	result = protowire.AppendString(result, relation)
-	return result, nil
-}
-
-// MarshalEnterFarmGatewaySuffix encodes only Gateway-owned fields. The suffix
-// is concatenated with Farm's immutable prepared payload while writing the
-// final frame, avoiding a full snapshot copy inside Gateway.
-func MarshalEnterFarmGatewaySuffix(mutable bool, relation string) ([]byte, error) {
-	if relation == "" {
-		return nil, fmt.Errorf("wireenv: invalid Gateway EnterFarm fields")
-	}
-	result := make([]byte, 0, len(relation)+8)
-	if mutable {
-		result = protowire.AppendTag(result, 5, protowire.VarintType)
-		result = protowire.AppendVarint(result, 1)
-	}
-	result = protowire.AppendTag(result, 6, protowire.BytesType)
-	result = protowire.AppendString(result, relation)
-	return result, nil
-}
-
-func AppendSyncFarmGatewayFields(payload []byte, mutable bool) ([]byte, error) {
-	if len(payload) == 0 {
-		return nil, fmt.Errorf("wireenv: invalid Gateway SyncFarm fields")
-	}
-	result := append([]byte(nil), payload...)
-	if mutable {
-		result = protowire.AppendTag(result, 6, protowire.VarintType)
-		result = protowire.AppendVarint(result, 1)
-	}
-	return result, nil
-}
-
-func MarshalSyncFarmGatewaySuffix(mutable bool) []byte {
-	if !mutable {
-		return nil
-	}
-	result := make([]byte, 0, 2)
-	result = protowire.AppendTag(result, 6, protowire.VarintType)
-	return protowire.AppendVarint(result, 1)
 }

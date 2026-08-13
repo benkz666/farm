@@ -222,35 +222,3 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 250m, memory: 256Mi}
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: event-redis-exporter
-  namespace: benkz
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: event-redis-exporter
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: event-redis-exporter
-        app.kubernetes.io/part-of: farm
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/path: /metrics
-        prometheus.io/port: "9121"
-    spec:
-      containers:
-        - name: exporter
-          image: oliver006/redis_exporter:v1.62.0
-          imagePullPolicy: IfNotPresent
-          env:
-            - {name: REDIS_ADDR, value: "redis://event-redis:6379"}
-          ports:
-            - {name: metrics, containerPort: 9121}
-          resources:
-            requests: {cpu: 50m, memory: 64Mi}
-            limits: {cpu: 250m, memory: 256Mi}

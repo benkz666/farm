@@ -2,243 +2,142 @@ package farmrpc
 
 import (
 	"context"
-	"io"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"farm/server/domain/farm"
-	"farm/server/farmsvr/room"
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
+	"farm/server/shared/presence"
+	"farm/server/shared/store"
 
 	"google.golang.org/grpc"
 )
 
-type delayedBatchCommandServer struct {
-	farmv1.UnimplementedFarmCommandServiceServer
-	streams atomic.Int64
+type sendFailingBatchStream struct {
+	grpc.ServerStream
+	context    context.Context
+	sendFailed chan struct{}
+	sendOnce   sync.Once
+	receives   atomic.Uint32
 }
 
-type selectiveBlockingRuntime struct {
-	slowUID     uint64
-	slowStarted chan struct{}
-	releaseSlow chan struct{}
+func (stream *sendFailingBatchStream) Context() context.Context { return stream.context }
+
+func (stream *sendFailingBatchStream) Send(*farmv1.StreamExecuteBatchResponse) error {
+	stream.sendOnce.Do(func() { close(stream.sendFailed) })
+	return errors.New("forced send failure")
 }
 
-func (runtime *selectiveBlockingRuntime) Do(uid uint64, fn func(*room.FarmActor) error) error {
-	if uid == runtime.slowUID {
-		close(runtime.slowStarted)
-		<-runtime.releaseSlow
+func (stream *sendFailingBatchStream) Recv() (*farmv1.StreamExecuteBatchRequest, error) {
+	call := stream.receives.Add(1)
+	if call == 1 {
+		return batchRequests(1, 1), nil
 	}
-	return fn(nil)
+	<-stream.sendFailed
+	return batchRequests(call*100, streamBatchMax), nil
 }
 
-func (server *delayedBatchCommandServer) ExecuteBatchStream(stream farmv1.FarmCommandService_ExecuteBatchStreamServer) error {
-	server.streams.Add(1)
-	for {
-		batch, err := stream.Recv()
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-		responses := make([]*farmv1.StreamExecuteResponse, 0, len(batch.Requests))
-		for _, request := range batch.Requests {
-			if request.Request.FarmUid == 1 {
-				time.Sleep(20 * time.Millisecond)
-			}
-			responses = append(responses, &farmv1.StreamExecuteResponse{RequestId: request.RequestId, Response: &farmv1.ExecuteResponse{Err: int32(errcode.Internal)}})
-		}
-		if err := stream.Send(&farmv1.StreamExecuteBatchResponse{Responses: responses}); err != nil {
-			return err
-		}
+func batchRequests(firstID uint32, count int) *farmv1.StreamExecuteBatchRequest {
+	requests := make([]*farmv1.StreamExecuteRequest, 0, count)
+	for index := 0; index < count; index++ {
+		requestID := uint64(firstID) + uint64(index)
+		requests = append(requests, &farmv1.StreamExecuteRequest{
+			RequestId: requestID,
+			Request:   typedRequest(64, 204, uint32(requestID)),
+		})
 	}
+	return &farmv1.StreamExecuteBatchRequest{Requests: requests}
 }
 
-type batchRecordingCommandServer struct {
-	farmv1.UnimplementedFarmCommandServiceServer
-	maxBatch atomic.Int64
+type commandExecutorFunc func(context.Context, *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse
+
+func (execute commandExecutorFunc) ExecuteClient(ctx context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+	return execute(ctx, request)
 }
 
-func (server *batchRecordingCommandServer) ExecuteBatchStream(stream farmv1.FarmCommandService_ExecuteBatchStreamServer) error {
-	for {
-		batch, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-		for {
-			current := server.maxBatch.Load()
-			if int64(len(batch.Requests)) <= current || server.maxBatch.CompareAndSwap(current, int64(len(batch.Requests))) {
-				break
-			}
-		}
-		responses := make([]*farmv1.StreamExecuteResponse, 0, len(batch.Requests))
-		for _, request := range batch.Requests {
-			responses = append(responses, &farmv1.StreamExecuteResponse{
-				RequestId: request.RequestId,
-				Response:  &farmv1.ExecuteResponse{Err: int32(errcode.Internal)},
-			})
-		}
-		if err := stream.Send(&farmv1.StreamExecuteBatchResponse{Responses: responses}); err != nil {
-			return err
-		}
+type taskAdvancingExecutor struct {
+	commandExecutorFunc
+	uid    uint64
+	taskID uint32
+	amount uint32
+}
+
+func (executor *taskAdvancingExecutor) AdvanceTask(_ context.Context, uid uint64, taskID, amount uint32) errcode.Code {
+	executor.uid, executor.taskID, executor.amount = uid, taskID, amount
+	return errcode.OK
+}
+
+func typedRequest(uid uint64, command, sequence uint32) *farmv1.ClientCommandRequest {
+	return &farmv1.ClientCommandRequest{
+		Uid: uid, RouteUid: uid,
+		Envelope: &publicv3.WireEnvelope{
+			Cmd: command, ClientSeq: sequence,
+			Payload: &publicv3.WireEnvelope_CommandRequest{CommandRequest: &publicv3.CommandRequest{}},
+		},
 	}
 }
 
-type stubPushServer struct {
-	farmv1.UnimplementedGatewayPushServiceServer
-	lastBatch *farmv1.PushFarmDeltaBatchRequest
+func typedResponse(request *farmv1.ClientCommandRequest, code errcode.Code) *farmv1.ClientCommandResponse {
+	return &farmv1.ClientCommandResponse{Envelope: errorEnvelope(request.Envelope.Cmd, request.Envelope.ClientSeq, code)}
 }
 
-func (stub *stubPushServer) PushFarmDeltaBatch(_ context.Context, request *farmv1.PushFarmDeltaBatchRequest) (*farmv1.Empty, error) {
-	stub.lastBatch = request
-	return &farmv1.Empty{}, nil
-}
-
-func newCommandTestClient(t *testing.T, handler *Handler, owns func(uint64) bool) *GRPCClient {
-	t.Helper()
+func TestCommandServerRejectsUnownedRoute(t *testing.T) {
 	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
-		RegisterCommandService(server, handler, owns)
+		RegisterCommandService(server, commandExecutorFunc(func(_ context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+			return typedResponse(request, errcode.OK)
+		}), func(uint64) bool { return false })
 	})
-	return NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"})
-}
-
-func TestGRPCClientExecute(t *testing.T) {
-	handler := NewHandler(
-		runtimeStub{actor: nil},
-		[]byte("internal-token"),
-		func(uint64) bool { return true },
-		func() int64 { return 123 },
-	)
-	client := newCommandTestClient(t, handler, func(uint64) bool { return true })
-	response, err := client.Execute(context.Background(), "farm-0", CommandRequest{
-		Operation: OperationEnterFarm,
-		FarmUID:   42,
-	})
+	conn, err := pair.Pool.Conn(t.Context(), "bufconn")
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
+	}
+	response, err := farmv1.NewFarmCommandServiceClient(conn).Execute(t.Context(), typedRequest(42, 212, 1))
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if response.Err != errcode.Internal {
-		t.Fatalf("response.Err = %d, want %d", response.Err, errcode.Internal)
+	if response.Envelope.GetErr() != int32(errcode.BadRequest) {
+		t.Fatalf("err=%d, want %d", response.Envelope.GetErr(), errcode.BadRequest)
 	}
 }
 
-func TestGRPCActionReturnsPreparedPublicProtobuf(t *testing.T) {
-	handler := NewHandler(
-		runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}},
-		[]byte("internal-token"),
-		func(uid uint64) bool { return uid == 42 },
-		func() int64 { return 123 },
-	)
-	client := newCommandTestClient(t, handler, func(uid uint64) bool { return uid == 42 })
-	response, err := client.Execute(t.Context(), "farm-0", CommandRequest{
-		Operation:     OperationPlotAction,
-		FarmUID:       42,
-		ClientCommand: 206,
-		ClientRequest: &publicv3.CommandRequest{PlotIndex: 0},
-	})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if response.Err != errcode.OK || response.PreparedField != clientwire.PreparedCommandResponse || len(response.PreparedPayload) == 0 {
-		t.Fatalf("response=%#v", response)
-	}
-	if response.ClientResponse != nil || len(response.Payload) != 0 {
-		t.Fatalf("prepared response carried duplicate representations: %#v", response)
-	}
-	frame, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{{
-		Cmd:             206,
-		ClientSeq:       9,
-		PreparedPayload: response.PreparedPayload,
-		PreparedField:   response.PreparedField,
-	}})
-	if err != nil {
-		t.Fatalf("encode public frame: %v", err)
-	}
-	decoded, err := clientwire.DecodeBinaryBatch(frame)
-	if err != nil || len(decoded) != 1 || decoded[0].CommandResponse == nil || decoded[0].CommandResponse.Action == nil {
-		t.Fatalf("decoded=%#v err=%v", decoded, err)
-	}
-}
-
-func TestGRPCClientExecuteStreamMultiplexesConcurrentCommands(t *testing.T) {
-	handler := NewHandler(
-		runtimeStub{actor: nil},
-		[]byte("internal-token"),
-		func(uint64) bool { return true },
-		func() int64 { return 123 },
-	)
-	client := newCommandTestClient(t, handler, func(uint64) bool { return true })
-
-	const requests = 256
-	errors := make(chan error, requests)
-	var wait sync.WaitGroup
-	for index := range requests {
-		wait.Add(1)
-		go func(index int) {
-			defer wait.Done()
-			response, err := client.Execute(context.Background(), "farm-0", CommandRequest{
-				Operation: OperationEnterFarm,
-				FarmUID:   uint64(index%32 + 1),
-			})
-			if err != nil {
-				errors <- err
-				return
-			}
-			if response.Err != errcode.Internal {
-				errors <- &unexpectedCodeError{got: response.Err, want: errcode.Internal}
-			}
-		}(index)
-	}
-	wait.Wait()
-	close(errors)
-	for err := range errors {
-		t.Fatalf("concurrent Execute: %v", err)
-	}
-}
-
-func TestGRPCClientCoalescesConcurrentCommandsIntoBatches(t *testing.T) {
-	serverStub := &batchRecordingCommandServer{}
+func TestCommandServerRoutesTypedTaskAdvancement(t *testing.T) {
+	executor := &taskAdvancingExecutor{commandExecutorFunc: func(_ context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+		return typedResponse(request, errcode.OK)
+	}}
 	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
-		farmv1.RegisterFarmCommandServiceServer(server, serverStub)
+		RegisterCommandService(server, executor, func(uid uint64) bool { return uid == 42 })
 	})
-	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"})
-	const requests = 128
-	start := make(chan struct{})
-	var wait sync.WaitGroup
-	for index := range requests {
-		wait.Add(1)
-		go func(index int) {
-			defer wait.Done()
-			<-start
-			_, _ = client.Execute(t.Context(), "farm-0", CommandRequest{
-				Operation: OperationEnterFarm,
-				FarmUID:   uint64(index + 1),
-			})
-		}(index)
+	conn, err := pair.Pool.Conn(t.Context(), "bufconn")
+	if err != nil {
+		t.Fatalf("Conn: %v", err)
 	}
-	close(start)
-	wait.Wait()
-	if serverStub.maxBatch.Load() <= 1 {
-		t.Fatalf("maximum batch=%d, want >1", serverStub.maxBatch.Load())
+	response, err := farmv1.NewFarmCommandServiceClient(conn).AdvanceTask(t.Context(), &farmv1.AdvanceTaskRequest{
+		Uid: 42, TaskId: 3, Amount: 1,
+	})
+	if err != nil || response.GetErr() != int32(errcode.OK) || executor.uid != 42 || executor.taskID != 3 || executor.amount != 1 {
+		t.Fatalf("response=%v task=(%d,%d,%d) err=%v", response, executor.uid, executor.taskID, executor.amount, err)
 	}
 }
 
-func TestExecuteBatchStreamDoesNotHoldFastResponseBehindSlowPeer(t *testing.T) {
-	runtime := &selectiveBlockingRuntime{
-		slowUID:     1,
-		slowStarted: make(chan struct{}),
-		releaseSlow: make(chan struct{}),
-	}
-	handler := NewHandler(runtime, []byte("internal-token"), func(uint64) bool { return true }, nil)
+func TestBatchStreamReturnsFastFarmBeforeBlockedFarm(t *testing.T) {
+	slowStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
+	executor := commandExecutorFunc(func(_ context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+		if request.RouteUid == 1 {
+			close(slowStarted)
+			<-releaseSlow
+		}
+		return typedResponse(request, errcode.OK)
+	})
 	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
-		RegisterCommandService(server, handler, func(uint64) bool { return true })
+		RegisterCommandService(server, executor, func(uint64) bool { return true })
 	})
 	conn, err := pair.Pool.Conn(t.Context(), "bufconn")
 	if err != nil {
@@ -249,154 +148,112 @@ func TestExecuteBatchStreamDoesNotHoldFastResponseBehindSlowPeer(t *testing.T) {
 		t.Fatalf("open stream: %v", err)
 	}
 	if err := stream.Send(&farmv1.StreamExecuteBatchRequest{Requests: []*farmv1.StreamExecuteRequest{
-		{RequestId: 1, Request: &farmv1.ExecuteRequest{Operation: farmv1.Operation_OPERATION_ENTER_FARM, FarmUid: 1}},
-		{RequestId: 2, Request: &farmv1.ExecuteRequest{Operation: farmv1.Operation_OPERATION_ENTER_FARM, FarmUid: 2}},
+		{RequestId: 1, Request: typedRequest(1, 204, 1)},
+		{RequestId: 2, Request: typedRequest(2, 204, 2)},
 	}}); err != nil {
 		t.Fatalf("send batch: %v", err)
 	}
 	select {
-	case <-runtime.slowStarted:
+	case <-slowStarted:
 	case <-time.After(time.Second):
 		t.Fatal("slow request did not start")
 	}
-
-	firstResult := make(chan *farmv1.StreamExecuteBatchResponse, 1)
-	firstErr := make(chan error, 1)
-	go func() {
-		response, receiveErr := stream.Recv()
-		if receiveErr != nil {
-			firstErr <- receiveErr
-			return
-		}
-		firstResult <- response
-	}()
-	select {
-	case response := <-firstResult:
-		if len(response.Responses) != 1 || response.Responses[0].RequestId != 2 {
-			t.Fatalf("first response = %#v, want only fast request 2", response.Responses)
-		}
-	case err := <-firstErr:
-		t.Fatalf("receive fast response: %v", err)
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("fast response waited for blocked peer")
+	first, err := stream.Recv()
+	if err != nil || len(first.Responses) != 1 || first.Responses[0].RequestId != 2 {
+		t.Fatalf("first response=%v err=%v", first, err)
 	}
-
-	close(runtime.releaseSlow)
+	close(releaseSlow)
 	second, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("receive slow response: %v", err)
+	if err != nil || len(second.Responses) != 1 || second.Responses[0].RequestId != 1 {
+		t.Fatalf("second response=%v err=%v", second, err)
 	}
-	if len(second.Responses) != 1 || second.Responses[0].RequestId != 1 {
-		t.Fatalf("second response = %#v, want slow request 1", second.Responses)
-	}
-	if err := stream.CloseSend(); err != nil {
-		t.Fatalf("close send: %v", err)
-	}
+	_ = stream.CloseSend()
 }
 
-func TestGRPCClientCallerTimeoutDoesNotTearDownSharedStream(t *testing.T) {
-	serverStub := &delayedBatchCommandServer{}
-	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
-		farmv1.RegisterFarmCommandServiceServer(server, serverStub)
+func TestBatchStreamReturnsAfterSenderFailure(t *testing.T) {
+	release := make(chan struct{})
+	var executions atomic.Uint32
+	executor := commandExecutorFunc(func(_ context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+		if executions.Add(1) > 1 {
+			<-release
+		}
+		return typedResponse(request, errcode.OK)
 	})
-	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"})
-	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
-	defer cancel()
-	if _, err := client.Execute(ctx, "farm-0", CommandRequest{Operation: OperationEnterFarm, FarmUID: 1}); err == nil {
-		t.Fatal("timed request unexpectedly succeeded")
+	stream := &sendFailingBatchStream{
+		context: context.Background(), sendFailed: make(chan struct{}),
 	}
-	time.Sleep(25 * time.Millisecond) // let the abandoned response reclaim its slot
-	if _, err := client.Execute(t.Context(), "farm-0", CommandRequest{Operation: OperationEnterFarm, FarmUID: 2}); err != nil {
-		t.Fatalf("healthy request after caller timeout: %v", err)
+	completed := make(chan error, 1)
+	go func() {
+		completed <- NewCommandServer(executor, func(uint64) bool { return true }).ExecuteBatchStream(stream)
+	}()
+
+	select {
+	case <-stream.sendFailed:
+	case <-time.After(time.Second):
+		t.Fatal("batch sender did not fail")
 	}
-	if got := serverStub.streams.Load(); got != 1 {
-		t.Fatalf("stream count = %d, want 1", got)
+	// Let the receive loop reach the closed-done branch while the routed worker
+	// queue is full, then release the workers so shutdown can complete.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+
+	select {
+	case err := <-completed:
+		if err == nil || err.Error() != "forced send failure" {
+			t.Fatalf("ExecuteBatchStream error=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ExecuteBatchStream blocked after sender failure")
 	}
 }
 
-type unexpectedCodeError struct {
-	got  errcode.Code
-	want errcode.Code
+type stubPushServer struct {
+	farmv1.UnimplementedGatewayPushServiceServer
+	lastBatch *farmv1.PushFarmDeltaBatchRequest
+	lastPush  *farmv1.DeliverPushRequest
 }
 
-func (err *unexpectedCodeError) Error() string {
-	return "unexpected response code"
+func (stub *stubPushServer) PushFarmDeltaBatch(_ context.Context, request *farmv1.PushFarmDeltaBatchRequest) (*farmv1.Empty, error) {
+	stub.lastBatch = request
+	return &farmv1.Empty{}, nil
 }
 
-func TestGRPCDeltaPusherDeliverBatch(t *testing.T) {
+func (stub *stubPushServer) DeliverPush(_ context.Context, request *farmv1.DeliverPushRequest) (*farmv1.Empty, error) {
+	stub.lastPush = request
+	return &farmv1.Empty{}, nil
+}
+
+func TestGRPCDeltaPusherDeliversTypedBatch(t *testing.T) {
 	stub := &stubPushServer{}
 	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
 		farmv1.RegisterGatewayPushServiceServer(server, stub)
 	})
 	pusher := NewGRPCDeltaPusher(NewGatewayPushClient(pair.Pool, map[string]string{"gateway-0": "bufconn"}))
-	if err := pusher.PushBatch(context.Background(), "gateway-0", PushBatch{
-		ConnIDs: []uint64{7, 8},
-		Delta: clientwire.FarmDeltaToProto(farm.FarmDelta{
-			OwnerUID: 42,
-			FarmSeq:  1,
-		}),
+	if err := pusher.PushBatch(t.Context(), "gateway-0", PushBatch{
+		ConnIDs: []uint64{7, 8}, Delta: clientwire.FarmDeltaToProto(farm.FarmDelta{OwnerUID: 42, FarmSeq: 1}),
 	}); err != nil {
 		t.Fatalf("PushBatch: %v", err)
 	}
-	if stub.lastBatch == nil || len(stub.lastBatch.ConnIds) != 2 {
-		t.Fatalf("batch = %#v", stub.lastBatch)
+	if stub.lastBatch == nil || len(stub.lastBatch.ConnIds) != 2 || stub.lastBatch.Delta.GetFarmSeq() != 1 {
+		t.Fatalf("batch=%v", stub.lastBatch)
 	}
 }
 
-func TestGatewayPushClientResolvesAndCachesDynamicTarget(t *testing.T) {
-	resolver := &recordingGatewayTargetResolver{target: "dynamic:9202"}
-	client := NewResolvingGatewayPushClient(nil, nil, resolver)
-	client.pool = &grpcx.Pool{}
-	client.now = func() time.Time { return time.Unix(100, 0) }
-
-	first, err := client.target(t.Context(), "gateway-pod")
-	if err != nil || first != "dynamic:9202" {
-		t.Fatalf("first target = %q, %v", first, err)
-	}
-	resolver.target = "changed:9202"
-	second, err := client.target(t.Context(), "gateway-pod")
-	if err != nil || second != "dynamic:9202" {
-		t.Fatalf("cached target = %q, %v", second, err)
-	}
-	if resolver.calls != 1 {
-		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
-	}
-}
-
-func TestGatewayPushClientPrefersStaticTarget(t *testing.T) {
-	resolver := &recordingGatewayTargetResolver{target: "dynamic:9202"}
-	client := NewResolvingGatewayPushClient(nil, map[string]string{"gateway-0": "static:9202"}, resolver)
-	target, err := client.target(t.Context(), "gateway-0")
-	if err != nil || target != "static:9202" {
-		t.Fatalf("target = %q, %v", target, err)
-	}
-	if resolver.calls != 0 {
-		t.Fatalf("resolver calls = %d, want 0", resolver.calls)
-	}
-}
-
-type recordingGatewayTargetResolver struct {
-	target string
-	err    error
-	calls  int
-}
-
-func (resolver *recordingGatewayTargetResolver) ResolveGateway(context.Context, string) (string, error) {
-	resolver.calls++
-	return resolver.target, resolver.err
-}
-
-func TestCommandServerRejectsUnownedFarm(t *testing.T) {
-	handler := NewHandler(runtimeStub{}, []byte("internal-token"), func(uint64) bool { return false }, nil)
-	client := newCommandTestClient(t, handler, func(uint64) bool { return false })
-	response, err := client.Execute(context.Background(), "farm-0", CommandRequest{
-		Operation: OperationEnterFarm,
-		FarmUID:   42,
+func TestGRPCTaskNotifyPusherBuildsPublicEnvelope(t *testing.T) {
+	stub := &stubPushServer{}
+	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
+		farmv1.RegisterGatewayPushServiceServer(server, stub)
 	})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	client := NewGatewayPushClient(pair.Pool, map[string]string{"gateway-0": "bufconn"})
+	pusher := NewGRPCTaskNotifyPusher(client)
+	if err := pusher.PushTaskNotify(t.Context(), presence.ConnRef{GatewayID: "gateway-0", ConnID: 7}, 42, store.Task{
+		ID: 1, Progress: 2, Target: 3,
+	}); err != nil {
+		t.Fatalf("PushTaskNotify: %v", err)
 	}
-	if response.Err != errcode.BadRequest {
-		t.Fatalf("err = %d, want %d", response.Err, errcode.BadRequest)
+	if stub.lastPush == nil || stub.lastPush.ConnectionId != 7 || stub.lastPush.Uid != 42 ||
+		stub.lastPush.Envelope.GetCmd() != clientwire.CommandTaskNotify ||
+		stub.lastPush.Envelope.GetTaskNotify().GetProgress() != 2 {
+		t.Fatalf("push=%v", stub.lastPush)
 	}
 }

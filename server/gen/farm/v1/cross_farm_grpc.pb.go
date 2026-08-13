@@ -31,8 +31,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// CrossFarmService routes owner adjudication and visitor settlement across Farm
-// instances. Gateway may call Apply directly; owner outbox may call Deliver.
+// CrossFarmService routes owner adjudication and visitor settlement exclusively
+// between Farm instances. Gateway never participates in this Saga.
 type CrossFarmServiceClient interface {
 	ReserveCrossAction(ctx context.Context, in *ReserveCrossActionRequest, opts ...grpc.CallOption) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(ctx context.Context, in *ApplyCrossActionRequest, opts ...grpc.CallOption) (*ApplyCrossActionResponse, error)
@@ -40,7 +40,8 @@ type CrossFarmServiceClient interface {
 	// runtimes append visitor and owner final mutations as one composite commit.
 	ExecuteCrossAction(ctx context.Context, in *ExecuteCrossActionRequest, opts ...grpc.CallOption) (*ExecuteCrossActionResponse, error)
 	DeliverCrossResult(ctx context.Context, in *DeliverCrossResultRequest, opts ...grpc.CallOption) (*DeliverCrossResultResponse, error)
-	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
+	// The coordinating Farm calls after visitor durable settlement to suppress
+	// redundant outbox delivery.
 	AcknowledgeCrossResult(ctx context.Context, in *AcknowledgeCrossResultRequest, opts ...grpc.CallOption) (*Empty, error)
 	// Hot-path equivalent that amortizes gRPC and Redis round trips.
 	AcknowledgeCrossResults(ctx context.Context, in *AcknowledgeCrossResultsRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -118,8 +119,8 @@ func (c *crossFarmServiceClient) AcknowledgeCrossResults(ctx context.Context, in
 // All implementations must embed UnimplementedCrossFarmServiceServer
 // for forward compatibility.
 //
-// CrossFarmService routes owner adjudication and visitor settlement across Farm
-// instances. Gateway may call Apply directly; owner outbox may call Deliver.
+// CrossFarmService routes owner adjudication and visitor settlement exclusively
+// between Farm instances. Gateway never participates in this Saga.
 type CrossFarmServiceServer interface {
 	ReserveCrossAction(context.Context, *ReserveCrossActionRequest) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(context.Context, *ApplyCrossActionRequest) (*ApplyCrossActionResponse, error)
@@ -127,7 +128,8 @@ type CrossFarmServiceServer interface {
 	// runtimes append visitor and owner final mutations as one composite commit.
 	ExecuteCrossAction(context.Context, *ExecuteCrossActionRequest) (*ExecuteCrossActionResponse, error)
 	DeliverCrossResult(context.Context, *DeliverCrossResultRequest) (*DeliverCrossResultResponse, error)
-	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
+	// The coordinating Farm calls after visitor durable settlement to suppress
+	// redundant outbox delivery.
 	AcknowledgeCrossResult(context.Context, *AcknowledgeCrossResultRequest) (*Empty, error)
 	// Hot-path equivalent that amortizes gRPC and Redis round trips.
 	AcknowledgeCrossResults(context.Context, *AcknowledgeCrossResultsRequest) (*Empty, error)

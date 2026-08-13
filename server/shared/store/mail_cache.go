@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/telemetry"
 
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -38,8 +40,7 @@ type mailboxCacheState struct {
 }
 
 type mailboxCache struct {
-	local   boundedTTLCache[uint64, []Mail]
-	encoded boundedTTLCache[uint64, []byte]
+	local boundedTTLCache[uint64, []Mail]
 
 	flightMu sync.Mutex
 	flights  map[uint64]*mailboxCall
@@ -83,7 +84,6 @@ func (s *Store) deleteLocalMailbox(uid uint64) {
 	state.mu.Lock()
 	state.version++
 	s.mailbox.local.delete(uid)
-	s.mailbox.encoded.delete(uid)
 	state.mu.Unlock()
 }
 
@@ -210,10 +210,14 @@ func (s *Store) invalidateMailboxAfterCommit(uid uint64) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err := s.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	invalidation, err := proto.Marshal(&farmv1.MailboxCacheInvalidation{Uid: uid})
+	if err != nil {
+		return
+	}
+	_, err = s.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Incr(ctx, mailRedisVersionKey(uid))
 		pipe.Expire(ctx, mailRedisVersionKey(uid), mailRedisVersionTTL)
-		pipe.Publish(ctx, mailInvalidationChannel, strconv.FormatUint(uid, 10))
+		pipe.Publish(ctx, mailInvalidationChannel, invalidation)
 		return nil
 	})
 	if err != nil {
@@ -273,9 +277,9 @@ func (s *Store) runMailboxInvalidations(ctx context.Context) {
 					}
 					goto reconnect
 				}
-				uid, err := strconv.ParseUint(message.Payload, 10, 64)
-				if err == nil && uid != 0 {
-					s.deleteLocalMailbox(uid)
+				invalidation := new(farmv1.MailboxCacheInvalidation)
+				if proto.Unmarshal([]byte(message.Payload), invalidation) == nil && invalidation.Uid != 0 {
+					s.deleteLocalMailbox(invalidation.Uid)
 				}
 			}
 		}

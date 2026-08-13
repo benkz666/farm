@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
+	"farm/server/shared/presence"
 	"farm/server/shared/store"
 )
 

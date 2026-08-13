@@ -9,11 +9,11 @@ import (
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 	"farm/server/shared/outbox"
+	"farm/server/shared/presence"
 	"farm/server/shared/sharding"
 	"farm/server/shared/store"
 

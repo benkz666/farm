@@ -525,6 +525,54 @@ func NewActionCommandResponse(farmSeq uint64, patch farm.PatchJSON, rewards []fa
 	return &publicv3.CommandResponse{Action: actionResponseToProto(actionResponseJSON{FarmSeq: clientjson.Uint64(farmSeq), Patch: patch, CodexRewards: rewards})}
 }
 
+// NewPetCommandResponse maps Farm's domain status directly to the public
+// Protobuf contract without an intermediate JSON representation.
+func NewPetCommandResponse(status farm.PetStatus) *publicv3.CommandResponse {
+	return &publicv3.CommandResponse{PetStatus: petStatusToProto(status)}
+}
+
+// NewTaskListCommandResponse builds the typed task list response.
+func NewTaskListCommandResponse(tasks []store.Task, resetAt int64) *publicv3.CommandResponse {
+	response := &publicv3.CommandResponse{ResetAt: resetAt, Tasks: make([]*publicv3.Task, 0, len(tasks))}
+	for _, task := range tasks {
+		response.Tasks = append(response.Tasks, taskToProto(task))
+	}
+	return response
+}
+
+// NewTaskRewardCommandResponse builds a typed task or daily-login reward.
+func NewTaskRewardCommandResponse(reward store.TaskReward) *publicv3.CommandResponse {
+	return &publicv3.CommandResponse{TaskReward: &publicv3.TaskReward{Coin: reward.Coin, Exp: reward.Exp}}
+}
+
+// NewMailListCommandResponse builds the typed mailbox response.
+func NewMailListCommandResponse(mails []store.Mail) *publicv3.CommandResponse {
+	response := &publicv3.CommandResponse{Mails: make([]*publicv3.Mail, 0, len(mails))}
+	for _, mail := range mails {
+		response.Mails = append(response.Mails, mailToProto(mail))
+	}
+	return response
+}
+
+// NewMailMutationCommandResponse reports a typed read/delete count.
+func NewMailMutationCommandResponse(affected int64) *publicv3.CommandResponse {
+	return &publicv3.CommandResponse{Affected: affected}
+}
+
+// NewMailClaimCommandResponse builds the typed claimed-mail response.
+func NewMailClaimCommandResponse(mail store.Mail) *publicv3.CommandResponse {
+	return &publicv3.CommandResponse{Mail: mailToProto(mail)}
+}
+
+// NewCodexListCommandResponse builds the typed codex list response.
+func NewCodexListCommandResponse(entries []farm.CodexProgress, total uint32) *publicv3.CommandResponse {
+	response := &publicv3.CommandResponse{CodexTotal: total, CodexEntries: make([]*publicv3.CodexProgress, 0, len(entries))}
+	for _, entry := range entries {
+		response.CodexEntries = append(response.CodexEntries, codexProgressToProto(entry))
+	}
+	return response
+}
+
 func codexProgressToProto(value farm.CodexProgress) *publicv3.CodexProgress {
 	return &publicv3.CodexProgress{CropId: uint32(value.CropID), HarvestCount: value.HarvestCount, Tier: value.Tier, NextTarget: value.NextTarget}
 }

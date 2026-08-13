@@ -2,9 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
+	"time"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/errcode"
 	"farm/server/shared/rpcerr"
 	"farm/server/shared/store"
 
@@ -69,21 +74,322 @@ func (hub *invalidationHub) broadcast(uid, peerUID uint64) {
 // GRPCServer implements SocialService over the local FriendStore.
 type GRPCServer struct {
 	farmv1.UnimplementedSocialServiceServer
-	store store.FriendStore
-	hub   *invalidationHub
+	store        store.FriendStore
+	stealHints   store.StealHintStore
+	inviteSecret []byte
+	now          func() int64
+	notifier     SocialNotifier
+	revoker      FarmAccessRevoker
+	hub          *invalidationHub
 }
 
-// NewGRPCServer constructs the typed Social gRPC adapter.
-func NewGRPCServer(friendStore store.FriendStore) *GRPCServer {
-	return &GRPCServer{store: friendStore, hub: newInvalidationHub()}
+// SocialNotifier emits advisory refresh hints after social mutations.
+type SocialNotifier interface {
+	PublishMailNotify(context.Context, uint64, string) error
+}
+
+// FarmAccessRevoker removes stale friend-room subscriptions after an unfriend.
+type FarmAccessRevoker interface {
+	RevokeFarmAccess(context.Context, uint64, uint64) error
+}
+
+type ServerOption func(*GRPCServer)
+
+func WithStealHints(hints store.StealHintStore) ServerOption {
+	return func(server *GRPCServer) { server.stealHints = hints }
+}
+
+func WithInviteSecret(secret []byte) ServerOption {
+	copyOfSecret := append([]byte(nil), secret...)
+	return func(server *GRPCServer) { server.inviteSecret = copyOfSecret }
+}
+
+func WithSocialNotifier(notifier SocialNotifier) ServerOption {
+	return func(server *GRPCServer) { server.notifier = notifier }
+}
+
+func WithFarmAccessRevoker(revoker FarmAccessRevoker) ServerOption {
+	return func(server *GRPCServer) { server.revoker = revoker }
+}
+
+func WithClock(now func() int64) ServerOption {
+	return func(server *GRPCServer) {
+		if now != nil {
+			server.now = now
+		}
+	}
+}
+
+// NewGRPCServer constructs Social's typed application boundary.
+func NewGRPCServer(friendStore store.FriendStore, options ...ServerOption) *GRPCServer {
+	server := &GRPCServer{
+		store: friendStore, hub: newInvalidationHub(),
+		now: func() int64 { return time.Now().UnixMilli() },
+	}
+	for _, option := range options {
+		if option != nil {
+			option(server)
+		}
+	}
+	return server
 }
 
 // RegisterGRPC registers SocialService on a gRPC server and returns the adapter
 // so the process can attach its distributed invalidation subscriber.
-func RegisterGRPC(server *grpc.Server, friendStore store.FriendStore) *GRPCServer {
-	adapter := NewGRPCServer(friendStore)
+func RegisterGRPC(server *grpc.Server, friendStore store.FriendStore, options ...ServerOption) *GRPCServer {
+	adapter := NewGRPCServer(friendStore, options...)
 	farmv1.RegisterSocialServiceServer(server, adapter)
 	return adapter
+}
+
+// ExecuteClientCommand owns every public social command. Gateway contributes
+// only authenticated transport metadata and never reads or mutates social data.
+func (server *GRPCServer) ExecuteClientCommand(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	if server == nil || server.store == nil || request == nil || request.Uid == 0 || request.Envelope == nil {
+		return socialError(request, errcode.BadRequest), nil
+	}
+	envelope := request.Envelope
+	payload := envelope.GetCommandRequest()
+	if payload == nil {
+		return socialError(request, errcode.BadRequest), nil
+	}
+	response := &publicv3.CommandResponse{}
+	code := errcode.OK
+
+	switch envelope.Cmd {
+	case 400: // FriendList
+		rows, err := server.store.ListFriends(ctx, request.Uid)
+		if err != nil {
+			code = errcode.Internal
+			break
+		}
+		uids := make([]uint64, 0, len(rows))
+		for _, row := range rows {
+			uids = append(uids, row.UID)
+		}
+		hints := map[uint64]bool{}
+		if server.stealHints != nil && len(uids) != 0 {
+			hints, err = server.stealHints.GetStealHints(ctx, uids)
+			if err != nil {
+				code = errcode.Internal
+				break
+			}
+		}
+		response.Friends = make([]*publicv3.Friend, 0, len(rows))
+		for _, row := range rows {
+			response.Friends = append(response.Friends, &publicv3.Friend{
+				Uid: row.UID, Nickname: row.Nickname, HasStealable: hints[row.UID],
+			})
+		}
+	case 402: // GenShareLink
+		if len(server.inviteSecret) == 0 {
+			code = errcode.Internal
+			break
+		}
+		token, err := IssueInvite(request.Uid, server.now(), server.inviteSecret)
+		if err != nil {
+			code = errcode.Internal
+			break
+		}
+		response.Path = "/i/" + token
+	case 404: // AcceptInvite
+		if payload.InviteToken == "" || len(server.inviteSecret) == 0 {
+			code = errcode.BadRequest
+			break
+		}
+		peerUID, parsed := ParseInvite(payload.InviteToken, server.inviteSecret, server.now())
+		if parsed != errcode.OK {
+			code = parsed
+			break
+		}
+		code = server.addFriends(ctx, request.Uid, peerUID)
+		if code == errcode.OK {
+			server.notify(peerUID, "friend_accept")
+		}
+	case 406: // RemoveFriend
+		peerUID := payload.PeerUid
+		if peerUID == 0 {
+			code = errcode.BadRequest
+			break
+		}
+		if peerUID == request.Uid {
+			code = errcode.CannotFriendSelf
+			break
+		}
+		if err := server.store.RemoveFriends(ctx, request.Uid, peerUID); err != nil {
+			code = errcode.Internal
+			break
+		}
+		server.hub.broadcast(request.Uid, peerUID)
+		if server.revoker != nil {
+			_ = server.revoker.RevokeFarmAccess(context.Background(), request.Uid, peerUID)
+			_ = server.revoker.RevokeFarmAccess(context.Background(), peerUID, request.Uid)
+		}
+	case 408: // AddFriendByUID
+		code = server.addFriends(ctx, request.Uid, payload.PeerUid)
+		if code == errcode.OK {
+			server.notify(payload.PeerUid, "friend_accept")
+		}
+	case 410: // SearchUser
+		username := strings.TrimSpace(payload.Username)
+		if username == "" {
+			code = errcode.BadRequest
+			break
+		}
+		row, err := server.store.FindUserByUsername(ctx, username)
+		if err != nil {
+			if errors.Is(err, store.ErrAccountNotFound) {
+				code = errcode.UserNotFound
+			} else {
+				code = errcode.Internal
+			}
+			break
+		}
+		response.Users = []*publicv3.User{{Uid: row.UID, Nickname: row.Nickname}}
+	case 412: // RequestFriend
+		code = server.createFriendRequest(ctx, request.Uid, payload.PeerUid)
+		if code == errcode.OK {
+			server.notify(payload.PeerUid, "friend_request")
+		}
+	case 414: // ListFriendRequests
+		rows, err := server.store.ListIncomingFriendRequests(ctx, request.Uid)
+		if err != nil {
+			code = errcode.Internal
+			break
+		}
+		response.FriendRequests = make([]*publicv3.FriendRequest, 0, len(rows))
+		for _, row := range rows {
+			response.FriendRequests = append(response.FriendRequests, &publicv3.FriendRequest{
+				FromUid: row.FromUID, Nickname: row.Nickname, CreatedAt: row.CreatedAt,
+			})
+		}
+	case 416: // AcceptFriendRequest
+		code = server.acceptFriendRequest(ctx, request.Uid, payload.FromUid)
+		if code == errcode.OK {
+			server.notify(payload.FromUid, "friend_accept")
+		}
+	case 418: // RejectFriendRequest
+		if payload.FromUid == 0 {
+			code = errcode.BadRequest
+			break
+		}
+		if err := server.store.RejectFriendRequest(ctx, request.Uid, payload.FromUid); err != nil {
+			if errors.Is(err, store.ErrFriendRequestNotFound) {
+				code = errcode.FriendRequestNotFound
+			} else {
+				code = errcode.Internal
+			}
+			break
+		}
+		server.notify(payload.FromUid, "friend_reject")
+	default:
+		code = errcode.BadRequest
+	}
+
+	return &farmv1.ClientCommandResponse{Envelope: socialResponse(envelope, code, response)}, nil
+}
+
+func socialError(request *farmv1.ClientCommandRequest, code errcode.Code) *farmv1.ClientCommandResponse {
+	var envelope *publicv3.WireEnvelope
+	if request != nil {
+		envelope = request.Envelope
+	}
+	return &farmv1.ClientCommandResponse{Envelope: socialResponse(envelope, code, &publicv3.CommandResponse{})}
+}
+
+func socialResponse(request *publicv3.WireEnvelope, code errcode.Code, response *publicv3.CommandResponse) *publicv3.WireEnvelope {
+	var command, sequence uint32
+	if request != nil {
+		command, sequence = request.Cmd, request.ClientSeq
+	}
+	return &publicv3.WireEnvelope{
+		Cmd: command, ClientSeq: sequence, Err: int32(code),
+		Payload: &publicv3.WireEnvelope_CommandResponse{CommandResponse: response},
+	}
+}
+
+func (server *GRPCServer) notify(uid uint64, kind string) {
+	if server.notifier != nil && uid != 0 {
+		_ = server.notifier.PublishMailNotify(context.Background(), uid, kind)
+	}
+}
+
+func (server *GRPCServer) addFriends(ctx context.Context, uid, peerUID uint64) errcode.Code {
+	if uid == 0 || peerUID == 0 {
+		return errcode.BadRequest
+	}
+	if uid == peerUID {
+		return errcode.CannotFriendSelf
+	}
+	if err := server.store.AddFriends(ctx, uid, peerUID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrAlreadyFriend):
+			return errcode.AlreadyFriend
+		case errors.Is(err, store.ErrFriendLimitSelf):
+			return errcode.FriendLimitSelf
+		case errors.Is(err, store.ErrFriendLimitPeer):
+			return errcode.FriendLimitPeer
+		case errors.Is(err, store.ErrPlayerNotFound), errors.Is(err, store.ErrAccountNotFound):
+			return errcode.UserNotFound
+		default:
+			return errcode.Internal
+		}
+	}
+	server.hub.broadcast(uid, peerUID)
+	return errcode.OK
+}
+
+func (server *GRPCServer) createFriendRequest(ctx context.Context, uid, peerUID uint64) errcode.Code {
+	if uid == 0 || peerUID == 0 {
+		return errcode.BadRequest
+	}
+	if uid == peerUID {
+		return errcode.CannotFriendSelf
+	}
+	if err := server.store.CreateFriendRequest(ctx, uid, peerUID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrAlreadyFriend):
+			return errcode.AlreadyFriend
+		case errors.Is(err, store.ErrFriendRequestPending):
+			return errcode.FriendRequestPending
+		case errors.Is(err, store.ErrCannotFriendSelf):
+			return errcode.CannotFriendSelf
+		case errors.Is(err, store.ErrFriendLimitSelf):
+			return errcode.FriendLimitSelf
+		case errors.Is(err, store.ErrFriendLimitPeer):
+			return errcode.FriendLimitPeer
+		case errors.Is(err, store.ErrPlayerNotFound):
+			return errcode.UserNotFound
+		default:
+			return errcode.Internal
+		}
+	}
+	server.hub.broadcast(uid, peerUID)
+	return errcode.OK
+}
+
+func (server *GRPCServer) acceptFriendRequest(ctx context.Context, uid, fromUID uint64) errcode.Code {
+	if uid == 0 || fromUID == 0 {
+		return errcode.BadRequest
+	}
+	if err := server.store.AcceptFriendRequest(ctx, uid, fromUID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrFriendRequestNotFound):
+			return errcode.FriendRequestNotFound
+		case errors.Is(err, store.ErrAlreadyFriend):
+			return errcode.AlreadyFriend
+		case errors.Is(err, store.ErrFriendLimitSelf):
+			return errcode.FriendLimitSelf
+		case errors.Is(err, store.ErrFriendLimitPeer):
+			return errcode.FriendLimitPeer
+		case errors.Is(err, store.ErrCannotFriendSelf):
+			return errcode.CannotFriendSelf
+		default:
+			return errcode.Internal
+		}
+	}
+	server.hub.broadcast(uid, fromUID)
+	return errcode.OK
 }
 
 // StartDistributedInvalidations forwards changes received by this Social

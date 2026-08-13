@@ -4,18 +4,19 @@ import (
 	"testing"
 
 	"farm/server/gateway"
+	"farm/server/shared/clientwire"
 
 	"github.com/gorilla/websocket"
 )
 
 func TestReadServerPushDrainsPendingBatchInOrder(t *testing.T) {
 	conn := &websocket.Conn{}
-	want := []gateway.Envelope{
+	want := []clientwire.Envelope{
 		{Cmd: gateway.CommandFarmDelta},
 		{Cmd: gateway.CommandPlayerDelta},
 	}
 	pendingServerPushes.Lock()
-	pendingServerPushes.byConnection[conn] = append([]gateway.Envelope(nil), want...)
+	pendingServerPushes.byConnection[conn] = append([]clientwire.Envelope(nil), want...)
 	pendingServerPushes.Unlock()
 	defer func() {
 		pendingServerPushes.Lock()

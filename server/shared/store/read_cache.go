@@ -122,23 +122,11 @@ func (s *Store) putTaskReadIfCurrent(key taskReadKey, generation uint64, tasks [
 	return true
 }
 
-func (s *Store) putTaskEncodedIfCurrent(key taskReadKey, generation uint64, encoded []byte) bool {
-	state := &s.taskCacheState[taskStateIndex(key)]
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.version != generation {
-		return false
-	}
-	s.taskEncoded.put(key, append([]byte(nil), encoded...), time.Now())
-	return true
-}
-
 func (s *Store) invalidateTaskCache(key taskReadKey) {
 	state := &s.taskCacheState[taskStateIndex(key)]
 	state.mu.Lock()
 	state.version++
 	s.taskRead.delete(key)
-	s.taskEncoded.delete(key)
 	state.mu.Unlock()
 }
 

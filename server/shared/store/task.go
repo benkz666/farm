@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,37 +11,6 @@ import (
 
 	"farm/server/shared/gameconfig"
 )
-
-// ListTasksEncoded returns a pre-encoded task array for the Farm response hot
-// path. The ordinary structured API remains available to mutation code and
-// tests; both views are invalidated together after a committed task change.
-func (s *Store) ListTasksEncoded(ctx context.Context, uid uint64, dayKey int64) ([]byte, error) {
-	cacheKey := taskReadKey{uid: uid, dayKey: dayKey}
-	for attempt := 0; attempt < 3; attempt++ {
-		if encoded, ok := s.taskEncoded.get(cacheKey, time.Now()); ok {
-			return append([]byte(nil), encoded...), nil
-		}
-		generation := s.taskCacheGeneration(cacheKey)
-		tasks, err := s.ListTasks(ctx, uid, dayKey)
-		if err != nil {
-			return nil, err
-		}
-		encoded, err := json.Marshal(tasks)
-		if err != nil {
-			return nil, fmt.Errorf("store: encode task list: %w", err)
-		}
-		if s.putTaskEncodedIfCurrent(cacheKey, generation, encoded) {
-			return encoded, nil
-		}
-	}
-	// Sustained concurrent task writes should not grow the call stack or fail a
-	// valid read merely because it is not cacheable at this instant.
-	tasks, err := s.ListTasks(ctx, uid, dayKey)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(tasks)
-}
 
 const (
 	TaskPlantID      uint32 = 1

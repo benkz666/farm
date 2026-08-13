@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
+	publicv3 "farm/server/gen/farm/public/v3"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/store"
@@ -130,7 +131,7 @@ func TestPushCoalesceBatchesMultipleWrites(t *testing.T) {
 			t.Fatalf("EncodeFarmDeltaRecord: %v", err)
 		}
 		raw = append(raw, expected)
-		if err := connection.pushFarmDelta(42, delta, encoded); err != nil {
+		if err := connection.pushFarmDelta(42, clientwire.FarmDeltaToProto(delta), encoded); err != nil {
 			t.Fatalf("pushFarmDelta %d: %v", i, err)
 		}
 	}
@@ -320,10 +321,9 @@ func TestRespondDoesNotWaitCoalesceWindow(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := connection.respond(Envelope{
-		Cmd:       CommandPing,
-		ClientSeq: 7,
-		Payload:   emptyPayload,
+	if err := connection.respondWire(&publicv3.WireEnvelope{
+		Cmd: CommandPing, ClientSeq: 7,
+		Payload: &publicv3.WireEnvelope_CommandResponse{CommandResponse: &publicv3.CommandResponse{}},
 	}); err != nil {
 		t.Fatalf("respond: %v", err)
 	}
@@ -364,15 +364,17 @@ func TestEnterFarmHeldDeltasEnqueueAfterResponse(t *testing.T) {
 	connection, writer := newTestPushConn(t, time.Millisecond)
 	connection.roomUID = 42
 	connection.holdFarmDeltas = true
-	if err := connection.pushFarmDelta(42, farm.FarmDelta{OwnerUID: 42, FarmSeq: 3}, nil); err != nil {
+	if err := connection.pushFarmDelta(42, &publicv3.FarmDelta{OwnerUid: 42, FarmSeq: 3}, nil); err != nil {
 		t.Fatalf("held push: %v", err)
 	}
-	if err := connection.respondEnterFarm(Envelope{
-		Cmd:       CommandEnterFarm,
-		ClientSeq: 2,
-		Payload:   json.RawMessage(`{"farm_seq":"2","snapshot":{},"server_time":1,"relation":"SELF"}`),
+	if err := connection.respondWire(&publicv3.WireEnvelope{
+		Cmd: CommandEnterFarm, ClientSeq: 2,
+		Payload: &publicv3.WireEnvelope_EnterFarmResponse{EnterFarmResponse: &publicv3.EnterFarmResponse{FarmSeq: 2}},
 	}); err != nil {
-		t.Fatalf("respondEnterFarm: %v", err)
+		t.Fatalf("respondWire: %v", err)
+	}
+	if err := connection.releaseHeldFarmDeltas(); err != nil {
+		t.Fatalf("releaseHeldFarmDeltas: %v", err)
 	}
 
 	messages := waitWrites(t, writer, 2, time.Second)
@@ -388,12 +390,9 @@ func TestEnterFarmHeldDeltasEnqueueAfterResponse(t *testing.T) {
 	if err != nil || len(deltaBatch) != 1 {
 		t.Fatalf("second should be binary FarmDelta: len=%d err=%v", len(deltaBatch), err)
 	}
-	var delta farm.FarmDelta
-	if err := json.Unmarshal(deltaBatch[0].Payload, &delta); err != nil {
-		t.Fatalf("decode FarmDelta payload: %v", err)
-	}
-	if delta.FarmSeq != 3 {
-		t.Fatalf("held FarmSeq = %d", delta.FarmSeq)
+	delta := deltaBatch[0].FarmDelta
+	if delta == nil || delta.GetFarmSeq() != 3 {
+		t.Fatalf("held FarmDelta = %v", delta)
 	}
 }
 
@@ -412,13 +411,25 @@ func TestMixedPushTypesPreserveOrderInBatch(t *testing.T) {
 	if err := connection.enqueuePush(farmEnc); err != nil {
 		t.Fatalf("farm: %v", err)
 	}
-	if err := connection.pushPlayerDelta(farm.PlayerDelta{Coin: 10}); err != nil {
+	if err := connection.enqueueWirePush(&publicv3.WireEnvelope{
+		Cmd: CommandPlayerDelta, Payload: &publicv3.WireEnvelope_PlayerDelta{
+			PlayerDelta: &publicv3.PlayerDelta{Coin: 10},
+		},
+	}); err != nil {
 		t.Fatalf("player: %v", err)
 	}
-	if err := connection.pushTaskNotify(store.Task{ID: store.TaskPlantID, Progress: 1, Target: 1}); err != nil {
+	if err := connection.enqueueWirePush(&publicv3.WireEnvelope{
+		Cmd: CommandTaskNotify, Payload: &publicv3.WireEnvelope_TaskNotify{
+			TaskNotify: &publicv3.Task{Id: store.TaskPlantID, Progress: 1, Target: 1},
+		},
+	}); err != nil {
 		t.Fatalf("task: %v", err)
 	}
-	if err := connection.pushMailNotify("new_mail"); err != nil {
+	if err := connection.enqueueWirePush(&publicv3.WireEnvelope{
+		Cmd: CommandMailNotify, Payload: &publicv3.WireEnvelope_MailNotify{
+			MailNotify: &publicv3.MailNotify{Kind: "new_mail"},
+		},
+	}); err != nil {
 		t.Fatalf("mail: %v", err)
 	}
 

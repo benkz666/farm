@@ -7,8 +7,8 @@ option go_package = "farm/server/gen/farm/v1;farmv1";
 import "farm/internal/v1/common.proto";
 import "farm/public/v3/client.proto";
 
-// CrossFarmService routes owner adjudication and visitor settlement across Farm
-// instances. Gateway may call Apply directly; owner outbox may call Deliver.
+// CrossFarmService routes owner adjudication and visitor settlement exclusively
+// between Farm instances. Gateway never participates in this Saga.
 service CrossFarmService {
   rpc ReserveCrossAction(ReserveCrossActionRequest) returns (ReserveCrossActionResponse);
   rpc ApplyCrossAction(ApplyCrossActionRequest) returns (ApplyCrossActionResponse);
@@ -16,7 +16,8 @@ service CrossFarmService {
   // runtimes append visitor and owner final mutations as one composite commit.
   rpc ExecuteCrossAction(ExecuteCrossActionRequest) returns (ExecuteCrossActionResponse);
   rpc DeliverCrossResult(DeliverCrossResultRequest) returns (DeliverCrossResultResponse);
-  // Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
+  // The coordinating Farm calls after visitor durable settlement to suppress
+  // redundant outbox delivery.
   rpc AcknowledgeCrossResult(AcknowledgeCrossResultRequest) returns (Empty);
   // Hot-path equivalent that amortizes gRPC and Redis round trips.
   rpc AcknowledgeCrossResults(AcknowledgeCrossResultsRequest) returns (Empty);
@@ -47,8 +48,8 @@ message CrossAction {
   uint32 plot_index = 5;
   uint32 crop_id = 6;
   int64 compensation = 7;
-  // Set only by the trusted Gateway after its authoritative friendship check.
-  // Non-Gateway callers leave it false and the owner revalidates friendship.
+  // Set only by the coordinating Farm after Social authorization. Other Farm
+  // callers leave it false and the owner revalidates friendship.
   bool friendship_verified = 8;
   // Identifies the requesting WebSocket only on the colocated fast path. Farm
   // excludes it from fan-out because ExecuteCrossAction returns its delta

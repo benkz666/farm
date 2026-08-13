@@ -4,15 +4,14 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
-	"fmt"
 	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/grpcx"
 
@@ -21,11 +20,10 @@ import (
 
 type farmStub struct {
 	farmv1.UnimplementedFarmCommandServiceServer
-	enterPayload []byte
-	syncPayload  []byte
+	snapshot *publicv3.FarmSnapshot
 }
 
-func (stub *farmStub) Execute(_ context.Context, request *farmv1.ExecuteRequest) (*farmv1.ExecuteResponse, error) {
+func (stub *farmStub) Execute(_ context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
 	return stub.response(request), nil
 }
 
@@ -44,19 +42,60 @@ func (stub *farmStub) ExecuteStream(stream farmv1.FarmCommandService_ExecuteStre
 	}
 }
 
-func (stub *farmStub) response(request *farmv1.ExecuteRequest) *farmv1.ExecuteResponse {
-	if request == nil || request.FarmUid == 0 {
-		return &farmv1.ExecuteResponse{Err: 1001}
+func (stub *farmStub) ExecuteBatchStream(stream farmv1.FarmCommandService_ExecuteBatchStreamServer) error {
+	for {
+		batch, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		responses := make([]*farmv1.StreamExecuteResponse, 0, len(batch.GetRequests()))
+		for _, request := range batch.GetRequests() {
+			responses = append(responses, &farmv1.StreamExecuteResponse{
+				RequestId: request.GetRequestId(),
+				Response:  stub.response(request.GetRequest()),
+			})
+		}
+		if err := stream.Send(&farmv1.StreamExecuteBatchResponse{Responses: responses}); err != nil {
+			return err
+		}
 	}
-	payload := stub.syncPayload
-	if request.Operation == farmv1.Operation_OPERATION_ENTER_FARM {
-		payload = stub.enterPayload
+}
+
+func (stub *farmStub) response(request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+	requestEnvelope := request.GetEnvelope()
+	if request == nil || request.GetRouteUid() == 0 || requestEnvelope == nil {
+		return &farmv1.ClientCommandResponse{Envelope: &publicv3.WireEnvelope{Err: 1001}}
 	}
-	return &farmv1.ExecuteResponse{PayloadJson: payload}
+	responseEnvelope := &publicv3.WireEnvelope{
+		Cmd:       requestEnvelope.GetCmd(),
+		ClientSeq: requestEnvelope.GetClientSeq(),
+	}
+	switch requestEnvelope.GetCmd() {
+	case 200:
+		responseEnvelope.Payload = &publicv3.WireEnvelope_EnterFarmResponse{
+			EnterFarmResponse: &publicv3.EnterFarmResponse{Snapshot: stub.snapshot, FarmSeq: 1, ServerTime: 1},
+		}
+	case 204:
+		responseEnvelope.Payload = &publicv3.WireEnvelope_SyncFarmResponse{
+			SyncFarmResponse: &publicv3.SyncFarmResponse{Snapshot: stub.snapshot, FarmSeq: 1, ServerTime: 1},
+		}
+	default:
+		responseEnvelope.Payload = &publicv3.WireEnvelope_CommandResponse{CommandResponse: &publicv3.CommandResponse{}}
+	}
+	return &farmv1.ClientCommandResponse{Envelope: responseEnvelope}
 }
 
 type socialStub struct {
 	farmv1.UnimplementedSocialServiceServer
+}
+
+func (*socialStub) ExecuteClientCommand(_ context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	envelope := request.GetEnvelope()
+	return &farmv1.ClientCommandResponse{Envelope: &publicv3.WireEnvelope{
+		Cmd:       envelope.GetCmd(),
+		ClientSeq: envelope.GetClientSeq(),
+		Payload:   &publicv3.WireEnvelope_CommandResponse{CommandResponse: &publicv3.CommandResponse{}},
+	}}, nil
 }
 
 func (*socialStub) AreFriends(context.Context, *farmv1.AreFriendsRequest) (*farmv1.AreFriendsResponse, error) {
@@ -84,10 +123,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	stub := &farmStub{
-		enterPayload: enterPayload(*enterBytes),
-		syncPayload:  []byte(`{"farm_seq":"1","server_time":1,"time_profile":"demo"}`),
-	}
+	stub := &farmStub{snapshot: enterSnapshot(*enterBytes)}
 	servers := []struct {
 		addr     string
 		register func(*grpc.Server)
@@ -115,21 +151,10 @@ func main() {
 	<-ctx.Done()
 }
 
-func enterPayload(targetBytes int) []byte {
-	base := map[string]any{
-		"snapshot":     map[string]any{"plots": []any{}},
-		"farm_seq":     "1",
-		"server_time":  1,
-		"time_profile": "demo",
+func enterSnapshot(targetBytes int) *publicv3.FarmSnapshot {
+	padding := targetBytes - 64
+	if padding < 0 {
+		padding = 0
 	}
-	encoded, _ := json.Marshal(base)
-	if targetBytes <= len(encoded)+20 {
-		return encoded
-	}
-	base["padding"] = strings.Repeat("x", targetBytes-len(encoded)-20)
-	encoded, err := json.Marshal(base)
-	if err != nil {
-		panic(fmt.Errorf("encode payload: %w", err))
-	}
-	return encoded
+	return &publicv3.FarmSnapshot{OwnerUid: 1, Nickname: strings.Repeat("x", padding)}
 }

@@ -1,5 +1,11 @@
 name: benkz
 
+x-common-environment: &common-environment
+  FARM_ENV: dev
+  FARM_MYSQL_DSN: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
+  FARM_REDIS_ADDR: redis:6379
+  FARM_INTERNAL_TOKEN: dev-only-internal-token-change-me
+
 services:
   mysql:
     image: mysql:8.4
@@ -28,19 +34,6 @@ services:
     image: redis:7-alpine
     cpus: 1.0
     mem_limit: 1g
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - farm_redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  event-redis:
-    image: redis:7-alpine
-    cpus: 1.0
-    mem_limit: 1g
     command:
       - redis-server
       - --appendonly
@@ -50,7 +43,7 @@ services:
       - --maxmemory-policy
       - noeviction
     volumes:
-      - farm_event_redis_data:/data
+      - farm_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -83,12 +76,11 @@ services:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
-    environment: &common-environment
-      FARM_ENV: dev
-      FARM_MYSQL_DSN: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
-      FARM_REDIS_ADDR: redis:6379
-      FARM_INTERNAL_TOKEN: dev-only-internal-token-change-me
+    environment:
+      <<: *common-environment
       FARM_SOCIAL_ADMIN_ADDR: ":9304"
+      FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
+      FARM_INVITE_SECRET: dev-only-invite-change-me
     ports: ["9004:9004", "9204:9204", "9304:9304"]
 
   farm:
@@ -102,7 +94,6 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      event-redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
     environment:
@@ -112,7 +103,6 @@ services:
       FARM_ACTOR_IDLE_TTL: ${FARM_ACTOR_IDLE_TTL:-2m}
       FARM_ACTOR_MAX_RESIDENT: ${FARM_ACTOR_MAX_RESIDENT:-20000}
       FARM_COMMITTER_SHARDS: ${FARM_COMMITTER_SHARDS:-16}
-      FARM_EVENT_REDIS_ADDR: event-redis:6379
       FARM_WRITE_JOURNAL_SHARDS: ${FARM_WRITE_JOURNAL_SHARDS:-32}
       FARM_WRITE_JOURNAL_PROJECTORS: ${FARM_WRITE_JOURNAL_PROJECTORS:-4}
       FARM_WRITE_JOURNAL_BATCH: ${FARM_WRITE_JOURNAL_BATCH:-1024}
@@ -121,6 +111,17 @@ services:
       FARM_WRITE_JOURNAL_CLAIM_IDLE: ${FARM_WRITE_JOURNAL_CLAIM_IDLE:-5s}
       FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT: ${FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT:-5m}
       FARM_WRITE_JOURNAL_REPLICAS: ${FARM_WRITE_JOURNAL_REPLICAS:-0}
+      FARM_WRITE_DYNAMIC_ADMISSION: ${FARM_WRITE_DYNAMIC_ADMISSION:-1}
+      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
+      FARM_WRITE_MIN_IN_FLIGHT: ${FARM_WRITE_MIN_IN_FLIGHT:-64}
+      FARM_WRITE_BACKLOG_LOW: ${FARM_WRITE_BACKLOG_LOW:-8192}
+      FARM_WRITE_BACKLOG_HIGH: ${FARM_WRITE_BACKLOG_HIGH:-65536}
+      FARM_WRITE_BACKLOG_HARD: ${FARM_WRITE_BACKLOG_HARD:-262144}
+      FARM_WRITE_RECOVERY_STEP: ${FARM_WRITE_RECOVERY_STEP:-64}
+      FARM_WRITE_BACKLOG_POLL: ${FARM_WRITE_BACKLOG_POLL:-250ms}
+      FARM_WRITE_BACKLOG_TIMEOUT: ${FARM_WRITE_BACKLOG_TIMEOUT:-150ms}
+      FARM_WRITE_BACKLOG_ERROR_GRACE: ${FARM_WRITE_BACKLOG_ERROR_GRACE:-2s}
+      FARM_WRITE_ADMISSION_WAIT: ${FARM_WRITE_ADMISSION_WAIT:-2ms}
       FARM_FARM_HTTP_ADDR: ":9100"
       FARM_FARM_INSTANCE_ID: farm-0
       FARM_ROUTE_TABLE: deploy/route-table.local.json
@@ -147,7 +148,6 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      event-redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -160,21 +160,8 @@ services:
       FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
       FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
       FARM_GATEWAY_ADMIN_ADDR: ":9302"
-      FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
-      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
-      FARM_EVENT_REDIS_ADDR: event-redis:6379
-      FARM_WRITE_DYNAMIC_ADMISSION: ${FARM_WRITE_DYNAMIC_ADMISSION:-1}
-      FARM_WRITE_MIN_IN_FLIGHT: ${FARM_WRITE_MIN_IN_FLIGHT:-64}
-      FARM_WRITE_BACKLOG_LOW: ${FARM_WRITE_BACKLOG_LOW:-8192}
-      FARM_WRITE_BACKLOG_HIGH: ${FARM_WRITE_BACKLOG_HIGH:-65536}
-      FARM_WRITE_BACKLOG_HARD: ${FARM_WRITE_BACKLOG_HARD:-262144}
-      FARM_WRITE_RECOVERY_STEP: ${FARM_WRITE_RECOVERY_STEP:-64}
-      FARM_WRITE_BACKLOG_POLL: ${FARM_WRITE_BACKLOG_POLL:-250ms}
-      FARM_WRITE_BACKLOG_TIMEOUT: ${FARM_WRITE_BACKLOG_TIMEOUT:-150ms}
-      FARM_WRITE_BACKLOG_ERROR_GRACE: ${FARM_WRITE_BACKLOG_ERROR_GRACE:-2s}
       FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
       FARM_ENABLE_API_DOCS: "1"
-      FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9002:9002", "9202:9202", "9302:9302"]
@@ -190,7 +177,6 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      event-redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -203,21 +189,8 @@ services:
       FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
       FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
       FARM_GATEWAY_ADMIN_ADDR: ":9302"
-      FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
-      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
-      FARM_EVENT_REDIS_ADDR: event-redis:6379
-      FARM_WRITE_DYNAMIC_ADMISSION: ${FARM_WRITE_DYNAMIC_ADMISSION:-1}
-      FARM_WRITE_MIN_IN_FLIGHT: ${FARM_WRITE_MIN_IN_FLIGHT:-64}
-      FARM_WRITE_BACKLOG_LOW: ${FARM_WRITE_BACKLOG_LOW:-8192}
-      FARM_WRITE_BACKLOG_HIGH: ${FARM_WRITE_BACKLOG_HIGH:-65536}
-      FARM_WRITE_BACKLOG_HARD: ${FARM_WRITE_BACKLOG_HARD:-262144}
-      FARM_WRITE_RECOVERY_STEP: ${FARM_WRITE_RECOVERY_STEP:-64}
-      FARM_WRITE_BACKLOG_POLL: ${FARM_WRITE_BACKLOG_POLL:-250ms}
-      FARM_WRITE_BACKLOG_TIMEOUT: ${FARM_WRITE_BACKLOG_TIMEOUT:-150ms}
-      FARM_WRITE_BACKLOG_ERROR_GRACE: ${FARM_WRITE_BACKLOG_ERROR_GRACE:-2s}
       FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
       FARM_ENABLE_API_DOCS: "1"
-      FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9003:9002", "9203:9202", "9303:9302"]
@@ -233,7 +206,6 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
-      event-redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -246,21 +218,8 @@ services:
       FARM_FARM_GRPC_TARGETS: '{"farm-0":"farm:9210"}'
       FARM_GATEWAY_GRPC_TARGETS: '{"gateway-1":"gateway-1:9202","gateway-2":"gateway-2:9202","gateway-3":"gateway-3:9202"}'
       FARM_GATEWAY_ADMIN_ADDR: ":9302"
-      FARM_CROSS_MAX_IN_FLIGHT: ${FARM_CROSS_MAX_IN_FLIGHT:-1024}
-      FARM_WRITE_MAX_IN_FLIGHT: ${FARM_WRITE_MAX_IN_FLIGHT:-512}
-      FARM_EVENT_REDIS_ADDR: event-redis:6379
-      FARM_WRITE_DYNAMIC_ADMISSION: ${FARM_WRITE_DYNAMIC_ADMISSION:-1}
-      FARM_WRITE_MIN_IN_FLIGHT: ${FARM_WRITE_MIN_IN_FLIGHT:-64}
-      FARM_WRITE_BACKLOG_LOW: ${FARM_WRITE_BACKLOG_LOW:-8192}
-      FARM_WRITE_BACKLOG_HIGH: ${FARM_WRITE_BACKLOG_HIGH:-65536}
-      FARM_WRITE_BACKLOG_HARD: ${FARM_WRITE_BACKLOG_HARD:-262144}
-      FARM_WRITE_RECOVERY_STEP: ${FARM_WRITE_RECOVERY_STEP:-64}
-      FARM_WRITE_BACKLOG_POLL: ${FARM_WRITE_BACKLOG_POLL:-250ms}
-      FARM_WRITE_BACKLOG_TIMEOUT: ${FARM_WRITE_BACKLOG_TIMEOUT:-150ms}
-      FARM_WRITE_BACKLOG_ERROR_GRACE: ${FARM_WRITE_BACKLOG_ERROR_GRACE:-2s}
       FARM_DISABLE_WS_RATE_LIMIT: ${FARM_DISABLE_WS_RATE_LIMIT:-0}
       FARM_ENABLE_API_DOCS: "1"
-      FARM_INVITE_SECRET: dev-only-invite-change-me
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
       FARM_ALLOW_DEBUG_TIME: "1"
     ports: ["9005:9002", "9205:9202", "9305:9302"]
@@ -368,14 +327,6 @@ services:
     depends_on:
       redis: {condition: service_healthy}
 
-  event-redis-exporter:
-    profiles: ["obs"]
-    image: oliver006/redis_exporter:v1.62.0
-    environment:
-      REDIS_ADDR: redis://event-redis:6379
-    depends_on:
-      event-redis: {condition: service_healthy}
-
   cadvisor:
     profiles: ["obs"]
     image: gcr.io/cadvisor/cadvisor:v0.49.1
@@ -393,8 +344,6 @@ volumes:
     name: benkz_mysql_data
   farm_redis_data:
     name: benkz_redis_data
-  farm_event_redis_data:
-    name: benkz_event_redis_data
   farm_prometheus_data:
     name: benkz_prometheus_data
   farm_grafana_data:

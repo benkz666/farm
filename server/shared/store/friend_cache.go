@@ -9,7 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	farmv1 "farm/server/gen/farm/v1"
+
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -40,19 +43,19 @@ type friendCacheRedis interface {
 }
 
 type friendInvalidationBus interface {
-	Publish(context.Context, string) error
-	Subscribe(context.Context, func(string)) error
+	Publish(context.Context, []byte) error
+	Subscribe(context.Context, func([]byte)) error
 }
 
 type redisFriendInvalidationBus struct {
 	client *redis.Client
 }
 
-func (bus redisFriendInvalidationBus) Publish(ctx context.Context, message string) error {
+func (bus redisFriendInvalidationBus) Publish(ctx context.Context, message []byte) error {
 	return bus.client.Publish(ctx, friendInvalidationChannel, message).Err()
 }
 
-func (bus redisFriendInvalidationBus) Subscribe(ctx context.Context, handle func(string)) error {
+func (bus redisFriendInvalidationBus) Subscribe(ctx context.Context, handle func([]byte)) error {
 	pubsub := bus.client.Subscribe(ctx, friendInvalidationChannel)
 	defer pubsub.Close()
 	if _, err := pubsub.Receive(ctx); err != nil {
@@ -67,7 +70,7 @@ func (bus redisFriendInvalidationBus) Subscribe(ctx context.Context, handle func
 			if !ok {
 				return errors.New("friend invalidation subscription closed")
 			}
-			handle(message.Payload)
+			handle([]byte(message.Payload))
 		}
 	}
 }
@@ -135,14 +138,6 @@ const (
 type friendCacheStateShard struct {
 	mu      sync.Mutex
 	version atomic.Uint64
-}
-
-type friendInvalidationMessage struct {
-	Source string `json:"source"`
-	UID    string `json:"uid"`
-	Peer   string `json:"peer_uid"`
-	Known  bool   `json:"known"`
-	Value  bool   `json:"value"`
 }
 
 // FriendInvalidationSource exposes cache changes committed by another Social
@@ -754,18 +749,18 @@ func (cache *cachedFriendStore) publishInvalidation(ctx context.Context, a, b ui
 	if cache.bus == nil {
 		return
 	}
-	encoded, err := json.Marshal(friendInvalidationMessage{
-		Source: cache.sourceID,
-		UID:    strconv.FormatUint(a, 10),
-		Peer:   strconv.FormatUint(b, 10),
-		Known:  known,
-		Value:  value,
+	encoded, err := proto.Marshal(&farmv1.FriendCacheInvalidation{
+		Source:  cache.sourceID,
+		Uid:     a,
+		PeerUid: b,
+		Known:   known,
+		Value:   value,
 	})
 	if err != nil {
 		return
 	}
 	publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-	_ = cache.bus.Publish(publishCtx, string(encoded))
+	_ = cache.bus.Publish(publishCtx, encoded)
 	cancel()
 }
 
@@ -776,19 +771,17 @@ func (cache *cachedFriendStore) WatchFriendInvalidations(ctx context.Context, no
 		return
 	}
 	for ctx.Err() == nil {
-		err := cache.bus.Subscribe(ctx, func(payload string) {
-			var message friendInvalidationMessage
-			if json.Unmarshal([]byte(payload), &message) != nil || message.Source == cache.sourceID {
+		err := cache.bus.Subscribe(ctx, func(payload []byte) {
+			message := new(farmv1.FriendCacheInvalidation)
+			if proto.Unmarshal(payload, message) != nil || message.Source == cache.sourceID {
 				return
 			}
-			uid, uidErr := strconv.ParseUint(message.UID, 10, 64)
-			peerUID, peerErr := strconv.ParseUint(message.Peer, 10, 64)
-			if uidErr != nil || peerErr != nil || uid == 0 || peerUID == 0 {
+			if message.Uid == 0 || message.PeerUid == 0 {
 				return
 			}
-			cache.applyInvalidation(ctx, uid, peerUID, message.Known, message.Value, false)
+			cache.applyInvalidation(ctx, message.Uid, message.PeerUid, message.Known, message.Value, false)
 			if notify != nil {
-				notify(uid, peerUID)
+				notify(message.Uid, message.PeerUid)
 			}
 		})
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) {

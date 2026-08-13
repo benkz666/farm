@@ -11,8 +11,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
 	"farm/server/shared/clientwire"
+	"farm/server/shared/presence"
 	"farm/server/shared/telemetry"
 )
 
@@ -175,17 +175,12 @@ func TestFanoutPublisherMetricsCountsBatchesPerGateway(t *testing.T) {
 
 	reg := prometheus.NewRegistry()
 	metrics := telemetry.NewMetrics(reg)
-	encoder := &countingFarmDeltaEncoder{}
 	pusher := &recordingBatchPusher{}
 	publisher := NewFanoutPublisher(registry, pusher)
-	publisher.encoder = encoder
 	publisher.SetMetrics(metrics)
 
 	if err := publisher.Publish(t.Context(), farm.FarmDelta{OwnerUID: 42, FarmSeq: 1}, presence.ConnRef{}); err != nil {
 		t.Fatalf("Publish: %v", err)
-	}
-	if got := encoder.calls.Load(); got != 1 {
-		t.Fatalf("encode calls = %d, want 1", got)
 	}
 	if got := len(pusher.batches()); got != 2 {
 		t.Fatalf("HTTP batches = %d, want 2", got)
@@ -231,7 +226,7 @@ func histogramCountSum(t *testing.T, g prometheus.Gatherer, name string) (count,
 	return 0, 0
 }
 
-func TestFanoutPublisherEncodesEnvelopeOnce(t *testing.T) {
+func TestFanoutPublisherBuildsTypedDeltaOnce(t *testing.T) {
 	t.Parallel()
 
 	backend := newRegistryBackend()
@@ -245,23 +240,18 @@ func TestFanoutPublisherEncodesEnvelopeOnce(t *testing.T) {
 	if err := registry.Subscribe(t.Context(), 42, 3, "gateway-b"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
-	encoder := &countingFarmDeltaEncoder{}
 	pusher := &recordingBatchPusher{}
 	publisher := NewFanoutPublisher(registry, pusher)
-	publisher.encoder = encoder
 
 	if err := publisher.Publish(t.Context(), farm.FarmDelta{OwnerUID: 42, FarmSeq: 4}, presence.ConnRef{}); err != nil {
 		t.Fatalf("Publish: %v", err)
-	}
-	if got := encoder.calls.Load(); got != 1 {
-		t.Fatalf("encode calls = %d, want 1 (not once per Gateway)", got)
 	}
 	batches := pusher.batches()
 	if len(batches) != 2 {
 		t.Fatalf("batches = %d, want 2", len(batches))
 	}
-	if string(batches[0].batch.Envelope) != string(batches[1].batch.Envelope) {
-		t.Fatalf("gateways received different envelope bytes")
+	if batches[0].batch.Delta == nil || batches[0].batch.Delta != batches[1].batch.Delta {
+		t.Fatalf("gateways did not share the same immutable typed delta")
 	}
 }
 

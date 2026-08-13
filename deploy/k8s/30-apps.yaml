@@ -41,6 +41,10 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
+            - name: FARM_INVITE_SECRET
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: invite-secret}
             - name: FARM_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: internal-token}
@@ -112,7 +116,6 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
-            - {name: FARM_EVENT_REDIS_ADDR, value: "event-redis:6379"}
             - name: FARM_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: internal-token}
@@ -140,6 +143,17 @@ spec:
             - {name: FARM_WRITE_JOURNAL_CLAIM_IDLE, value: 5s}
             - {name: FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT, value: 5m}
             - {name: FARM_WRITE_JOURNAL_REPLICAS, value: "0"}
+            - {name: FARM_WRITE_DYNAMIC_ADMISSION, value: "1"}
+            - {name: FARM_WRITE_MAX_IN_FLIGHT, value: "512"}
+            - {name: FARM_WRITE_MIN_IN_FLIGHT, value: "64"}
+            - {name: FARM_WRITE_BACKLOG_LOW, value: "8192"}
+            - {name: FARM_WRITE_BACKLOG_HIGH, value: "65536"}
+            - {name: FARM_WRITE_BACKLOG_HARD, value: "262144"}
+            - {name: FARM_WRITE_RECOVERY_STEP, value: "64"}
+            - {name: FARM_WRITE_BACKLOG_POLL, value: 250ms}
+            - {name: FARM_WRITE_BACKLOG_TIMEOUT, value: 150ms}
+            - {name: FARM_WRITE_BACKLOG_ERROR_GRACE, value: 2s}
+            - {name: FARM_WRITE_ADMISSION_WAIT, value: 2ms}
             - {name: GOMAXPROCS, value: "1"}
             - {name: GOMEMLIMIT, value: 800MiB}
           ports:
@@ -221,7 +235,6 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
-            - {name: FARM_EVENT_REDIS_ADDR, value: "event-redis:6379"}
             - name: FARM_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: internal-token}
@@ -240,22 +253,8 @@ spec:
             - {name: FARM_FARM_GRPC_TARGETS, value: '{"farm-0":"farm:9210"}'}
             - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
             - {name: FARM_SOCIAL_GRPC_TARGET, value: "social:9204"}
-            - {name: FARM_CROSS_MAX_IN_FLIGHT, value: "1024"}
-            - {name: FARM_WRITE_MAX_IN_FLIGHT, value: "512"}
-            - {name: FARM_WRITE_DYNAMIC_ADMISSION, value: "1"}
-            - {name: FARM_WRITE_MIN_IN_FLIGHT, value: "64"}
-            - {name: FARM_WRITE_BACKLOG_LOW, value: "8192"}
-            - {name: FARM_WRITE_BACKLOG_HIGH, value: "65536"}
-            - {name: FARM_WRITE_BACKLOG_HARD, value: "262144"}
-            - {name: FARM_WRITE_RECOVERY_STEP, value: "64"}
-            - {name: FARM_WRITE_BACKLOG_POLL, value: 250ms}
-            - {name: FARM_WRITE_BACKLOG_TIMEOUT, value: 150ms}
-            - {name: FARM_WRITE_BACKLOG_ERROR_GRACE, value: 2s}
             - {name: FARM_DISABLE_WS_RATE_LIMIT, value: "0"}
             - {name: FARM_ENABLE_API_DOCS, value: "1"}
-            - name: FARM_INVITE_SECRET
-              valueFrom:
-                secretKeyRef: {name: farm-secrets, key: invite-secret}
             - {name: FARM_TIME_PROFILE, value: demo}
             - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
             - {name: GOMAXPROCS, value: "1"}

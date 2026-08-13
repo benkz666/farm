@@ -2,9 +2,6 @@
 package gateway
 
 import (
-	"errors"
-	"strings"
-
 	"farm/server/shared/clientwire"
 )
 
@@ -57,44 +54,3 @@ const (
 
 	BinarySubprotocol = clientwire.BinarySubprotocol
 )
-
-// Envelope is the JSON representation of protocol Envelope.
-// Alias keeps the public gateway API stable while sharing wireenv's codec type.
-type Envelope = clientwire.Envelope
-
-// EncodeEnvelope serializes an envelope for a single WebSocket frame.
-func EncodeEnvelope(envelope Envelope) ([]byte, error) {
-	encoded, err := clientwire.EncodeEnvelope(envelope)
-	if err != nil {
-		return nil, remapWireenvError(err)
-	}
-	return encoded, nil
-}
-
-// DecodeEnvelope decodes one client WebSocket frame.
-// Exactly one JSON value is accepted; trailing values/garbage are rejected via clientwire.
-func DecodeEnvelope(data []byte) (Envelope, error) {
-	envelope, err := clientwire.DecodeEnvelope(data)
-	if err != nil {
-		return Envelope{}, remapWireenvError(err)
-	}
-	return envelope, nil
-}
-
-// EncodeBinaryBatch serializes 1..64 envelopes into the only supported public
-// WebSocket frame format.
-func EncodeBinaryBatch(envelopes []Envelope) ([]byte, error) {
-	return clientwire.EncodeBinaryBatch(envelopes)
-}
-
-// DecodeBinaryBatch decodes the only supported public WebSocket frame format.
-func DecodeBinaryBatch(data []byte) ([]Envelope, error) {
-	return clientwire.DecodeBinaryBatch(data)
-}
-
-func remapWireenvError(err error) error {
-	if err == nil {
-		return nil
-	}
-	return errors.New(strings.ReplaceAll(err.Error(), "wireenv:", "gateway:"))
-}

@@ -29,10 +29,6 @@ scrape_configs:
     static_configs:
       - targets: ["redis-exporter:9121"]
 
-  - job_name: event-redis-exporter
-    static_configs:
-      - targets: ["event-redis-exporter:9121"]
-
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]

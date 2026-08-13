@@ -11,6 +11,7 @@ import (
 	"farm/server/domain/farm"
 	"farm/server/gateway"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/sharding"
@@ -78,7 +79,7 @@ func runSteal(baseURL string) error {
 		return err
 	}
 
-	if _, err := exchangeResponse(owner.conn, gateway.Envelope{
+	if _, err := exchangeResponse(owner.conn, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: owner.seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -384,7 +385,7 @@ func openSmokePlayer(baseURL string, routes *sharding.RouteTable, wantFarm strin
 }
 
 func befriendAll(owner *smokePlayer, visitors []*smokePlayer) error {
-	shareEnv, err := exchangeResponse(owner.conn, gateway.Envelope{
+	shareEnv, err := exchangeResponse(owner.conn, clientwire.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
 		ClientSeq: owner.seq,
 		Payload:   emptyJSONObject,
@@ -402,7 +403,7 @@ func befriendAll(owner *smokePlayer, visitors []*smokePlayer) error {
 		return fmt.Errorf("share token empty")
 	}
 	for i, v := range visitors {
-		if _, err := exchangeResponse(v.conn, gateway.Envelope{
+		if _, err := exchangeResponse(v.conn, clientwire.Envelope{
 			Cmd:       gateway.CommandAcceptInvite,
 			ClientSeq: v.seq,
 			Payload:   mustJSON(map[string]any{"token": token}),
@@ -415,7 +416,7 @@ func befriendAll(owner *smokePlayer, visitors []*smokePlayer) error {
 }
 
 func befriendPair(owner, visitor *smokePlayer) error {
-	if _, err := exchangeResponse(visitor.conn, gateway.Envelope{
+	if _, err := exchangeResponse(visitor.conn, clientwire.Envelope{
 		Cmd:       gateway.CommandAddFriendByUID,
 		ClientSeq: visitor.seq,
 		Payload:   mustJSON(map[string]any{"peer_uid": owner.login.UID}),
@@ -444,35 +445,35 @@ func visitorEnter(v *smokePlayer, ownerUID uint64) error {
 	return nil
 }
 
-func visitorExchange(v *smokePlayer, cmd uint32, payload map[string]any) (gateway.Envelope, error) {
-	request := gateway.Envelope{
+func visitorExchange(v *smokePlayer, cmd uint32, payload map[string]any) (clientwire.Envelope, error) {
+	request := clientwire.Envelope{
 		Cmd:       cmd,
 		ClientSeq: v.seq,
 		Payload:   mustJSON(payload),
 	}
 	v.seq++
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	if err := v.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	if err := v.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	defer func() { _ = v.conn.SetReadDeadline(time.Time{}) }()
 	for attempt := 0; attempt < 32; attempt++ {
 		messageType, frame, err := v.conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(frame)
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
 		if err != nil {
-			return gateway.Envelope{}, err
+			return clientwire.Envelope{}, err
 		}
 		for _, env := range envelopes {
 			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
@@ -480,7 +481,7 @@ func visitorExchange(v *smokePlayer, cmd uint32, payload map[string]any) (gatewa
 			}
 		}
 	}
-	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
+	return clientwire.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 func ownerPrepareMaturePlot(owner *smokePlayer, baseURL string, plotIndex uint32) error {
@@ -503,7 +504,7 @@ func ownerPrepareMaturePlot(owner *smokePlayer, baseURL string, plotIndex uint32
 }
 
 func ownerFinalYield(owner *smokePlayer, plotIndex uint32) (uint16, error) {
-	env, err := exchangeResponse(owner.conn, gateway.Envelope{
+	env, err := exchangeResponse(owner.conn, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: owner.seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -699,38 +700,38 @@ func mustOwnerAction(owner *smokePlayer, cmd uint32, payload map[string]any) (ac
 	return out, nil
 }
 
-func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (gateway.Envelope, error) {
+func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (clientwire.Envelope, error) {
 	for rateTry := 0; rateTry < 12; rateTry++ {
-		request := gateway.Envelope{
+		request := clientwire.Envelope{
 			Cmd:       cmd,
 			ClientSeq: owner.seq,
 			Payload:   mustJSON(payload),
 		}
 		owner.seq++
-		data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+		data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 		}
 		if err := owner.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-			return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 		}
 		if err := owner.conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-			return gateway.Envelope{}, err
+			return clientwire.Envelope{}, err
 		}
-		var matched *gateway.Envelope
+		var matched *clientwire.Envelope
 		for attempt := 0; attempt < 32; attempt++ {
 			messageType, frame, err := owner.conn.ReadMessage()
 			if err != nil {
 				_ = owner.conn.SetReadDeadline(time.Time{})
-				return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+				return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 			}
 			if messageType != websocket.BinaryMessage {
 				continue
 			}
-			envelopes, err := gateway.DecodeBinaryBatch(frame)
+			envelopes, err := clientwire.DecodeBinaryBatch(frame)
 			if err != nil {
 				_ = owner.conn.SetReadDeadline(time.Time{})
-				return gateway.Envelope{}, err
+				return clientwire.Envelope{}, err
 			}
 			for _, env := range envelopes {
 				if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
@@ -745,7 +746,7 @@ func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (gate
 		}
 		_ = owner.conn.SetReadDeadline(time.Time{})
 		if matched == nil {
-			return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
+			return clientwire.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 		}
 		if matched.Err == errcode.RateLimited {
 			time.Sleep(300 * time.Millisecond)
@@ -753,38 +754,38 @@ func ownerExchange(owner *smokePlayer, cmd uint32, payload map[string]any) (gate
 		}
 		return *matched, nil
 	}
-	return gateway.Envelope{}, fmt.Errorf("rate limited after retries cmd=%d", cmd)
+	return clientwire.Envelope{}, fmt.Errorf("rate limited after retries cmd=%d", cmd)
 }
 
-func exchangeStealEnvelope(conn *websocket.Conn, seq *uint32, ownerUID uint64, plotIndex, cropID uint32) (gateway.Envelope, error) {
-	request := gateway.Envelope{
+func exchangeStealEnvelope(conn *websocket.Conn, seq *uint32, ownerUID uint64, plotIndex, cropID uint32) (clientwire.Envelope, error) {
+	request := clientwire.Envelope{
 		Cmd:       gateway.CommandSteal,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": ownerUID, "plot_index": plotIndex, "crop_id": cropID}),
 	}
 	*seq++
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("set read deadline: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("set read deadline: %w", err)
 	}
 	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	for attempt := 0; attempt < 32; attempt++ {
 		messageType, frame, err := conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(frame)
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
 		for _, env := range envelopes {
 			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
@@ -792,5 +793,5 @@ func exchangeStealEnvelope(conn *websocket.Conn, seq *uint32, ownerUID uint64, p
 			}
 		}
 	}
-	return gateway.Envelope{}, fmt.Errorf("no matching Steal response seq=%d", request.ClientSeq)
+	return clientwire.Envelope{}, fmt.Errorf("no matching Steal response seq=%d", request.ClientSeq)
 }

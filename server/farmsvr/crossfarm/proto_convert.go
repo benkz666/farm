@@ -2,9 +2,9 @@ package crossfarm
 
 import (
 	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
+	"farm/server/shared/presence"
 )
 
 func actionToProto(action CrossAction) *farmv1.CrossAction {

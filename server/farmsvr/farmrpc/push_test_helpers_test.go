@@ -4,13 +4,9 @@ import (
 	"context"
 	"sort"
 	"sync"
-	"sync/atomic"
-	"testing"
 	"time"
 
-	"farm/server/domain/farm"
-	"farm/server/gateway/presence"
-	"farm/server/shared/clientwire"
+	"farm/server/shared/presence"
 	"farm/server/shared/store"
 )
 
@@ -263,24 +259,4 @@ func equalUint64(left, right []uint64) bool {
 		}
 	}
 	return true
-}
-
-func assertFarmDeltaEnvelope(t *testing.T, envelope []byte, delta farm.FarmDelta) {
-	t.Helper()
-	decoded, err := clientwire.DecodeFarmDelta(envelope)
-	if err != nil {
-		t.Fatalf("DecodeFarmDelta: %v", err)
-	}
-	if decoded.OwnerUID != delta.OwnerUID || decoded.FarmSeq != delta.FarmSeq {
-		t.Fatalf("decoded = %#v, want %#v", decoded, delta)
-	}
-}
-
-type countingFarmDeltaEncoder struct {
-	calls atomic.Int64
-}
-
-func (encoder *countingFarmDeltaEncoder) EncodeFarmDelta(delta farm.FarmDelta) ([]byte, error) {
-	encoder.calls.Add(1)
-	return clientwire.EncodeFarmDelta(delta)
 }

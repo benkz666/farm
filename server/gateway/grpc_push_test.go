@@ -2,134 +2,127 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
-	"net/http/httptest"
 	"testing"
 	"time"
 
-	"farm/server/domain/farm"
-	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 )
 
-func TestGRPCPushMailNotify(t *testing.T) {
-	t.Parallel()
-
-	gateway := New(
-		authStub{},
-		sessionStub{uid: 42},
-		runtimeStub{aggregate: farm.NewAggregate(42, "alice")},
-	)
-	delivered := make(chan string, 1)
-	connection := &wsConnection{id: 7, uid: 42, authed: true}
-	gateway.mailNotifyDelivery = func(ws *wsConnection, kind string) error {
-		if ws == connection {
-			delivered <- kind
-		}
-		return nil
-	}
-	connection.enableMailNotify(gateway)
-	defer connection.closeMailNotify()
+func TestPushServerDeliversTypedFarmDelta(t *testing.T) {
+	connection, writer := newTestPushConn(t, 0)
+	connection.id, connection.uid, connection.authed = 7, 42, true
+	gateway := New(nil, nil)
 	gateway.connections.Store(connection.id, connection)
 
-	pool := newTestPushPool(t, "push-token", gateway)
-	conn, err := pool.Conn(context.Background(), "bufconn")
-	if err != nil {
-		t.Fatalf("Conn: %v", err)
-	}
-	_, err = farmv1.NewGatewayPushServiceClient(conn).PushMailNotify(context.Background(), &farmv1.PushMailNotifyRequest{
-		ConnectionId: 7,
-		Uid:          42,
-		Kind:         "friend_request",
-	})
-	if err != nil {
-		t.Fatalf("PushMailNotify: %v", err)
-	}
-	select {
-	case kind := <-delivered:
-		if kind != "friend_request" {
-			t.Fatalf("kind = %q", kind)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("MailNotify was not delivered")
-	}
-}
-
-func TestGRPCPushFarmDeltaBatch(t *testing.T) {
-	t.Parallel()
-
-	const (
-		ownerUID    = uint64(42)
-		viewerUID   = uint64(7)
-		viewerToken = "viewer-grpc-batch-token"
-	)
-	registry := presence.NewWithBackend(newConnectionRegistryBackend())
-	friends := newFriendStoreStub()
-	friends.add(ownerUID, viewerUID)
-	gateway := New(
-		authStub{},
-		sessionMapStub{viewerToken: viewerUID},
-		multiRuntimeStub{actors: map[uint64]*room.FarmActor{
-			ownerUID: {Aggregate: farm.NewAggregate(ownerUID, "owner")},
-		}},
-		WithFriendStore(friends),
-		WithConnectionRegistry(registry, "gateway-1"),
-	)
-	server := httptest.NewServer(gateway.Handler())
-	t.Cleanup(server.Close)
-
-	viewer := openWebSocketAt(t, server.URL)
-	handshakeWebSocket(t, viewer, viewerToken)
-	writeEnvelope(t, viewer, Envelope{
-		Cmd:       CommandEnterFarm,
-		ClientSeq: 2,
-		Payload:   json.RawMessage(`{"owner_uid":42}`),
-	})
-	if got := readEnvelope(t, viewer); got.Err != errcode.OK {
-		t.Fatalf("EnterFarm = %#v", got)
-	}
-	refs, err := registry.LookupSubscribers(context.Background(), ownerUID)
-	if err != nil || len(refs) != 1 {
-		t.Fatalf("LookupSubscribers = %#v err=%v", refs, err)
-	}
-	delta := farm.FarmDelta{OwnerUID: ownerUID, FarmSeq: 5}
-
-	pool := newTestPushPool(t, "push-token", gateway)
-	clientConn, err := pool.Conn(context.Background(), "bufconn")
-	if err != nil {
-		t.Fatalf("Conn: %v", err)
-	}
-	_, err = farmv1.NewGatewayPushServiceClient(clientConn).PushFarmDeltaBatch(context.Background(), &farmv1.PushFarmDeltaBatchRequest{
-		ConnIds: []uint64{refs[0].ConnID},
-		Delta:   clientwire.FarmDeltaToProto(delta),
+	_, err := NewPushServer(gateway).PushFarmDeltaBatch(context.Background(), &farmv1.PushFarmDeltaBatchRequest{
+		ConnIds: []uint64{7},
+		Delta:   &publicv3.FarmDelta{OwnerUid: 42, FarmSeq: 9},
 	})
 	if err != nil {
 		t.Fatalf("PushFarmDeltaBatch: %v", err)
 	}
-
-	frame := readRawFrame(t, viewer)
-	batch, decodeErr := clientwire.DecodeBinaryBatch(frame)
-	if decodeErr != nil || len(batch) != 1 || batch[0].Cmd != CommandFarmDelta || batch[0].FarmDelta == nil || batch[0].FarmDelta.FarmSeq != delta.FarmSeq {
-		t.Fatalf("binary frame = %#v decodeErr=%v", batch, decodeErr)
+	frames := waitWrites(t, writer, 1, time.Second)
+	batch, err := clientwire.DecodeWireBatch(frames[0])
+	if err != nil || len(batch) != 1 || batch[0].GetFarmDelta().GetFarmSeq() != 9 {
+		t.Fatalf("typed push batch=%v err=%v", batch, err)
 	}
 }
 
-func TestGRPCPushFarmDeltaBatchRejectsMalformedEnvelope(t *testing.T) {
-	t.Parallel()
-
-	gateway := New(authStub{}, sessionStub{uid: 42}, runtimeStub{aggregate: farm.NewAggregate(42, "alice")})
-	pool := newTestPushPool(t, "push-token", gateway)
-	clientConn, err := pool.Conn(context.Background(), "bufconn")
-	if err != nil {
-		t.Fatalf("Conn: %v", err)
-	}
-	_, err = farmv1.NewGatewayPushServiceClient(clientConn).PushFarmDeltaBatch(context.Background(), &farmv1.PushFarmDeltaBatchRequest{
-		ConnIds: []uint64{1},
+func TestPushServerDeliversPlayerDelta(t *testing.T) {
+	assertPushEnvelope(t, &publicv3.WireEnvelope{
+		Cmd: CommandPlayerDelta,
+		Payload: &publicv3.WireEnvelope_PlayerDelta{
+			PlayerDelta: &publicv3.PlayerDelta{Coin: 12},
+		},
+	}, func(envelope *publicv3.WireEnvelope) bool {
+		return envelope.GetPlayerDelta().GetCoin() == 12
 	})
-	if err == nil {
-		t.Fatal("expected malformed envelope error")
+}
+
+func TestPushServerDeliversMailNotify(t *testing.T) {
+	assertPushEnvelope(t, &publicv3.WireEnvelope{
+		Cmd: CommandMailNotify,
+		Payload: &publicv3.WireEnvelope_MailNotify{
+			MailNotify: &publicv3.MailNotify{Kind: "new_mail"},
+		},
+	}, func(envelope *publicv3.WireEnvelope) bool {
+		return envelope.GetMailNotify().GetKind() == "new_mail"
+	})
+}
+
+func TestPushServerDeliversTaskNotify(t *testing.T) {
+	assertPushEnvelope(t, &publicv3.WireEnvelope{
+		Cmd: CommandTaskNotify,
+		Payload: &publicv3.WireEnvelope_TaskNotify{
+			TaskNotify: &publicv3.Task{Id: 1, Progress: 2, Target: 3},
+		},
+	}, func(envelope *publicv3.WireEnvelope) bool {
+		return envelope.GetTaskNotify().GetProgress() == 2
+	})
+}
+
+func assertPushEnvelope(t *testing.T, envelope *publicv3.WireEnvelope, valid func(*publicv3.WireEnvelope) bool) {
+	t.Helper()
+	connection, writer := newTestPushConn(t, 0)
+	connection.id, connection.uid, connection.authed = 7, 42, true
+	gateway := New(nil, nil)
+	gateway.connections.Store(connection.id, connection)
+
+	_, err := NewPushServer(gateway).DeliverPush(context.Background(), &farmv1.DeliverPushRequest{
+		ConnectionId: 7,
+		Uid:          42,
+		Envelope:     envelope,
+	})
+	if err != nil {
+		t.Fatalf("DeliverPush: %v", err)
+	}
+	frames := waitWrites(t, writer, 1, time.Second)
+	batch, err := clientwire.DecodeWireBatch(frames[0])
+	if err != nil || len(batch) != 1 || !valid(batch[0]) {
+		t.Fatalf("opaque push batch=%v err=%v", batch, err)
+	}
+}
+
+func TestPushServerKicksSession(t *testing.T) {
+	connection, writer := newTestPushConn(t, 0)
+	connection.id, connection.uid, connection.authed = 7, 42, true
+	gateway := New(nil, nil)
+	gateway.connections.Store(connection.id, connection)
+
+	_, err := NewPushServer(gateway).PushSessionKick(context.Background(), &farmv1.PushSessionKickRequest{
+		ConnectionId: 7,
+		Uid:          42,
+		Reason:       int32(errcode.Kicked),
+	})
+	if err != nil {
+		t.Fatalf("PushSessionKick: %v", err)
+	}
+	frames := waitWrites(t, writer, 1, time.Second)
+	batch, err := clientwire.DecodeWireBatch(frames[0])
+	if err != nil || len(batch) != 1 || batch[0].GetSessionKick().GetReason() != int32(errcode.Kicked) {
+		t.Fatalf("session kick batch=%v err=%v", batch, err)
+	}
+}
+
+func TestPushServerRevokesOnlyMatchingRoom(t *testing.T) {
+	gateway := New(nil, nil)
+	connection := &wsConnection{id: 7, uid: 42, authed: true, roomUID: 99}
+	gateway.connections.Store(connection.id, connection)
+	server := NewPushServer(gateway)
+
+	_, _ = server.RevokeFarmAccess(context.Background(), &farmv1.RevokeFarmAccessRequest{
+		ConnectionId: 7, ViewerUid: 42, OwnerUid: 100,
+	})
+	if connection.currentRoom() != 99 {
+		t.Fatal("mismatched revocation removed the room")
+	}
+	_, _ = server.RevokeFarmAccess(context.Background(), &farmv1.RevokeFarmAccessRequest{
+		ConnectionId: 7, ViewerUid: 42, OwnerUid: 99,
+	})
+	if connection.currentRoom() != 0 {
+		t.Fatalf("matching revocation kept room %d", connection.currentRoom())
 	}
 }

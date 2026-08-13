@@ -19,6 +19,7 @@ import (
 	"farm/server/domain/farm"
 	"farm/server/gateway"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/sharding"
@@ -183,7 +184,7 @@ func runPlanting(baseURL string) error {
 	}
 
 	seq := uint32(1)
-	if err := exchange(conn, gateway.Envelope{
+	if err := exchange(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandHandshake,
 		ClientSeq: seq,
 		Payload: mustJSON(map[string]any{
@@ -195,7 +196,7 @@ func runPlanting(baseURL string) error {
 	}
 	seq++
 
-	enterEnv, err := exchangeResponse(conn, gateway.Envelope{
+	enterEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seq,
 		Payload:   json.RawMessage(`{"owner_uid":0}`),
@@ -296,7 +297,7 @@ func runPlanting(baseURL string) error {
 }
 
 func mustAction(conn *websocket.Conn, seq *uint32, cmd uint32, payload map[string]any) (actionPayload, error) {
-	env, err := exchangeResponse(conn, gateway.Envelope{
+	env, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       cmd,
 		ClientSeq: *seq,
 		Payload:   mustJSON(payload),
@@ -358,69 +359,69 @@ func authenticate(endpoint, username, password string) (authResponse, error) {
 	return result, nil
 }
 
-func exchange(conn *websocket.Conn, request gateway.Envelope) error {
+func exchange(conn *websocket.Conn, request clientwire.Envelope) error {
 	_, err := exchangeResponse(conn, request)
 	return err
 }
 
-func exchangeResponse(conn *websocket.Conn, request gateway.Envelope) (gateway.Envelope, error) {
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+func exchangeResponse(conn *websocket.Conn, request clientwire.Envelope) (clientwire.Envelope, error) {
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	for attempt := 0; attempt < 32; attempt++ {
 		messageType, data, err := conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		responses, err := gateway.DecodeBinaryBatch(data)
+		responses, err := clientwire.DecodeBinaryBatch(data)
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
 		for _, response := range responses {
 			if response.ClientSeq == 0 {
 				continue
 			}
 			if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
-				return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
+				return clientwire.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
 			}
 			if response.Err != errcode.OK {
-				return gateway.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, errcode.OK)
+				return clientwire.Envelope{}, fmt.Errorf("err = %d, want %d", response.Err, errcode.OK)
 			}
 			return response, nil
 		}
 	}
-	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
+	return clientwire.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 // exchangeResponseWithPush verifies that a command crossing Farm/Gateway
 // boundaries also reaches this client as a server push before its response.
-func exchangeResponseWithPush(conn *websocket.Conn, request gateway.Envelope, pushCmd uint32) (gateway.Envelope, gateway.Envelope, error) {
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+func exchangeResponseWithPush(conn *websocket.Conn, request clientwire.Envelope, pushCmd uint32) (clientwire.Envelope, clientwire.Envelope, error) {
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+		return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+		return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
-	var push gateway.Envelope
+	var push clientwire.Envelope
 	for attempt := 0; attempt < 32; attempt++ {
 		messageType, frame, err := conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+			return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(frame)
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
 		if err != nil {
-			return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+			return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
 		for _, env := range envelopes {
 			if env.Cmd == pushCmd && env.ClientSeq == 0 {
@@ -431,15 +432,15 @@ func exchangeResponseWithPush(conn *websocket.Conn, request gateway.Envelope, pu
 				continue
 			}
 			if env.Err != errcode.OK {
-				return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("err = %d, want %d", env.Err, errcode.OK)
+				return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("err = %d, want %d", env.Err, errcode.OK)
 			}
 			if push.Cmd != pushCmd {
-				return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("missing server push cmd=%d", pushCmd)
+				return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("missing server push cmd=%d", pushCmd)
 			}
 			return env, push, nil
 		}
 	}
-	return gateway.Envelope{}, gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
+	return clientwire.Envelope{}, clientwire.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 func smokeUsername() (string, error) {
@@ -509,7 +510,7 @@ func runFriends(baseURL string) error {
 	seqA := uint32(2) // handshake 消耗 seq 1
 	seqB := uint32(2)
 
-	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+	shareEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
 		ClientSeq: seqA,
 		Payload:   emptyJSONObject,
@@ -530,7 +531,7 @@ func runFriends(baseURL string) error {
 		return fmt.Errorf("share token is empty")
 	}
 
-	if _, err := exchangeResponse(connB, gateway.Envelope{
+	if _, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandAcceptInvite,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"token": token}),
@@ -539,7 +540,7 @@ func runFriends(baseURL string) error {
 	}
 	seqB++
 
-	listEnv, err := exchangeResponse(connA, gateway.Envelope{
+	listEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandFriendList,
 		ClientSeq: seqA,
 		Payload:   emptyJSONObject,
@@ -555,7 +556,7 @@ func runFriends(baseURL string) error {
 		return fmt.Errorf("FriendList does not contain B (uid=%d): %#v", loginB.UID, list)
 	}
 
-	dupEnv, err := exchangeEnvelope(connB, gateway.Envelope{
+	dupEnv, err := exchangeEnvelope(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandAddFriendByUID,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"peer_uid": loginA.UID}),
@@ -614,7 +615,7 @@ func runRoom(baseURL string) error {
 	seqB := uint32(2)
 
 	// A GenShareLink → B AcceptInvite，建立好友关系。
-	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+	shareEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
 		ClientSeq: seqA,
 		Payload:   emptyJSONObject,
@@ -631,7 +632,7 @@ func runRoom(baseURL string) error {
 	if token == "" {
 		return fmt.Errorf("share token is empty")
 	}
-	if _, err := exchangeResponse(connB, gateway.Envelope{
+	if _, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandAcceptInvite,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"token": token}),
@@ -641,7 +642,7 @@ func runRoom(baseURL string) error {
 	seqB++
 
 	// B Enter A：relation=FRIEND，并订阅 A 的房间。
-	enterBEnv, err := exchangeResponse(connB, gateway.Envelope{
+	enterBEnv, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID}),
@@ -662,7 +663,7 @@ func runRoom(baseURL string) error {
 	}
 
 	// A Enter 自己农场，拿到权威快照基线。
-	enterAEnv, err := exchangeResponse(connA, gateway.Envelope{
+	enterAEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -680,7 +681,7 @@ func runRoom(baseURL string) error {
 	}
 
 	// A Till plot 0：成功后 farm_seq=1，并广播 FarmDelta(9000) 给 B。
-	tillEnv, err := exchangeResponse(connA, gateway.Envelope{
+	tillEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandTill,
 		ClientSeq: seqA,
 		Payload: mustJSON(map[string]any{
@@ -749,7 +750,7 @@ func runRoom(baseURL string) error {
 	}
 
 	// SyncFarm from_seq=0：delta 路径，应回一条 delta 且无 snapshot。
-	syncFromZero, err := exchangeResponse(connB, gateway.Envelope{
+	syncFromZero, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandSyncFarm,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID, "from_seq": 0}),
@@ -771,7 +772,7 @@ func runRoom(baseURL string) error {
 	}
 
 	// SyncFarm from_seq=1：已追平，应无 delta 且无 snapshot。
-	syncCaught, err := exchangeResponse(connB, gateway.Envelope{
+	syncCaught, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandSyncFarm,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID, "from_seq": 1}),
@@ -789,14 +790,14 @@ func runRoom(baseURL string) error {
 	}
 
 	// B LeaveFarm：之后 A 再写不应再被推送到 B。
-	if _, err := exchangeResponse(connB, gateway.Envelope{
+	if _, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandLeaveFarm,
 		ClientSeq: seqB,
 		Payload:   emptyJSONObject,
 	}); err != nil {
 		return fmt.Errorf("player B LeaveFarm: %w", err)
 	}
-	if _, err := exchangeResponse(connA, gateway.Envelope{
+	if _, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandTill,
 		ClientSeq: seqA,
 		Payload: mustJSON(map[string]any{
@@ -817,7 +818,7 @@ func runRoom(baseURL string) error {
 		}
 		// TaskNotify、MailNotify 与房间 Delta 是独立异步通道，LeaveFarm 之后仍
 		// 可能读到此前已经入队的个人通知。这里只拒绝离开后产生的 plot 1 Delta。
-		envelopes, decodeErr := gateway.DecodeBinaryBatch(data)
+		envelopes, decodeErr := clientwire.DecodeBinaryBatch(data)
 		if decodeErr != nil {
 			continue
 		}
@@ -836,12 +837,12 @@ func runRoom(baseURL string) error {
 
 var pendingServerPushes = struct {
 	sync.Mutex
-	byConnection map[*websocket.Conn][]gateway.Envelope
-}{byConnection: make(map[*websocket.Conn][]gateway.Envelope)}
+	byConnection map[*websocket.Conn][]clientwire.Envelope
+}{byConnection: make(map[*websocket.Conn][]clientwire.Envelope)}
 
 // readServerPush 逐个读取服务端主动推送，不校验 ClientSeq。同一物理帧内
 // 剩余的 Envelope 会保留到后续调用，避免二进制批量合帧后丢消息。
-func readServerPush(conn *websocket.Conn) (gateway.Envelope, error) {
+func readServerPush(conn *websocket.Conn) (clientwire.Envelope, error) {
 	pendingServerPushes.Lock()
 	if queued := pendingServerPushes.byConnection[conn]; len(queued) > 0 {
 		envelope := queued[0]
@@ -857,14 +858,14 @@ func readServerPush(conn *websocket.Conn) (gateway.Envelope, error) {
 
 	messageType, data, err := conn.ReadMessage()
 	if err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	if messageType != websocket.BinaryMessage {
-		return gateway.Envelope{}, fmt.Errorf("push message type = %d, want binary", messageType)
+		return clientwire.Envelope{}, fmt.Errorf("push message type = %d, want binary", messageType)
 	}
-	envelopes, err := gateway.DecodeBinaryBatch(data)
+	envelopes, err := clientwire.DecodeBinaryBatch(data)
 	if err != nil || len(envelopes) == 0 {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	if len(envelopes) > 1 {
 		pendingServerPushes.Lock()
@@ -887,7 +888,7 @@ func dialAndHandshake(login authResponse) (*websocket.Conn, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("websocket subprotocol was not negotiated")
 	}
-	if err := exchange(conn, gateway.Envelope{
+	if err := exchange(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandHandshake,
 		ClientSeq: 1,
 		Payload: mustJSON(map[string]any{
@@ -902,31 +903,31 @@ func dialAndHandshake(login authResponse) (*websocket.Conn, error) {
 }
 
 // exchangeEnvelope 与 exchangeResponse 类似，但不校验 Err 字段，便于断言错误码。
-func exchangeEnvelope(conn *websocket.Conn, request gateway.Envelope) (gateway.Envelope, error) {
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+func exchangeEnvelope(conn *websocket.Conn, request clientwire.Envelope) (clientwire.Envelope, error) {
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	messageType, data, err := conn.ReadMessage()
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 	}
 	if messageType != websocket.BinaryMessage {
-		return gateway.Envelope{}, fmt.Errorf("response message type = %d, want binary", messageType)
+		return clientwire.Envelope{}, fmt.Errorf("response message type = %d, want binary", messageType)
 	}
-	responses, err := gateway.DecodeBinaryBatch(data)
+	responses, err := clientwire.DecodeBinaryBatch(data)
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("decode response: %w", err)
 	}
 	if len(responses) != 1 {
-		return gateway.Envelope{}, fmt.Errorf("response batch size = %d, want 1", len(responses))
+		return clientwire.Envelope{}, fmt.Errorf("response batch size = %d, want 1", len(responses))
 	}
 	response := responses[0]
 	if response.Cmd != request.Cmd || response.ClientSeq != request.ClientSeq {
-		return gateway.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
+		return clientwire.Envelope{}, fmt.Errorf("response headers = cmd %d, seq %d; want cmd %d, seq %d", response.Cmd, response.ClientSeq, request.Cmd, request.ClientSeq)
 	}
 	return response, nil
 }
@@ -988,7 +989,7 @@ func runHelp(baseURL string) error {
 	seqB := uint32(2)
 
 	// 好友关系：A GenShareLink → B AcceptInvite。
-	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+	shareEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
 		ClientSeq: seqA,
 		Payload:   emptyJSONObject,
@@ -1005,7 +1006,7 @@ func runHelp(baseURL string) error {
 	if token == "" {
 		return fmt.Errorf("share token is empty")
 	}
-	if _, err := exchangeResponse(connB, gateway.Envelope{
+	if _, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandAcceptInvite,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"token": token}),
@@ -1015,7 +1016,7 @@ func runHelp(baseURL string) error {
 	seqB++
 
 	// A 进入自己农场，买种、翻地、种植 plot 0。
-	if _, err := exchangeResponse(connA, gateway.Envelope{
+	if _, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -1023,7 +1024,7 @@ func runHelp(baseURL string) error {
 		return fmt.Errorf("player A EnterFarm(self): %w", err)
 	}
 	seqA++
-	if _, err := exchangeResponse(connA, gateway.Envelope{
+	if _, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandBuy,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"item_id": 1, "quantity": 1}),
@@ -1031,7 +1032,7 @@ func runHelp(baseURL string) error {
 		return fmt.Errorf("player A Buy seed: %w", err)
 	}
 	seqA++
-	if _, err := exchangeResponse(connA, gateway.Envelope{
+	if _, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandTill,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0, "plot_index": 0, "arg": 0}),
@@ -1039,7 +1040,7 @@ func runHelp(baseURL string) error {
 		return fmt.Errorf("player A Till: %w", err)
 	}
 	seqA++
-	if _, err := exchangeResponse(connA, gateway.Envelope{
+	if _, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandPlant,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0, "plot_index": 0, "arg": 1}),
@@ -1060,7 +1061,7 @@ func runHelp(baseURL string) error {
 	}
 
 	// B 拜访 A：relation=FRIEND。
-	enterBEnv, err := exchangeResponse(connB, gateway.Envelope{
+	enterBEnv, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID}),
@@ -1109,7 +1110,7 @@ func runHelp(baseURL string) error {
 	}
 
 	// A SyncFarm(from=0)：浇水已提交，farm_seq 应 >=1。
-	syncEnv, err := exchangeResponse(connA, gateway.Envelope{
+	syncEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandSyncFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0, "from_seq": 0}),
@@ -1139,35 +1140,35 @@ type crossRewardResponse struct {
 // it finds the matching response, draining any FarmDelta(9000) pushes the
 // server emits to the visiting connection. It does NOT assert Err so callers
 // can branch on success/failure codes.
-func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, ownerUID uint64, plotIndex uint32) (gateway.Envelope, error) {
-	request := gateway.Envelope{
+func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, ownerUID uint64, plotIndex uint32) (clientwire.Envelope, error) {
+	request := clientwire.Envelope{
 		Cmd:       cmd,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": ownerUID, "plot_index": plotIndex, "arg": 0}),
 	}
 	*seq++
-	data, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
+	data, err := clientwire.EncodeBinaryBatch([]clientwire.Envelope{request})
 	if err != nil {
-		return gateway.Envelope{}, fmt.Errorf("encode request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("encode request: %w", err)
 	}
 	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("write request: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("write request: %w", err)
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return gateway.Envelope{}, fmt.Errorf("set read deadline: %w", err)
+		return clientwire.Envelope{}, fmt.Errorf("set read deadline: %w", err)
 	}
 	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	for attempt := 0; attempt < 4; attempt++ {
 		messageType, frame, err := conn.ReadMessage()
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("read response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("read response: %w", err)
 		}
 		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		envelopes, err := gateway.DecodeBinaryBatch(frame)
+		envelopes, err := clientwire.DecodeBinaryBatch(frame)
 		if err != nil {
-			return gateway.Envelope{}, fmt.Errorf("decode response: %w", err)
+			return clientwire.Envelope{}, fmt.Errorf("decode response: %w", err)
 		}
 		for _, env := range envelopes {
 			if env.Cmd == request.Cmd && env.ClientSeq == request.ClientSeq {
@@ -1176,7 +1177,7 @@ func exchangeVisitorEnvelope(conn *websocket.Conn, seq *uint32, cmd uint32, owne
 		}
 		// 服务端主动推送（如 FarmDelta）忽略，继续等待匹配响应。
 	}
-	return gateway.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
+	return clientwire.Envelope{}, fmt.Errorf("no matching response for cmd=%d seq=%d", request.Cmd, request.ClientSeq)
 }
 
 // runShards 保留双实例兼容场景：gRPC 种植/宠物/任务邮件及跨 Farm 互助与偷菜；
@@ -1223,7 +1224,7 @@ func runShards(gw0, gw1 string) error {
 		return fmt.Errorf("prepare B through sharded Farm RPC: %w", err)
 	}
 
-	shareEnv, err := exchangeResponse(connA, gateway.Envelope{
+	shareEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandGenShareLink,
 		ClientSeq: seqA,
 		Payload:   emptyJSONObject,
@@ -1240,7 +1241,7 @@ func runShards(gw0, gw1 string) error {
 	if token == "" {
 		return fmt.Errorf("share token is empty")
 	}
-	if _, err := exchangeResponse(connB, gateway.Envelope{
+	if _, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandAcceptInvite,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"token": token}),
@@ -1250,7 +1251,7 @@ func runShards(gw0, gw1 string) error {
 	seqB++
 
 	// A 拜访 B：应转发到 farm-1。
-	enterAEnv, err := exchangeResponse(connA, gateway.Envelope{
+	enterAEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginB.UID}),
@@ -1271,7 +1272,7 @@ func runShards(gw0, gw1 string) error {
 	}
 
 	// B 拜访 A：应转发到 farm-0。
-	enterBEnv, err := exchangeResponse(connB, gateway.Envelope{
+	enterBEnv, err := exchangeResponse(connB, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqB,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginA.UID}),
@@ -1298,7 +1299,7 @@ func runShards(gw0, gw1 string) error {
 	seasonMS := gameconfig.SeasonDurationMs(crop, 0, gameconfig.TimeProfileDemo)
 	waterSpan := seasonMS * 35 / 100
 	sleepUntilElapsed(plantedBAt, waterSpan+250)
-	waterEnv, farmDeltaEnv, err := exchangeResponseWithPush(connA, gateway.Envelope{
+	waterEnv, farmDeltaEnv, err := exchangeResponseWithPush(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandWater,
 		ClientSeq: seqA,
 		Payload: mustJSON(map[string]any{
@@ -1321,7 +1322,7 @@ func runShards(gw0, gw1 string) error {
 	}
 
 	sleepUntilElapsed(plantedBAt, seasonMS+500)
-	matureEnv, err := exchangeResponse(connA, gateway.Envelope{
+	matureEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": loginB.UID}),
@@ -1338,7 +1339,7 @@ func runShards(gw0, gw1 string) error {
 		return fmt.Errorf("player B plot 0 final yield = 0 after maturity")
 	}
 
-	stealEnv, err := exchangeResponse(connA, gateway.Envelope{
+	stealEnv, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandSteal,
 		ClientSeq: seqA,
 		Payload: mustJSON(map[string]any{
@@ -1356,7 +1357,7 @@ func runShards(gw0, gw1 string) error {
 		return fmt.Errorf("decode cross-farm steal reward: amount=%d err=%v", steal.Amount, err)
 	}
 
-	selfAfterSteal, err := exchangeResponse(connA, gateway.Envelope{
+	selfAfterSteal, err := exchangeResponse(connA, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: seqA,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -1470,25 +1471,25 @@ func runShardedDogIntercept(owner, visitor *smokePlayer, debugBaseURL string) er
 	return fmt.Errorf("no dog interception after %d attempts", stealMaxIntercept)
 }
 
-func readServerPushUntil(conn *websocket.Conn, wantCmd uint32) (gateway.Envelope, error) {
+func readServerPushUntil(conn *websocket.Conn, wantCmd uint32) (clientwire.Envelope, error) {
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return gateway.Envelope{}, err
+		return clientwire.Envelope{}, err
 	}
 	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 	for attempt := 0; attempt < 64; attempt++ {
 		env, err := readServerPush(conn)
 		if err != nil {
-			return gateway.Envelope{}, err
+			return clientwire.Envelope{}, err
 		}
 		if env.Cmd == wantCmd && env.ClientSeq == 0 && env.Err == errcode.OK {
 			return env, nil
 		}
 	}
-	return gateway.Envelope{}, fmt.Errorf("missing server push cmd=%d", wantCmd)
+	return clientwire.Envelope{}, fmt.Errorf("missing server push cmd=%d", wantCmd)
 }
 
 func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (time.Time, error) {
-	enterEnv, err := exchangeResponse(conn, gateway.Envelope{
+	enterEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),
@@ -1522,7 +1523,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 		return time.Time{}, fmt.Errorf("plant farm_seq=%d did not advance after buy=%d", plant.FarmSeq, buy.FarmSeq)
 	}
 
-	if _, err := exchangeResponse(conn, gateway.Envelope{
+	if _, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandPetStatus,
 		ClientSeq: *seq,
 		Payload:   emptyJSONObject,
@@ -1531,7 +1532,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 	}
 	*seq++
 
-	syncEnv, err := exchangeResponse(conn, gateway.Envelope{
+	syncEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandSyncFarm,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0, "from_seq": 0}),
@@ -1545,7 +1546,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 		return time.Time{}, fmt.Errorf("decode SyncFarm: farm_seq=%d want >=%d err=%v", sync.FarmSeq, plant.FarmSeq, err)
 	}
 
-	taskEnv, err := exchangeResponse(conn, gateway.Envelope{
+	taskEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandTaskList,
 		ClientSeq: *seq,
 		Payload:   emptyJSONObject,
@@ -1576,7 +1577,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 		return plantedAt, nil
 	}
 
-	taskClaimEnv, err := exchangeResponse(conn, gateway.Envelope{
+	taskClaimEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandTaskClaim,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"task_id": 1}),
@@ -1594,7 +1595,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 	}
 	*seq++
 
-	dailyEnv, err := exchangeResponse(conn, gateway.Envelope{
+	dailyEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandClaimDailyLogin,
 		ClientSeq: *seq,
 		Payload:   emptyJSONObject,
@@ -1610,7 +1611,7 @@ func prepareShardedFarm(conn *websocket.Conn, seq *uint32, verifyRewards bool) (
 		return time.Time{}, fmt.Errorf("decode daily reward: coin=%d err=%v", dailyReward.Coin, err)
 	}
 	*seq++
-	afterEnv, err := exchangeResponse(conn, gateway.Envelope{
+	afterEnv, err := exchangeResponse(conn, clientwire.Envelope{
 		Cmd:       gateway.CommandEnterFarm,
 		ClientSeq: *seq,
 		Payload:   mustJSON(map[string]any{"owner_uid": 0}),

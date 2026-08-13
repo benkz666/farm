@@ -5,13 +5,13 @@ package farm.internal.v1;
 option go_package = "farm/server/gen/farm/v1;farmv1";
 
 import "farm/internal/v1/common.proto";
-import "farm/public/v3/client.proto";
-
-// FarmCommandService routes owner-authoritative gameplay commands to the
-// Farm instance that owns FarmUID. Client-originated commands use the same
-// typed payload as the public WebSocket boundary.
+// FarmCommandService owns every Farm-facing client command. Gateway forwards
+// the typed public envelope without translating business payloads.
 service FarmCommandService {
-  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Execute(ClientCommandRequest) returns (ClientCommandResponse);
+  // AdvanceTask delivers a cross-shard Farm-owned side effect (for example,
+  // advancing the visitor's task after entering a friend's farm).
+  rpc AdvanceTask(AdvanceTaskRequest) returns (AdvanceTaskResponse);
   // ExecuteStream amortizes the per-command HTTP/2 stream and metadata cost.
   // request_id correlates responses because commands for different farms may
   // complete out of order; commands for one farm_uid remain ordered.
@@ -21,65 +21,24 @@ service FarmCommandService {
   rpc ExecuteBatchStream(stream StreamExecuteBatchRequest) returns (stream StreamExecuteBatchResponse);
 }
 
-enum Operation {
-  OPERATION_UNSPECIFIED = 0;
-  OPERATION_ENTER_FARM = 1;
-  OPERATION_PLOT_ACTION = 2;
-  OPERATION_SHOP = 3;
-  OPERATION_SYNC_FARM = 4;
-  OPERATION_PET = 5;
-  OPERATION_CROSS_RESERVE = 6;
-  OPERATION_CROSS_SETTLE = 7;
-  OPERATION_TASK_LIST = 8;
-  OPERATION_TASK_CLAIM = 9;
-  OPERATION_ADVANCE_TASK = 10;
-  OPERATION_DAILY_LOGIN_CLAIM = 11;
-  OPERATION_MAIL_LIST = 12;
-  OPERATION_MAIL_READ = 13;
-  OPERATION_MAIL_DELETE = 14;
-  OPERATION_MAIL_CLAIM = 15;
-  OPERATION_CODEX_LIST = 16;
+message AdvanceTaskRequest {
+  uint64 uid = 1;
+  uint32 task_id = 2;
+  uint32 amount = 3;
 }
 
-message ExecuteRequest {
-  Operation operation = 1;
-  uint64 farm_uid = 2;
-  ConnRef originator = 3;
-  // Retained only for internal maintenance commands that have no public cmd.
-  bytes payload_json = 4;
-  // Gateway can consume a typed public payload directly for self read paths.
-  bool prefer_prepared = 5;
-  ClientCommand client_command = 6;
-}
-
-message ExecuteResponse {
-  // Protocol-level error code; 0 means success.
+message AdvanceTaskResponse {
   int32 err = 1;
-  // Retained only for internal maintenance commands that have no public cmd.
-  bytes payload_json = 2;
-  // Authoritative aggregate sequence for room watermark maintenance. Zero for
-  // operations that do not expose or mutate a Farm aggregate.
-  uint64 farm_seq = 3;
-  // Pre-marshaled public Protobuf oneof body for opaque Gateway forwarding.
-  bytes prepared_payload = 4;
-  // WireEnvelope oneof field number (13=EnterFarmResponse, 14=SyncFarmResponse).
-  uint32 prepared_field = 5;
-  farm.public.v3.CommandResponse client_response = 6;
-}
-
-message ClientCommand {
-  uint32 command = 1;
-  farm.public.v3.CommandRequest request = 2;
 }
 
 message StreamExecuteRequest {
   uint64 request_id = 1;
-  ExecuteRequest request = 2;
+  ClientCommandRequest request = 2;
 }
 
 message StreamExecuteResponse {
   uint64 request_id = 1;
-  ExecuteResponse response = 2;
+  ClientCommandResponse response = 2;
 }
 
 message StreamExecuteBatchRequest {

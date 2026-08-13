@@ -20,7 +20,7 @@ wait_write_journal_idle() {
   while ((SECONDS < deadline)); do
     values="$(
       docker compose -p "${project_name}" -f "${compose_file}" \
-        --profile app exec -T event-redis sh -lc '
+        --profile app exec -T redis sh -lc '
           for key in $(redis-cli --scan --pattern "*:events"); do
             redis-cli --raw XINFO GROUPS "$key"
           done | awk '\''

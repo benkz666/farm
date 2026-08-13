@@ -14,14 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"farm/server/farmsvr/farmrpc"
-	"farm/server/farmsvr/room"
-	"farm/server/gateway/presence"
+	publicv3 "farm/server/gen/farm/public/v3"
+	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientjson"
-	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
+	"farm/server/shared/presence"
 	"farm/server/shared/sharding"
 	"farm/server/shared/store"
 	"farm/server/shared/telemetry"
@@ -33,26 +32,34 @@ type Authenticator interface {
 	Login(ctx context.Context, username, password string) (uint64, string, error)
 }
 
-// FarmRuntime is the Actor boundary used by EnterFarm.
-type FarmRuntime interface {
-	Do(uid uint64, fn func(*room.FarmActor) error) error
+// SocialCommandClient is Social's complete public-command boundary.
+type SocialCommandClient interface {
+	ExecuteClientCommand(context.Context, *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error)
+}
+
+// FarmCommandClient is the transport contract used to route one typed command
+// to a Farm shard. Gateway deliberately does not depend on the Farm package.
+type FarmCommandClient interface {
+	Execute(context.Context, string, *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error)
+}
+
+// SessionKickPusher is the transport callback for a connection owned by a
+// different Gateway instance.
+type SessionKickPusher interface {
+	PushSessionKick(context.Context, presence.ConnRef, uint64, errcode.Code) error
 }
 
 // Gateway owns the HTTP and WebSocket transport adapters.
 type Gateway struct {
 	auth                      Authenticator
 	sessions                  store.SessionStore
-	runtime                   FarmRuntime
-	farmRPC                   farmrpc.Client
+	farmRPC                   FarmCommandClient
+	socialRPC                 SocialCommandClient
 	routes                    *sharding.RouteTable
-	friends                   store.FriendStore
-	friendPayloads            *friendPayloadCache
-	inviteSecret              []byte
 	now                       func() int64
 	timeProfiles              *gameconfig.TimeProfileSwitch
 	debugTimeProfileMu        sync.Mutex
 	offsetMs                  atomic.Int64
-	rooms                     *RoomHub
 	nextConnID                atomic.Uint64
 	connRegistry              *presence.Registry
 	gatewayID                 string
@@ -60,19 +67,7 @@ type Gateway struct {
 	connections               sync.Map
 	allowDebug                bool
 	disableWSRateLimit        bool
-	crossClient               CrossFarmClient
-	crossEnabled              bool
-	crossPending              sync.Map
-	crossSlots                chan struct{}
-	writeSlots                chan struct{}
-	writeAdmission            *DynamicWriteAdmission
-	nextCrossReqID            atomic.Uint64
-	stealHints                store.StealHintStore
-	taskMail                  store.TaskMailStore
-	taskNotifyFanout          farmrpc.TaskNotifyPublisher
-	sessionKickPusher         farmrpc.SessionKickPusher
-	taskNotifyDelivery        func(*wsConnection, store.Task) error
-	mailNotifyDelivery        func(*wsConnection, string) error
+	sessionKickPusher         SessionKickPusher
 	afterConnectionRegistered func(*wsConnection) // test seam for pre-ready pushes
 	debugFanout               *DebugFanout
 	metrics                   *telemetry.Metrics
@@ -102,59 +97,27 @@ func WithTimeProfileSwitch(profiles *gameconfig.TimeProfileSwitch) Option {
 	}
 }
 
-// WithFriendStore configures the friendship persistence boundary.
-func WithFriendStore(friends store.FriendStore) Option {
-	return func(gateway *Gateway) {
-		gateway.friends = friends
-	}
-}
-
-// WithStealHintStore configures the weak-consistent stealable-farm hint store.
-func WithStealHintStore(hints store.StealHintStore) Option {
-	return func(gateway *Gateway) {
-		gateway.stealHints = hints
-	}
-}
-
-// WithTaskMailStore configures task, mail and daily-login persistence.
-func WithTaskMailStore(taskMail store.TaskMailStore) Option {
-	return func(gateway *Gateway) {
-		gateway.taskMail = taskMail
-	}
-}
-
-// WithTaskNotifyFanout forwards local Gateway-owned task updates to every
-// connection leased for the player across Gateway instances.
-func WithTaskNotifyFanout(publisher farmrpc.TaskNotifyPublisher) Option {
-	return func(gateway *Gateway) {
-		gateway.taskNotifyFanout = publisher
-	}
-}
-
 // WithSessionKickPusher forwards a replacement notice to an evicted connection
 // when that connection is owned by another Gateway instance.
-func WithSessionKickPusher(pusher farmrpc.SessionKickPusher) Option {
+func WithSessionKickPusher(pusher SessionKickPusher) Option {
 	return func(gateway *Gateway) {
 		gateway.sessionKickPusher = pusher
-	}
-}
-
-// WithInviteSecret configures the HMAC secret used for sharing invitations.
-func WithInviteSecret(secret []byte) Option {
-	secret = append([]byte(nil), secret...)
-	return func(gateway *Gateway) {
-		gateway.inviteSecret = secret
 	}
 }
 
 // WithFarmRPC enables routed Farm commands for a gateway-only process. The
 // route table is immutable after startup, so concurrent WebSocket requests may
 // safely share it.
-func WithFarmRPC(client farmrpc.Client, routes *sharding.RouteTable) Option {
+func WithFarmRPC(client FarmCommandClient, routes *sharding.RouteTable) Option {
 	return func(gateway *Gateway) {
 		gateway.farmRPC = client
 		gateway.routes = routes
 	}
+}
+
+// WithSocialRPC configures the sole Social application boundary.
+func WithSocialRPC(client SocialCommandClient) Option {
+	return func(gateway *Gateway) { gateway.socialRPC = client }
 }
 
 // WithDebugTimeFanout fans /api/debug/advance to every Farm and peer Gateway
@@ -183,12 +146,6 @@ func WithConnectionRegistry(registry *presence.Registry, gatewayID string) Optio
 func WithMetrics(m *telemetry.Metrics) Option {
 	return func(gateway *Gateway) {
 		gateway.metrics = m
-		if gateway.writeAdmission != nil {
-			gateway.writeAdmission.SetMetrics(m)
-		}
-		if gateway.rooms != nil {
-			gateway.rooms.metrics = m
-		}
 	}
 }
 
@@ -201,45 +158,6 @@ func WithWSRateLimitDisabled() Option {
 	}
 }
 
-// WithCrossInFlightLimit bounds the number of cross-farm sagas retained by a
-// Gateway. Each saga owns a timer, pending response and multiple durable Farm
-// operations; bounding them prevents an overload burst from becoming an OOM.
-// A non-positive limit disables the guard.
-func WithCrossInFlightLimit(limit int) Option {
-	return func(gateway *Gateway) {
-		if limit <= 0 {
-			gateway.crossSlots = nil
-			return
-		}
-		gateway.crossSlots = make(chan struct{}, limit)
-	}
-}
-
-// WithWriteInFlightLimit bounds local plot/shop commands admitted to Farm.
-// It sheds overload before requests accumulate in gRPC/Actor/committer queues,
-// protecting tail latency without changing per-player ordering.
-func WithWriteInFlightLimit(limit int) Option {
-	return func(gateway *Gateway) {
-		if limit <= 0 {
-			gateway.writeSlots = nil
-			return
-		}
-		gateway.writeSlots = make(chan struct{}, limit)
-	}
-}
-
-// WithDynamicWriteAdmission replaces the fixed write-slot guard with a
-// closed-loop controller driven by the durable Redis Stream backlog. The fixed
-// slot channel remains configured as a fallback when no controller is passed.
-func WithDynamicWriteAdmission(admission *DynamicWriteAdmission) Option {
-	return func(gateway *Gateway) {
-		gateway.writeAdmission = admission
-		if gateway.metrics != nil && admission != nil {
-			admission.SetMetrics(gateway.metrics)
-		}
-	}
-}
-
 // WithAPIDocs mounts an already environment-gated, offline documentation handler.
 func WithAPIDocs(handler http.Handler) Option {
 	return func(gateway *Gateway) {
@@ -248,41 +166,21 @@ func WithAPIDocs(handler http.Handler) Option {
 }
 
 // New constructs the transport gateway from its application boundaries.
-func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, options ...Option) *Gateway {
+func New(auth Authenticator, sessions store.SessionStore, options ...Option) *Gateway {
 	gateway := &Gateway{
-		auth:           auth,
-		sessions:       sessions,
-		runtime:        runtime,
-		rooms:          NewRoomHub(),
-		now:            func() int64 { return time.Now().UnixMilli() },
-		timeProfiles:   gameconfig.NewTimeProfileSwitch(gameconfig.TimeProfileDemo),
-		friendPayloads: &friendPayloadCache{},
-		crossSlots:     make(chan struct{}, 1024),
-		writeSlots:     make(chan struct{}, 512),
+		auth: auth, sessions: sessions,
+		now:          func() int64 { return time.Now().UnixMilli() },
+		timeProfiles: gameconfig.NewTimeProfileSwitch(gameconfig.TimeProfileDemo),
 	}
 	for _, option := range options {
 		if option != nil {
 			option(gateway)
 		}
 	}
-	if gateway.writeAdmission != nil && gateway.metrics != nil {
-		gateway.writeAdmission.SetMetrics(gateway.metrics)
-	}
 	// Random non-sequential start so a restarted Gateway with the same
 	// gatewayID cannot reuse conn_id=1 against leftover connreg leases.
 	gateway.nextConnID.Store(connectionIDSeed())
-	gateway.nextCrossReqID.Store(crossRequestSeed())
 	return gateway
-}
-
-func crossRequestSeed() uint64 {
-	var seed [8]byte
-	if _, err := cryptorand.Read(seed[:]); err == nil {
-		return binary.LittleEndian.Uint64(seed[:])
-	}
-	// crypto/rand failures are exceptional. A time-based fallback preserves
-	// availability; the per-Gateway sequence still prevents local collisions.
-	return uint64(time.Now().UnixNano())
 }
 
 // connectionIDSeed returns a crypto-random 64-bit counter base. The first
@@ -354,44 +252,52 @@ func (g *Gateway) Handler() http.Handler {
 	return mux
 }
 
-func (g *Gateway) executeFarmRPC(ctx context.Context, uid uint64, command farmrpc.CommandRequest) (farmrpc.CommandResponse, error) {
+func (g *Gateway) executeFarmRPC(ctx context.Context, routeUID uint64, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
 	if g.farmRPC == nil || g.routes == nil {
-		return farmrpc.CommandResponse{}, errors.New("gateway: farm RPC is not configured")
+		return nil, errors.New("gateway: farm RPC is not configured")
 	}
-	farmID, err := g.routes.FarmID(uid)
+	farmID, err := g.routes.FarmID(routeUID)
 	if err != nil {
-		return farmrpc.CommandResponse{}, err
+		return nil, err
 	}
-	command.FarmUID = uid
-	if command.Originator.ConnID != 0 && command.Originator.GatewayID == "" {
-		command.Originator.GatewayID = g.gatewayID
+	if request == nil || request.Envelope == nil {
+		return nil, errors.New("gateway: nil Farm command")
 	}
-	response, err := g.farmRPC.Execute(ctx, farmID, command)
+	request.RouteUid = routeUID
+	response, err := g.farmRPC.Execute(ctx, farmID, request)
 	if err != nil {
-		return farmrpc.CommandResponse{}, err
+		return nil, err
 	}
-	if response.Err == errcode.OK && len(response.Payload) > 0 {
-		if err := clientwire.ValidatePayloadObject(response.Payload); err != nil {
-			return farmrpc.CommandResponse{}, fmt.Errorf("gateway: invalid Farm RPC response: %w", err)
-		}
-	}
-	if response.Err == errcode.OK && len(response.PreparedPayload) > 0 &&
-		!clientwire.IsPreparedResponseField(response.PreparedField) {
-		return farmrpc.CommandResponse{}, errors.New("gateway: invalid prepared Farm RPC response")
-	}
-	if response.Err == errcode.OK && command.PreferPrepared {
-		if len(response.PreparedPayload) == 0 && len(response.Payload) == 0 {
-			return farmrpc.CommandResponse{}, errors.New("gateway: empty Farm RPC response")
-		}
+	if response == nil || response.Envelope == nil || response.Envelope.Cmd != request.Envelope.Cmd ||
+		response.Envelope.ClientSeq != request.Envelope.ClientSeq {
+		return nil, errors.New("gateway: malformed Farm response")
 	}
 	return response, nil
 }
 
-func (g *Gateway) connectionRef(connection *wsConnection) presence.ConnRef {
-	if connection == nil {
-		return presence.ConnRef{}
+func (g *Gateway) executeSocialRPC(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
+	if g.socialRPC == nil || request == nil || request.Envelope == nil {
+		return nil, errors.New("gateway: Social RPC is not configured")
 	}
-	return presence.ConnRef{ConnID: connection.id, GatewayID: g.gatewayID}
+	response, err := g.socialRPC.ExecuteClientCommand(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil || response.Envelope == nil || response.Envelope.Cmd != request.Envelope.Cmd ||
+		response.Envelope.ClientSeq != request.Envelope.ClientSeq {
+		return nil, errors.New("gateway: malformed Social response")
+	}
+	return response, nil
+}
+
+func (g *Gateway) clientCommandRequest(connection *wsConnection, envelope *publicv3.WireEnvelope, routeUID uint64) *farmv1.ClientCommandRequest {
+	request := &farmv1.ClientCommandRequest{
+		Uid: connection.uid, RouteUid: routeUID, ActiveFarmUid: connection.currentRoom(), Envelope: envelope,
+	}
+	if connection.id != 0 && g.gatewayID != "" {
+		request.Originator = &farmv1.ConnRef{ConnId: connection.id, GatewayId: g.gatewayID}
+	}
+	return request
 }
 
 func (g *Gateway) registerConnection(ctx context.Context, connection *wsConnection) error {

@@ -48,7 +48,6 @@ CPU_QUERIES = {
     "social": 'sum(rate(container_cpu_usage_seconds_total{name="benkz-social-1"}[30s])) * 100',
     "mysql": 'sum(rate(container_cpu_usage_seconds_total{name="benkz-mysql-1"}[30s])) * 100',
     "redis": 'sum(rate(container_cpu_usage_seconds_total{name="benkz-redis-1"}[30s])) * 100',
-    "event_redis": 'sum(rate(container_cpu_usage_seconds_total{name="benkz-event-redis-1"}[30s])) * 100',
 }
 
 
@@ -227,7 +226,7 @@ def main() -> None:
     farm_peak_max = metric_max("farm", "peak_pct")
     mysql_average_max = metric_max("mysql", "average_pct")
     mysql_peak_max = metric_max("mysql", "peak_pct")
-    event_redis_peak_max = metric_max("event_redis", "peak_pct")
+    redis_peak_max = metric_max("redis", "peak_pct")
 
     background_lines = "\n".join(
         f"- **{row['name']}**：{row['background']}" for row in rows if row["background"] != "不适用"
@@ -263,7 +262,7 @@ def main() -> None:
 - 三个 Gateway 的最高窗口平均 CPU 合计约 {gateway_average_max:.1f}%（平均每实例约 {gateway_average_max / 3:.1f}%），没有接近三核总上限。
 - Farm 的最高窗口平均 CPU 约 {farm_average_max:.1f}%，最高瞬时约 {farm_peak_max:.1f}%；部分写场景接近 80% 目标，但读场景多为 P99 先触线。
 - MySQL 最高窗口平均 CPU 约 {mysql_average_max:.1f}% 个单核（2 核配额的 {mysql_average_max / 2:.1f}%）；一次后台追平阶段瞬时达到约 {mysql_peak_max / 2:.1f}% 配额，但没有持续 CPU 饱和。
-- event-redis 最高瞬时 CPU 约 {event_redis_peak_max:.1f}%。跨农场积压的直接限制是事件放大、4 个 Projector、自适应降并发和有序 SQL 投影吞吐，而不是 MySQL 原始 CPU 上限。
+- 共享 Redis 最高瞬时 CPU 约 {redis_peak_max:.1f}%。会话、缓存和事件日志共享实例，但通过独立连接池与 key 前缀隔离；跨农场积压的直接限制仍是事件放大、Projector 和有序 SQL 投影吞吐。
 - 最终检查中 Gateway/Farm/Social/MySQL/Redis 均在运行，RestartCount=0、OOMKilled=false；夹具切换造成的主动 Farm restart 不属于异常重启。
 
 ## 主要结论

@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 	"farm/server/shared/store"
 
@@ -61,6 +63,26 @@ func TestLargeFriendUIDsRemainDistinct(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].UID == rows[1].UID {
 		t.Fatalf("ListFriends() = %#v", rows)
+	}
+}
+
+func TestExecuteClientCommandReturnsTypedFriendList(t *testing.T) {
+	const friendUID = uint64(9007199254740993)
+	server := NewGRPCServer(&friendStoreStub{rows: []store.FriendRow{{UID: friendUID, Nickname: "好友"}}})
+	response, err := server.ExecuteClientCommand(t.Context(), &farmv1.ClientCommandRequest{
+		Uid: 42,
+		Envelope: &publicv3.WireEnvelope{
+			Cmd: 400, ClientSeq: 9,
+			Payload: &publicv3.WireEnvelope_CommandRequest{CommandRequest: &publicv3.CommandRequest{}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteClientCommand: %v", err)
+	}
+	wire := response.GetEnvelope()
+	friends := wire.GetCommandResponse().GetFriends()
+	if wire.GetErr() != int32(errcode.OK) || len(friends) != 1 || friends[0].GetUid() != friendUID {
+		t.Fatalf("typed friend response = %#v", response)
 	}
 }
 
