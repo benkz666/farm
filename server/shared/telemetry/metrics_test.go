@@ -29,6 +29,20 @@ func TestMetricsRegistryIsInjectable(t *testing.T) {
 	m2.HTTPRequests.WithLabelValues("GET", "/api/login", "200").Inc()
 }
 
+func TestWSRateLimitReasonsStayBounded(t *testing.T) {
+	t.Parallel()
+
+	m := telemetry.NewMetrics(prometheus.NewRegistry())
+	m.ObserveWSRateLimited("write_slot")
+	m.ObserveWSRateLimited("untrusted-client-value")
+	if got := testutil.ToFloat64(m.WSRateLimited.WithLabelValues("write_slot")); got != 1 {
+		t.Fatalf("write-slot rate-limit count = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.WSRateLimited.WithLabelValues("unknown")); got != 1 {
+		t.Fatalf("unknown rate-limit count = %v, want 1", got)
+	}
+}
+
 func TestHTTPMiddlewareRecordsRouteNotRawPath(t *testing.T) {
 	t.Parallel()
 
@@ -69,12 +83,15 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 	m.ObserveWSWriteQueueDepth(3)
 	m.ObserveWSWriteQueueFull()
 	m.ObserveWSWriteFailure("push")
+	m.ObserveWSRateLimited("write_slot")
 	m.ActorResident.Set(3)
 	m.ObserveMailboxDepth(2)
 	m.ActorDoBusy.Inc()
 	m.ObserveActorLoad(5*time.Millisecond, nil)
 	m.ObserveActorSave(8*time.Millisecond, io.EOF)
 	m.ObserveCommitBatch(4, 7)
+	m.SetWriteJournalProjectionLimit(2)
+	m.SetGatewayWriteAdmission(384, 123, 456, false)
 	m.ObserveDeltaBroadcast(1, 4, 3*time.Millisecond, 7*time.Millisecond)
 
 	body := gatherText(t, reg)
@@ -89,6 +106,10 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 		"farm_ws_write_queue_depth",
 		"farm_ws_write_queue_full_total",
 		"farm_ws_write_failures_total",
+		"farm_ws_rate_limited_total",
+		"farm_gateway_write_admission_limit",
+		"farm_gateway_write_journal_pending",
+		"farm_gateway_write_journal_lag",
 		"farm_actor_resident",
 		"farm_actor_mailbox_depth",
 		"farm_actor_do_busy_total",
@@ -96,6 +117,7 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 		"farm_committer_batches_total",
 		"farm_committer_farms_total",
 		"farm_committer_requests_total",
+		"farm_write_journal_projection_limit",
 		"farm_actor_save_errors_total",
 		"farm_delta_broadcast_batches_total",
 		"farm_delta_broadcast_targets",

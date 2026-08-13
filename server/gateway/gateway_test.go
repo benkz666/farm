@@ -1748,7 +1748,6 @@ func TestGatewayReservesCrossActionThroughTypedCrossRPC(t *testing.T) {
 		t.Fatalf("generic Farm RPC calls = %#v, want none", client.calls)
 	}
 	gateway.crossPending.Range(func(key, value any) bool {
-		value.(*crossPending).timer.Stop()
 		gateway.crossPending.Delete(key)
 		return true
 	})

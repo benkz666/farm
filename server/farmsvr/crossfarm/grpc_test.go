@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"sync"
 	"testing"
+	"time"
 
 	"farm/server/domain/farm"
 	"farm/server/farmsvr/room"
+	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
@@ -19,8 +21,9 @@ import (
 )
 
 type outboxAckStub struct {
-	mu        sync.Mutex
-	published map[string]bool
+	mu         sync.Mutex
+	published  map[string]bool
+	batchCalls int
 }
 
 func newOutboxAckStub() *outboxAckStub {
@@ -40,6 +43,15 @@ func (s *outboxAckStub) MarkOutboxPublished(_ context.Context, eventID string) e
 	s.published[eventID] = true
 	return nil
 }
+func (s *outboxAckStub) MarkOutboxPublishedBatch(_ context.Context, eventIDs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchCalls++
+	for _, eventID := range eventIDs {
+		s.published[eventID] = true
+	}
+	return nil
+}
 func (s *outboxAckStub) MarkOutboxRetry(context.Context, string, int, int64) error { return nil }
 func (s *outboxAckStub) MarkOutboxDeadLetter(context.Context, string, int) error   { return nil }
 func (s *outboxAckStub) DeletePublishedOutboxBefore(context.Context, int64) (int64, error) {
@@ -56,7 +68,7 @@ func TestGRPCApplyAndDeliverDuplicateSettle(t *testing.T) {
 	}}
 	owner := NewOwner(runtime, ownerFriends{allowed: true}, func() int64 { return 40_000 }, nil, nil)
 	visitor := NewVisitorSettler(runtime, func() int64 { return 40_000 })
-	server := NewGRPCServer(owner, visitor, func(uint64) bool { return true }, nil, newOutboxAckStub())
+	server := NewGRPCServer(owner, visitor, func(uint64) bool { return true }, newOutboxAckStub())
 
 	routes, err := sharding.ParseRouteTable([]byte(`{
 		"logical_shards": 1024,
@@ -92,7 +104,7 @@ func TestGRPCApplyAndDeliverDuplicateSettle(t *testing.T) {
 
 func TestGRPCAcknowledgeCrossResultIdempotent(t *testing.T) {
 	stub := newOutboxAckStub()
-	server := NewGRPCServer(nil, nil, func(uint64) bool { return true }, nil, stub)
+	server := NewGRPCServer(nil, nil, func(uint64) bool { return true }, stub)
 	pair := grpcx.NewBufconnPair(t, "token", func(s *grpc.Server) {
 		RegisterCrossFarmService(s, server)
 	})
@@ -108,6 +120,103 @@ func TestGRPCAcknowledgeCrossResultIdempotent(t *testing.T) {
 	if err := client.AcknowledgeCrossResult(context.Background(), 9, 7, 99); err != nil {
 		t.Fatalf("ack missing row: %v", err)
 	}
+}
+
+func TestGRPCExecuteColocatedCrossAction(t *testing.T) {
+	ownerAgg := growingAggregate(9)
+	visitorAgg := farm.NewAggregate(7, "visitor")
+	runtime := &atomicOwnerRuntime{ownerRuntime: ownerRuntime{actors: map[uint64]*room.FarmActor{
+		9: {Aggregate: ownerAgg},
+		7: {Aggregate: visitorAgg},
+	}}}
+	// The Gateway verification marker deliberately bypasses this rejecting
+	// fallback checker; unmarked callers are still covered by owner tests.
+	publishedOrigin := make(chan presence.ConnRef, 1)
+	owner := NewOwner(runtime, ownerFriends{allowed: false}, func() int64 { return 40_000 },
+		DeltaPublisherFunc(func(_ context.Context, _ farm.FarmDelta, origin presence.ConnRef) error {
+			publishedOrigin <- origin
+			return nil
+		}), nil)
+	visitor := NewVisitorSettler(runtime, func() int64 { return 40_000 })
+	stub := newOutboxAckStub()
+	server := NewGRPCServer(owner, visitor, func(uint64) bool { return true }, stub)
+	pair := grpcx.NewBufconnPair(t, "token", func(s *grpc.Server) {
+		RegisterCrossFarmService(s, server)
+	})
+	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"}, shardingStub(t))
+	action := CrossAction{
+		ReqID: 101, Kind: Water, VisitorUID: 7, OwnerUID: 9,
+		PlotIndex: 0, FriendshipVerified: true,
+		Originator: presence.ConnRef{ConnID: 71, GatewayID: "gateway-0"},
+	}
+	if !client.CanExecuteCrossAction(action) {
+		t.Fatal("colocated action did not select fast path")
+	}
+	execution, err := client.ExecuteCrossAction(context.Background(), action, 20260810)
+	if err != nil {
+		t.Fatalf("ExecuteCrossAction: %v", err)
+	}
+	if execution.Code != errcode.OK || !execution.OwnerCommitted || execution.Result.Code != errcode.OK {
+		t.Fatalf("execution = %#v", execution)
+	}
+	if execution.AckRequired || runtime.pairCalls != 1 {
+		t.Fatalf("atomic execution ack_required=%v pair_calls=%d", execution.AckRequired, runtime.pairCalls)
+	}
+	if execution.PlayerDelta == nil || execution.Reward.ExpGained == 0 {
+		t.Fatalf("execution reward = %#v delta=%#v", execution.Reward, execution.PlayerDelta)
+	}
+	if execution.FarmDelta == nil || execution.FarmDelta.OwnerUID != 9 ||
+		execution.FarmDelta.FarmSeq != 1 || len(execution.FarmDelta.Plots) != 1 {
+		t.Fatalf("execution FarmDelta = %#v", execution.FarmDelta)
+	}
+	if origin := <-publishedOrigin; origin != action.Originator {
+		t.Fatalf("published originator = %#v, want %#v", origin, action.Originator)
+	}
+	if len(visitorAgg.CrossPending) != 0 || ownerAgg.Plots[0].LastWaterAt != 40_000 {
+		t.Fatalf("visitor pending=%#v owner plot=%#v", visitorAgg.CrossPending, ownerAgg.Plots[0])
+	}
+}
+
+type atomicOwnerRuntime struct {
+	ownerRuntime
+	pairCalls int
+}
+
+func (runtime *atomicOwnerRuntime) DoPairDurable(
+	firstUID, secondUID uint64,
+	fn func(first, second *room.FarmActor) error,
+) error {
+	runtime.pairCalls++
+	return fn(runtime.actors[firstUID], runtime.actors[secondUID])
+}
+
+func TestGRPCClientBatchesCrossResultAcks(t *testing.T) {
+	stub := newOutboxAckStub()
+	server := NewGRPCServer(nil, nil, func(uint64) bool { return true }, stub)
+	pair := grpcx.NewBufconnPair(t, "token", func(s *grpc.Server) {
+		RegisterCrossFarmService(s, server)
+	})
+	client := NewGRPCClient(pair.Pool, map[string]string{"farm-0": "bufconn"}, shardingStub(t))
+	if err := client.EnqueueCrossResultAck(9, 7, 201); err != nil {
+		t.Fatalf("enqueue first ack: %v", err)
+	}
+	if err := client.EnqueueCrossResultAck(9, 8, 202); err != nil {
+		t.Fatalf("enqueue second ack: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		stub.mu.Lock()
+		calls := stub.batchCalls
+		published := len(stub.published)
+		stub.mu.Unlock()
+		if calls == 1 && published == 2 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	stub.mu.Lock()
+	defer stub.mu.Unlock()
+	t.Fatalf("batch calls=%d published=%#v", stub.batchCalls, stub.published)
 }
 
 func TestCrossResultEventDeterministic(t *testing.T) {

@@ -222,6 +222,57 @@ func TestCachedFriendStoreTemporarilyBypassesRedisDuringUniqueMissStorm(t *testi
 	}
 }
 
+func TestCachedFriendStoreTemporarilyBypassesRedisDuringUniqueListMissStorm(t *testing.T) {
+	inner := &friendCacheStoreStub{}
+	redisStub := newFriendCacheRedisStub()
+	cache := newCachedFriendStore(inner, redisStub)
+
+	for uid := uint64(1); uid <= 1_000; uid++ {
+		if _, err := cache.ListFriends(t.Context(), uid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	redisStub.mu.Lock()
+	gets := redisStub.gets
+	redisStub.mu.Unlock()
+	if gets < friendRedisProbeWindow || gets > friendRedisProbeWindow+8 {
+		t.Fatalf("Redis GETs=%d, want one %d-request probe window before bypass", gets, friendRedisProbeWindow)
+	}
+	if inner.listHits != 1_000 {
+		t.Fatalf("authoritative hits=%d, want 1000", inner.listHits)
+	}
+}
+
+func TestCachedFriendStoreListCacheCoversUniformFixtureWithoutEviction(t *testing.T) {
+	cache := newCachedFriendStore(&friendCacheStoreStub{}, nil)
+	now := time.Now()
+	const accounts = 15_000
+	for uid := uint64(1); uid <= accounts; uid++ {
+		cache.putLocalList(uid, []FriendRow{{UID: uid + accounts, Nickname: "friend"}}, now)
+	}
+
+	for uid := uint64(1); uid <= accounts; uid++ {
+		value, ok := cache.localList(uid, now.UnixNano())
+		if !ok || len(value) != 1 || value[0].UID != uid+accounts {
+			t.Fatalf("uid=%d cache value=%#v hit=%v", uid, value, ok)
+		}
+	}
+
+	total := 0
+	for i := range cache.listShards {
+		shard := &cache.listShards[i]
+		shard.mu.RLock()
+		total += len(shard.entries)
+		if len(shard.entries) > friendListCacheCapacity/friendListCacheShards {
+			t.Fatalf("shard %d contains %d entries", i, len(shard.entries))
+		}
+		shard.mu.RUnlock()
+	}
+	if total != accounts {
+		t.Fatalf("cached entries=%d, want %d", total, accounts)
+	}
+}
+
 func TestCachedFriendStoreCoalescesConcurrentRelationMisses(t *testing.T) {
 	inner := &friendCacheStoreStub{
 		relation:    true,

@@ -30,9 +30,35 @@ func TestSummarizeTimedOut(t *testing.T) {
 	if measured.ActualQPS != 1 {
 		t.Fatalf("ActualQPS = %v, want 1", measured.ActualQPS)
 	}
+	if measured.EndedMS-measured.StartedMS != 1000 {
+		t.Fatalf("measurement window = %dms, want 1000ms", measured.EndedMS-measured.StartedMS)
+	}
+}
+
+func TestSummarizeRecordsP90(t *testing.T) {
+	recorded := &recorder{}
+	for milliseconds := 1; milliseconds <= 100; milliseconds++ {
+		recorded.add(time.Duration(milliseconds)*time.Millisecond, true, 0)
+	}
+
+	measured := summarize("test", 100, 100, time.Second, recorded, false)
+	if measured.P90MS != 90 {
+		t.Fatalf("P90MS = %v, want 90", measured.P90MS)
+	}
+
+	step := summarizeStep(recorded)
+	if step.P90MS != 90 {
+		t.Fatalf("step P90MS = %v, want 90", step.P90MS)
+	}
 }
 
 func TestGatewayOperationModes(t *testing.T) {
+	if !validGatewayWarmupMode(gatewayWarmupFull) || !validGatewayWarmupMode(gatewayWarmupSessionOnly) {
+		t.Fatal("documented gateway warmup mode is invalid")
+	}
+	if validGatewayWarmupMode("none") {
+		t.Fatal("unknown gateway warmup mode is valid")
+	}
 	for _, operation := range []string{"water", "harvest", "steal", "water-visitor"} {
 		if !gatewayOperationSupported(operation) {
 			t.Fatalf("%s is not supported", operation)

@@ -15,8 +15,9 @@ import (
 )
 
 type registryBackend struct {
-	mu    sync.Mutex
-	zsets map[string]map[string]int64
+	mu         sync.Mutex
+	zsets      map[string]map[string]int64
+	batchCalls int
 }
 
 func newRegistryBackend() *registryBackend {
@@ -97,6 +98,28 @@ func (backend *registryBackend) AliveMembers(_ context.Context, key string, nowU
 	}
 	sort.Strings(alive)
 	return alive, nil
+}
+
+func (backend *registryBackend) AliveMembersBatch(_ context.Context, keys []string, nowUnixMilli int64) (map[string][]string, error) {
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	backend.batchCalls++
+	result := make(map[string][]string, len(keys))
+	for _, key := range keys {
+		for member, expiresAt := range backend.zsets[key] {
+			if expiresAt > nowUnixMilli {
+				result[key] = append(result[key], member)
+			}
+		}
+		sort.Strings(result[key])
+	}
+	return result, nil
+}
+
+func (backend *registryBackend) batchCallCount() int {
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	return backend.batchCalls
 }
 
 type pushedBatch struct {

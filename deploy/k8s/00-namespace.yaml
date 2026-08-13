@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: benkz
+  labels:
+    app.kubernetes.io/part-of: farm
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: farm-secrets
+  namespace: benkz
+type: Opaque
+stringData:
+  mysql-root-password: farm
+  mysql-user: farm
+  mysql-password: farm
+  mysql-database: farm
+  mysql-dsn: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
+  internal-token: dev-only-internal-token-change-me
+  invite-secret: dev-only-invite-change-me
+  hazard-secret: dev-only-hazard-secret

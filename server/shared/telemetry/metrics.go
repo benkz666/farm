@@ -30,12 +30,18 @@ type Metrics struct {
 	WSWriteQueueDepth     prometheus.Histogram
 	WSWriteQueueFull      prometheus.Counter
 	WSWriteFailures       *prometheus.CounterVec
+	WSRateLimited         *prometheus.CounterVec
+	GatewayWriteLimit     prometheus.Gauge
+	GatewayWritePending   prometheus.Gauge
+	GatewayWriteLag       prometheus.Gauge
+	GatewayBacklogErrors  prometheus.Counter
 	// Hot successful commands use pre-bound metric children. This avoids two
 	// label string formats plus two MetricVec hash/lock lookups per request.
 	// The maps are immutable after construction and therefore safe for
 	// concurrent lock-free reads.
 	wsOKRequests map[uint32]prometheus.Counter
 	wsDurations  map[uint32]prometheus.Observer
+	wsRateLimits map[string]prometheus.Counter
 
 	ActorResident     prometheus.Gauge
 	ActorMailboxDepth prometheus.Histogram
@@ -56,6 +62,7 @@ type Metrics struct {
 	WriteJournalProjectionRecords  prometheus.Counter
 	WriteJournalProjectionDuration prometheus.Histogram
 	WriteJournalProjectionErrors   prometheus.Counter
+	WriteJournalProjectionLimit    prometheus.Gauge
 
 	DeltaBatches        prometheus.Counter
 	DeltaTargets        prometheus.Histogram
@@ -118,6 +125,30 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Name: "farm_ws_write_failures_total",
 		Help: "WebSocket physical write failures classified by response or push path",
 	}, []string{"path"})
+	m.WSRateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_ws_rate_limited_total",
+		Help: "WebSocket requests rejected by a bounded Gateway admission guard",
+	}, []string{"reason"})
+	m.GatewayWriteLimit = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_gateway_write_admission_limit",
+		Help: "Current per-Gateway write admission limit derived from Redis Stream pressure",
+	})
+	m.GatewayWritePending = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_gateway_write_journal_pending",
+		Help: "Deployment-wide delivered but unacknowledged write-journal records observed by this Gateway",
+	})
+	m.GatewayWriteLag = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_gateway_write_journal_lag",
+		Help: "Deployment-wide write-journal records not yet delivered to a Projector observed by this Gateway",
+	})
+	m.GatewayBacklogErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "farm_gateway_write_backlog_sample_errors_total",
+		Help: "Failed Gateway samples of Redis write-journal pending or lag",
+	})
+	m.wsRateLimits = make(map[string]prometheus.Counter, len(knownWSRateLimitReasons))
+	for _, reason := range knownWSRateLimitReasons {
+		m.wsRateLimits[reason] = m.WSRateLimited.WithLabelValues(reason)
+	}
 	m.wsOKRequests = make(map[uint32]prometheus.Counter, len(knownWSCommands))
 	m.wsDurations = make(map[uint32]prometheus.Observer, len(knownWSCommands))
 	for _, cmd := range knownWSCommands {
@@ -203,6 +234,10 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Name: "farm_write_journal_projection_errors_total",
 		Help: "Write-journal reads or MySQL materialization failures",
 	})
+	m.WriteJournalProjectionLimit = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_write_journal_projection_limit",
+		Help: "Current adaptive upper bound for concurrent MySQL projector work",
+	})
 
 	m.DeltaBatches = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "farm_delta_broadcast_batches_total",
@@ -230,7 +265,8 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		m.HTTPRequests, m.HTTPDuration,
 		m.WSConnections, m.WSRequests, m.WSDuration,
 		m.WSDisconnects, m.WSHandshakeErrors, m.WSSessionReplacements,
-		m.WSWriteQueueDepth, m.WSWriteQueueFull, m.WSWriteFailures,
+		m.WSWriteQueueDepth, m.WSWriteQueueFull, m.WSWriteFailures, m.WSRateLimited,
+		m.GatewayWriteLimit, m.GatewayWritePending, m.GatewayWriteLag, m.GatewayBacklogErrors,
 		m.ActorResident, m.ActorMailboxDepth, m.ActorDoBusy,
 		m.ActorLoadDuration, m.ActorLoadErrors,
 		m.ActorSaveDuration, m.ActorSaveErrors,
@@ -239,6 +275,7 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		m.WriteJournalAppendDuration, m.WriteJournalAppendErrors,
 		m.WriteJournalProjectionBatches, m.WriteJournalProjectionRecords,
 		m.WriteJournalProjectionDuration, m.WriteJournalProjectionErrors,
+		m.WriteJournalProjectionLimit,
 		m.DeltaBatches, m.DeltaTargets, m.DeltaEncodeDuration, m.DeltaPushDuration,
 	)
 	return m
@@ -273,6 +310,26 @@ func (m *Metrics) ObserveWriteJournalProjection(duration time.Duration, records 
 func (m *Metrics) ObserveWriteJournalProjectionError() {
 	if m != nil {
 		m.WriteJournalProjectionErrors.Inc()
+	}
+}
+
+func (m *Metrics) SetWriteJournalProjectionLimit(limit int) {
+	if m != nil && limit > 0 {
+		m.WriteJournalProjectionLimit.Set(float64(limit))
+	}
+}
+
+// SetGatewayWriteAdmission records the control-loop inputs and resulting limit.
+// It runs on the low-frequency sampler rather than the request hot path.
+func (m *Metrics) SetGatewayWriteAdmission(limit int, pending, lag int64, sampleError bool) {
+	if m == nil {
+		return
+	}
+	m.GatewayWriteLimit.Set(float64(max(0, limit)))
+	m.GatewayWritePending.Set(float64(max(int64(0), pending)))
+	m.GatewayWriteLag.Set(float64(max(int64(0), lag)))
+	if sampleError {
+		m.GatewayBacklogErrors.Inc()
 	}
 }
 
@@ -416,6 +473,23 @@ func (m *Metrics) ObserveWSWriteFailure(path string) {
 	}
 	m.WSWriteFailures.WithLabelValues(path).Inc()
 }
+
+// ObserveWSRateLimited records the bounded source of a Gateway-side rejection.
+// Keeping the label closed avoids turning malformed client input into metric
+// cardinality while making connection and concurrency guards distinguishable.
+func (m *Metrics) ObserveWSRateLimited(reason string) {
+	if m == nil {
+		return
+	}
+	switch reason {
+	case "connection", "write_slot", "cross_slot":
+	default:
+		reason = "unknown"
+	}
+	m.wsRateLimits[reason].Inc()
+}
+
+var knownWSRateLimitReasons = [...]string{"connection", "write_slot", "cross_slot", "unknown"}
 
 var knownWSCommands = [...]uint32{
 	100, 102,

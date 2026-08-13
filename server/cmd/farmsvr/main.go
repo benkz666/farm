@@ -94,6 +94,7 @@ func run() error {
 	defer stealHints.Shutdown(context.Background())
 	metrics := telemetry.NewMetrics(nil)
 	journalConfig := store.DefaultFarmWriteJournalConfig(instanceID)
+	journalConfig.Prefix = servicehost.Getenv("FARM_WRITE_JOURNAL_PREFIX", journalConfig.Prefix)
 	journalConfig.Shards, err = intSetting("FARM_WRITE_JOURNAL_SHARDS", journalConfig.Shards)
 	if err != nil || journalConfig.Shards == 0 {
 		return fmt.Errorf("farm: FARM_WRITE_JOURNAL_SHARDS must be positive")
@@ -133,7 +134,11 @@ func run() error {
 	if err := journal.Start(ctx); err != nil {
 		return err
 	}
-	recoveryContext, cancelRecovery := context.WithTimeout(ctx, 30*time.Second)
+	recoveryTimeout, err := durationSetting("FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT", "5m")
+	if err != nil || recoveryTimeout <= 0 {
+		return fmt.Errorf("farm: FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT must be positive")
+	}
+	recoveryContext, cancelRecovery := context.WithTimeout(ctx, recoveryTimeout)
 	if err := journal.WaitIdle(recoveryContext); err != nil {
 		cancelRecovery()
 		return fmt.Errorf("farm: recover write journal before serving: %w", err)
@@ -148,7 +153,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	committerShards, err := intSetting("FARM_COMMITTER_SHARDS", 4)
+	committerShards, err := intSetting("FARM_COMMITTER_SHARDS", 16)
 	if err != nil || committerShards == 0 {
 		return fmt.Errorf("farm: FARM_COMMITTER_SHARDS must be positive")
 	}
@@ -163,7 +168,11 @@ func run() error {
 	}
 
 	grpcPool := grpcx.NewPool(config.InternalToken)
-	pushClient := farmrpc.NewGatewayPushClient(grpcPool, gatewayTargets)
+	pushClient := farmrpc.NewResolvingGatewayPushClient(
+		grpcPool,
+		gatewayTargets,
+		storage.GatewayDirectory(),
+	)
 	fanoutPublisher := farmrpc.NewFanoutPublisher(
 		storage.ConnectionRegistry(),
 		farmrpc.NewGRPCDeltaPusher(pushClient),
@@ -206,7 +215,7 @@ func run() error {
 	crossClient := crossfarm.NewGRPCClient(grpcPool, farmTargets, routes)
 	// Outbox retry/lease 使用真实墙钟，不能跟随玩法调时；否则 debug advance 会让
 	// 刚写入的 fallback 立即到期并与健康的直连结算重复竞争。
-	dispatcher := crossfarm.NewOutboxDispatcher(storage, crossClient, nil)
+	dispatcher := crossfarm.NewOutboxDispatcher(storage, crossClient, nil, playerDeltaPublisher)
 
 	timeProfiles := gameconfig.NewTimeProfileSwitch(timeProfile)
 	commandHandler := farmrpc.NewHandler(
@@ -230,7 +239,7 @@ func run() error {
 	)
 	owner.SetAdvanceScheduler(commandHandler.ScheduleAdvanceAt)
 	crossServer := crossfarm.NewGRPCServer(
-		owner, visitor, owns, playerDeltaPublisher, journal.WrapOutboxStore(storage),
+		owner, visitor, owns, journal.WrapOutboxStore(storage),
 	)
 
 	return (servicehost.Host{

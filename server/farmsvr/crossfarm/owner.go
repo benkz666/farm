@@ -117,11 +117,18 @@ func (o *Owner) SetAdvanceScheduler(schedule func(uint64, int64)) {
 // Apply validates and adjudicates one cross action, recording a durable result
 // outbox event before returning.
 func (o *Owner) Apply(ctx context.Context, action CrossAction) (CrossResult, error) {
+	outcome, err := o.apply(ctx, action)
+	return outcome.result, err
+}
+
+// apply retains the committed delta for ExecuteCrossAction while preserving
+// Apply's narrow result-only API for the distributed fallback path.
+func (o *Owner) apply(ctx context.Context, action CrossAction) (ownerOutcome, error) {
 	if o == nil {
-		return CrossResult{}, errors.New("cross: owner is nil")
+		return ownerOutcome{}, errors.New("cross: owner is nil")
 	}
 	if !o.owns(action.OwnerUID) {
-		return CrossResult{}, nil
+		return ownerOutcome{}, nil
 	}
 	telemetry.L().Debug("cross owner apply",
 		"component", "cross",
@@ -130,18 +137,23 @@ func (o *Owner) Apply(ctx context.Context, action CrossAction) (CrossResult, err
 	)
 	rejected, ok, err := o.validate(ctx, action)
 	if err != nil {
-		return CrossResult{}, err
+		return ownerOutcome{}, err
 	}
 	if !ok {
-		return rejected, nil
+		return ownerOutcome{result: rejected}, nil
 	}
 	outcome, err := o.commit(action)
 	if err != nil {
-		return CrossResult{}, fmt.Errorf("cross: owner commit: %w", err)
+		return ownerOutcome{}, fmt.Errorf("cross: owner commit: %w", err)
 	}
+	o.publishOutcome(action, outcome)
+	return outcome, nil
+}
+
+func (o *Owner) publishOutcome(action CrossAction, outcome ownerOutcome) {
 	if !outcome.replayed {
 		if outcome.delta != nil && o.deltas != nil {
-			_ = o.deltas.Publish(context.Background(), *outcome.delta, presence.ConnRef{})
+			_ = o.deltas.Publish(context.Background(), *outcome.delta, action.Originator)
 		}
 		if outcome.playerDelta != nil && o.players != nil {
 			_ = o.players.PublishPlayerDelta(context.Background(), action.OwnerUID, *outcome.playerDelta)
@@ -150,7 +162,6 @@ func (o *Owner) Apply(ctx context.Context, action CrossAction) (CrossResult, err
 			o.writeStealHint(action.OwnerUID, outcome.stealable)
 		}
 	}
-	return outcome.result, nil
 }
 
 func (o *Owner) writeStealHint(uid uint64, hasStealable bool) {
@@ -175,17 +186,19 @@ func (o *Owner) validate(ctx context.Context, action CrossAction) (CrossResult, 
 			return result, false, nil
 		}
 	}
-	if o.friends == nil {
-		result.Code = errcode.NotFriend
-		return result, false, nil
-	}
-	friends, err := o.friends.AreFriends(ctx, action.VisitorUID, action.OwnerUID)
-	if err != nil {
-		return CrossResult{}, false, fmt.Errorf("cross: check friendship: %w", err)
-	}
-	if !friends {
-		result.Code = errcode.NotFriend
-		return result, false, nil
+	if !action.FriendshipVerified {
+		if o.friends == nil {
+			result.Code = errcode.NotFriend
+			return result, false, nil
+		}
+		friends, err := o.friends.AreFriends(ctx, action.VisitorUID, action.OwnerUID)
+		if err != nil {
+			return CrossResult{}, false, fmt.Errorf("cross: check friendship: %w", err)
+		}
+		if !friends {
+			result.Code = errcode.NotFriend
+			return result, false, nil
+		}
 	}
 	if o.runtime == nil {
 		return CrossResult{}, false, errors.New("cross: owner runtime is nil")
@@ -197,73 +210,9 @@ func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 	var outcome ownerOutcome
 	var nextAdvance int64
 	err := o.runtime.Do(action.OwnerUID, func(owner *room.FarmActor) error {
-		if owner == nil || owner.Aggregate == nil {
-			return errors.New("cross: owner actor aggregate is nil")
-		}
-		defer func() {
-			nextAdvance = owner.Aggregate.NextAdvanceAt(o.now())
-		}()
-		if cached, ok := owner.CachedResult(action.ReqID); ok {
-			if previous, typed := cached.(CrossResult); typed {
-				outcome.result = previous
-				outcome.replayed = true
-				// 上一次 durable commit 可能返回过不确定错误；回放必须重新等待
-				// 当前快照（含 receipt/outbox）落盘，不能只相信进程内热缓存。
-				owner.RequireFlush()
-				return nil
-			}
-		}
-		if receipt, ok := owner.Aggregate.FindCrossReceipt(action.ReqID, action.VisitorUID, action.OwnerUID, o.now()); ok {
-			outcome.result = CrossResult{
-				ReqID:        receipt.ReqID,
-				VisitorUID:   receipt.VisitorUID,
-				OwnerUID:     receipt.OwnerUID,
-				Code:         errcode.Code(receipt.Code),
-				CropID:       receipt.CropID,
-				Amount:       receipt.Amount,
-				Compensation: receipt.Compensation,
-				DogType:      receipt.DogType,
-			}
-			owner.CacheResult(action.ReqID, outcome.result)
-			outcome.replayed = true
-			owner.RequireFlush()
-			return nil
-		}
-
-		outcome.result = CrossResult{
-			ReqID:      action.ReqID,
-			VisitorUID: action.VisitorUID,
-			OwnerUID:   action.OwnerUID,
-		}
-		if action.Kind == Steal {
-			o.applySteal(owner, action, &outcome)
-		} else {
-			o.applyMaintenance(owner, action, &outcome)
-		}
-		owner.Aggregate.RecordCrossReceipt(farm.CrossReceipt{
-			ReqID:        outcome.result.ReqID,
-			VisitorUID:   outcome.result.VisitorUID,
-			OwnerUID:     outcome.result.OwnerUID,
-			Code:         int(outcome.result.Code),
-			CropID:       outcome.result.CropID,
-			Amount:       outcome.result.Amount,
-			Compensation: outcome.result.Compensation,
-			DogType:      outcome.result.DogType,
-		}, o.now())
-		owner.CacheResult(action.ReqID, outcome.result)
-		event, eventErr := outbox.NewCrossResultEvent(action.OwnerUID, resultToProto(outcome.result))
-		if eventErr != nil {
-			return eventErr
-		}
-		if int(action.PlotIndex) < len(owner.Aggregate.Plots) {
-			owner.RequireCrossOwnerFlush(action.PlotIndex, event)
-		} else {
-			// An invalid client plot still needs a durable receipt/outbox, but
-			// there is no safe single plot row for the reduced commit.
-			owner.RecordOutbox(event)
-			owner.RequireFlush()
-		}
-		return nil
+		var commitErr error
+		outcome, nextAdvance, commitErr = o.commitOnActor(owner, action, true)
+		return commitErr
 	})
 	if err != nil {
 		return ownerOutcome{}, err
@@ -272,6 +221,76 @@ func (o *Owner) commit(action CrossAction) (ownerOutcome, error) {
 		o.scheduleAdvance(action.OwnerUID, nextAdvance)
 	}
 	return outcome, nil
+}
+
+// commitOnActor applies one owner decision while the caller owns the Actor.
+// includeOutbox is required by the distributed Saga fallback. The colocated
+// pair path sets it to false because visitor and owner final states share one
+// atomic journal append and therefore need neither delivery nor ACK events.
+func (o *Owner) commitOnActor(owner *room.FarmActor, action CrossAction, includeOutbox bool) (ownerOutcome, int64, error) {
+	if owner == nil || owner.Aggregate == nil {
+		return ownerOutcome{}, 0, errors.New("cross: owner actor aggregate is nil")
+	}
+	nextAdvance := func() int64 { return owner.Aggregate.NextAdvanceAt(o.now()) }
+	markReplayDurable := func() {
+		if includeOutbox {
+			// A prior append may have returned an uncertain error; retain the
+			// conservative full retry for the distributed outbox path.
+			owner.RequireFlush()
+			return
+		}
+		owner.RequireCrossOwnerCompositeFlush(action.PlotIndex)
+	}
+
+	var outcome ownerOutcome
+	if cached, ok := owner.CachedResult(action.ReqID); ok {
+		if previous, typed := cached.(CrossResult); typed {
+			outcome.result = previous
+			outcome.replayed = true
+			markReplayDurable()
+			return outcome, nextAdvance(), nil
+		}
+	}
+	if receipt, ok := owner.Aggregate.FindCrossReceipt(action.ReqID, action.VisitorUID, action.OwnerUID, o.now()); ok {
+		outcome.result = CrossResult{
+			ReqID: receipt.ReqID, VisitorUID: receipt.VisitorUID, OwnerUID: receipt.OwnerUID,
+			Code: errcode.Code(receipt.Code), CropID: receipt.CropID, Amount: receipt.Amount,
+			Compensation: receipt.Compensation, DogType: receipt.DogType,
+		}
+		owner.CacheResult(action.ReqID, outcome.result)
+		outcome.replayed = true
+		markReplayDurable()
+		return outcome, nextAdvance(), nil
+	}
+
+	outcome.result = CrossResult{ReqID: action.ReqID, VisitorUID: action.VisitorUID, OwnerUID: action.OwnerUID}
+	if action.Kind == Steal {
+		o.applySteal(owner, action, &outcome)
+	} else {
+		o.applyMaintenance(owner, action, &outcome)
+	}
+	owner.Aggregate.RecordCrossReceipt(farm.CrossReceipt{
+		ReqID: outcome.result.ReqID, VisitorUID: outcome.result.VisitorUID,
+		OwnerUID: outcome.result.OwnerUID, Code: int(outcome.result.Code),
+		CropID: outcome.result.CropID, Amount: outcome.result.Amount,
+		Compensation: outcome.result.Compensation, DogType: outcome.result.DogType,
+	}, o.now())
+	owner.CacheResult(action.ReqID, outcome.result)
+	if !includeOutbox {
+		owner.RequireCrossOwnerCompositeFlush(action.PlotIndex)
+		return outcome, nextAdvance(), nil
+	}
+	event, err := outbox.NewCrossResultEvent(action.OwnerUID, resultToProto(outcome.result))
+	if err != nil {
+		return ownerOutcome{}, 0, err
+	}
+	if int(action.PlotIndex) < len(owner.Aggregate.Plots) {
+		owner.RequireCrossOwnerFlush(action.PlotIndex, event)
+	} else {
+		owner.RecordOutbox(event)
+		owner.RequireFlush()
+	}
+	return outcome, nextAdvance(), nil
 }
 
 func (o *Owner) applyMaintenance(owner *room.FarmActor, action CrossAction, outcome *ownerOutcome) {

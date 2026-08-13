@@ -28,6 +28,7 @@ const (
 	maxPendingTaskNotifies    = 4096
 	defaultDeltaQueueShards   = 16
 	defaultDeltaQueuePerShard = 1024
+	deltaLookupBatchSize      = 256
 )
 
 // DeltaPushRequest is the legacy single-connection Farm→Gateway callback.
@@ -85,6 +86,10 @@ type DeltaPublisher interface {
 type queuedDelta struct {
 	delta      farm.FarmDelta
 	originator presence.ConnRef
+}
+
+type deltaBatchPublisher interface {
+	PublishBatch(ctx context.Context, jobs []queuedDelta) error
 }
 
 // AsyncDeltaPublisher moves registry lookup, encoding and Gateway callbacks
@@ -186,10 +191,43 @@ func (publisher *AsyncDeltaPublisher) Shutdown(ctx context.Context) error {
 
 func (publisher *AsyncDeltaPublisher) run(queue <-chan queuedDelta) {
 	defer publisher.wg.Done()
-	for job := range queue {
-		if err := publisher.inner.Publish(context.Background(), job.delta, job.originator); err != nil {
+	for {
+		job, ok := <-queue
+		if !ok {
+			return
+		}
+		batch := make([]queuedDelta, 0, deltaLookupBatchSize)
+		batch = append(batch, job)
+		closed := false
+	drain:
+		for len(batch) < deltaLookupBatchSize {
+			select {
+			case next, open := <-queue:
+				if !open {
+					closed = true
+					break drain
+				}
+				batch = append(batch, next)
+			default:
+				break drain
+			}
+		}
+		var err error
+		if batched, ok := publisher.inner.(deltaBatchPublisher); ok {
+			err = batched.PublishBatch(context.Background(), batch)
+		} else {
+			for _, item := range batch {
+				if publishErr := publisher.inner.Publish(context.Background(), item.delta, item.originator); publishErr != nil && err == nil {
+					err = publishErr
+				}
+			}
+		}
+		if err != nil {
 			telemetry.L().Error("farmrpc Delta publish failed",
-				"component", "farmrpc", "op", "publish_delta", "err", err.Error())
+				"component", "farmrpc", "op", "publish_delta_batch", "count", len(batch), "err", err.Error())
+		}
+		if closed {
+			return
 		}
 	}
 }
@@ -292,6 +330,42 @@ func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, ori
 	if err != nil {
 		return err
 	}
+	return p.publishResolved(ctx, delta, originator, refs)
+}
+
+// PublishBatch amortizes subscriber-registry round trips for the asynchronous
+// Delta queue. Each delta is still encoded and delivered independently, so
+// FarmSeq ordering and per-connection gap detection remain unchanged.
+func (p *FanoutPublisher) PublishBatch(ctx context.Context, jobs []queuedDelta) error {
+	if p == nil || p.registry == nil || p.pusher == nil {
+		return fmt.Errorf("farmrpc: Delta publisher is not configured")
+	}
+	uids := make([]uint64, 0, len(jobs))
+	seen := make(map[uint64]struct{}, len(jobs))
+	for _, job := range jobs {
+		if job.delta.OwnerUID == 0 {
+			continue
+		}
+		if _, exists := seen[job.delta.OwnerUID]; exists {
+			continue
+		}
+		seen[job.delta.OwnerUID] = struct{}{}
+		uids = append(uids, job.delta.OwnerUID)
+	}
+	refsByUID, err := p.registry.LookupSubscribersBatch(ctx, uids)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, job := range jobs {
+		if err := p.publishResolved(ctx, job.delta, job.originator, refsByUID[job.delta.OwnerUID]); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (p *FanoutPublisher) publishResolved(ctx context.Context, delta farm.FarmDelta, originator presence.ConnRef, refs []presence.ConnRef) error {
 
 	groups := make(map[string][]uint64)
 	for _, ref := range refs {
@@ -307,6 +381,7 @@ func (p *FanoutPublisher) Publish(ctx context.Context, delta farm.FarmDelta, ori
 	encodeStart := time.Now()
 	typedDelta := clientwire.FarmDeltaToProto(delta)
 	var envelope []byte
+	var err error
 	if p.encoder != nil {
 		envelope, err = p.encoder.EncodeFarmDelta(delta)
 	}

@@ -34,12 +34,14 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 		9: {Aggregate: growingAggregate(9)},
 	}}
 	deltas := make(chan farm.FarmDelta, 2)
+	origins := make(chan presence.ConnRef, 2)
 	owner := NewOwner(
 		runtime,
 		ownerFriends{allowed: true},
 		func() int64 { return 40_000 },
-		DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, _ presence.ConnRef) error {
+		DeltaPublisherFunc(func(_ context.Context, delta farm.FarmDelta, origin presence.ConnRef) error {
 			deltas <- delta
+			origins <- origin
 			return nil
 		}),
 		nil,
@@ -52,7 +54,11 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 		scheduled++
 	})
 
-	action := CrossAction{ReqID: 2, Kind: Water, VisitorUID: 7, OwnerUID: 9, PlotIndex: 0}
+	wantOrigin := presence.ConnRef{ConnID: 71, GatewayID: "gateway-0"}
+	action := CrossAction{
+		ReqID: 2, Kind: Water, VisitorUID: 7, OwnerUID: 9, PlotIndex: 0,
+		Originator: wantOrigin,
+	}
 	first, err := owner.Apply(context.Background(), action)
 	if err != nil || first.Code != errcode.OK {
 		t.Fatalf("first result = %#v, err=%v", first, err)
@@ -60,6 +66,9 @@ func TestOwnerCommitsActionPublishesDeltaAndDeduplicatesReqID(t *testing.T) {
 	delta := <-deltas
 	if delta.OwnerUID != 9 || delta.FarmSeq != 1 || len(delta.Plots) != 1 || delta.Plots[0].Index != 0 {
 		t.Fatalf("delta = %#v", delta)
+	}
+	if origin := <-origins; origin != wantOrigin {
+		t.Fatalf("originator = %#v, want %#v", origin, wantOrigin)
 	}
 	if scheduled != 1 {
 		t.Fatalf("schedule calls=%d, want 1", scheduled)

@@ -82,6 +82,9 @@ type wsConnection struct {
 	roomSeq              uint64
 	roomSeqKnown         bool
 	roomSeqObservedAt    int64
+	friendLeaseUID       uint64
+	friendLeaseRevision  uint64
+	friendLeaseExpiresAt int64
 	// holdFarmDeltas keeps a newly-entered client from observing a delta before
 	// its EnterFarm snapshot has reached the wire.
 	holdFarmDeltas    bool
@@ -229,6 +232,9 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if !g.disableWSRateLimit && !connection.limiter.Allow() {
+				if g.metrics != nil {
+					g.metrics.ObserveWSRateLimited("connection")
+				}
 				responses = append(responses, Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.RateLimited, Payload: emptyPayload})
 				if connection.limiter.ShouldDisconnect() {
 					connection.setDisconnectReason("rate_limit")

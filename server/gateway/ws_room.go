@@ -123,7 +123,7 @@ func (g *Gateway) handleEnterFarmCore(connection *wsConnection, request Envelope
 			return response
 		}
 		if relation == "FRIEND" {
-			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+			stillFriends, err := g.refreshFriendLease(connection, ownerUID)
 			if err != nil || !stillFriends {
 				g.leaveFarm(connection)
 				response.Err = errcode.NotFriend
@@ -174,7 +174,7 @@ func (g *Gateway) handleEnterFarmCore(connection *wsConnection, request Envelope
 			return err
 		}
 		if relation == "FRIEND" {
-			stillFriends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+			stillFriends, err := g.refreshFriendLease(connection, ownerUID)
 			if err != nil || !stillFriends {
 				g.leaveFarm(connection)
 				if err != nil {
@@ -558,6 +558,9 @@ func (g *Gateway) enterRoom(connection *wsConnection, ownerUID uint64) error {
 	connection.roomSeq = 0
 	connection.roomSeqKnown = false
 	connection.roomSeqObservedAt = 0
+	connection.friendLeaseUID = 0
+	connection.friendLeaseRevision = 0
+	connection.friendLeaseExpiresAt = 0
 	connection.holdFarmDeltas = true
 	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()
@@ -596,6 +599,9 @@ func (g *Gateway) leaveFarm(connection *wsConnection) {
 	connection.roomSeq = 0
 	connection.roomSeqKnown = false
 	connection.roomSeqObservedAt = 0
+	connection.friendLeaseUID = 0
+	connection.friendLeaseRevision = 0
+	connection.friendLeaseExpiresAt = 0
 	connection.holdFarmDeltas = false
 	connection.heldFarmDeltas = nil
 	connection.roomMu.Unlock()

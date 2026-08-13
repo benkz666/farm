@@ -19,10 +19,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CrossFarmService_ReserveCrossAction_FullMethodName     = "/farm.internal.v1.CrossFarmService/ReserveCrossAction"
-	CrossFarmService_ApplyCrossAction_FullMethodName       = "/farm.internal.v1.CrossFarmService/ApplyCrossAction"
-	CrossFarmService_DeliverCrossResult_FullMethodName     = "/farm.internal.v1.CrossFarmService/DeliverCrossResult"
-	CrossFarmService_AcknowledgeCrossResult_FullMethodName = "/farm.internal.v1.CrossFarmService/AcknowledgeCrossResult"
+	CrossFarmService_ReserveCrossAction_FullMethodName      = "/farm.internal.v1.CrossFarmService/ReserveCrossAction"
+	CrossFarmService_ApplyCrossAction_FullMethodName        = "/farm.internal.v1.CrossFarmService/ApplyCrossAction"
+	CrossFarmService_ExecuteCrossAction_FullMethodName      = "/farm.internal.v1.CrossFarmService/ExecuteCrossAction"
+	CrossFarmService_DeliverCrossResult_FullMethodName      = "/farm.internal.v1.CrossFarmService/DeliverCrossResult"
+	CrossFarmService_AcknowledgeCrossResult_FullMethodName  = "/farm.internal.v1.CrossFarmService/AcknowledgeCrossResult"
+	CrossFarmService_AcknowledgeCrossResults_FullMethodName = "/farm.internal.v1.CrossFarmService/AcknowledgeCrossResults"
 )
 
 // CrossFarmServiceClient is the client API for CrossFarmService service.
@@ -34,9 +36,14 @@ const (
 type CrossFarmServiceClient interface {
 	ReserveCrossAction(ctx context.Context, in *ReserveCrossActionRequest, opts ...grpc.CallOption) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(ctx context.Context, in *ApplyCrossActionRequest, opts ...grpc.CallOption) (*ApplyCrossActionResponse, error)
+	// Executes the complete operation inside one Farm instance. Colocated
+	// runtimes append visitor and owner final mutations as one composite commit.
+	ExecuteCrossAction(ctx context.Context, in *ExecuteCrossActionRequest, opts ...grpc.CallOption) (*ExecuteCrossActionResponse, error)
 	DeliverCrossResult(ctx context.Context, in *DeliverCrossResultRequest, opts ...grpc.CallOption) (*DeliverCrossResultResponse, error)
 	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
 	AcknowledgeCrossResult(ctx context.Context, in *AcknowledgeCrossResultRequest, opts ...grpc.CallOption) (*Empty, error)
+	// Hot-path equivalent that amortizes gRPC and Redis round trips.
+	AcknowledgeCrossResults(ctx context.Context, in *AcknowledgeCrossResultsRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type crossFarmServiceClient struct {
@@ -67,6 +74,16 @@ func (c *crossFarmServiceClient) ApplyCrossAction(ctx context.Context, in *Apply
 	return out, nil
 }
 
+func (c *crossFarmServiceClient) ExecuteCrossAction(ctx context.Context, in *ExecuteCrossActionRequest, opts ...grpc.CallOption) (*ExecuteCrossActionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteCrossActionResponse)
+	err := c.cc.Invoke(ctx, CrossFarmService_ExecuteCrossAction_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *crossFarmServiceClient) DeliverCrossResult(ctx context.Context, in *DeliverCrossResultRequest, opts ...grpc.CallOption) (*DeliverCrossResultResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeliverCrossResultResponse)
@@ -87,6 +104,16 @@ func (c *crossFarmServiceClient) AcknowledgeCrossResult(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *crossFarmServiceClient) AcknowledgeCrossResults(ctx context.Context, in *AcknowledgeCrossResultsRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, CrossFarmService_AcknowledgeCrossResults_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CrossFarmServiceServer is the server API for CrossFarmService service.
 // All implementations must embed UnimplementedCrossFarmServiceServer
 // for forward compatibility.
@@ -96,9 +123,14 @@ func (c *crossFarmServiceClient) AcknowledgeCrossResult(ctx context.Context, in 
 type CrossFarmServiceServer interface {
 	ReserveCrossAction(context.Context, *ReserveCrossActionRequest) (*ReserveCrossActionResponse, error)
 	ApplyCrossAction(context.Context, *ApplyCrossActionRequest) (*ApplyCrossActionResponse, error)
+	// Executes the complete operation inside one Farm instance. Colocated
+	// runtimes append visitor and owner final mutations as one composite commit.
+	ExecuteCrossAction(context.Context, *ExecuteCrossActionRequest) (*ExecuteCrossActionResponse, error)
 	DeliverCrossResult(context.Context, *DeliverCrossResultRequest) (*DeliverCrossResultResponse, error)
 	// Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
 	AcknowledgeCrossResult(context.Context, *AcknowledgeCrossResultRequest) (*Empty, error)
+	// Hot-path equivalent that amortizes gRPC and Redis round trips.
+	AcknowledgeCrossResults(context.Context, *AcknowledgeCrossResultsRequest) (*Empty, error)
 	mustEmbedUnimplementedCrossFarmServiceServer()
 }
 
@@ -115,11 +147,17 @@ func (UnimplementedCrossFarmServiceServer) ReserveCrossAction(context.Context, *
 func (UnimplementedCrossFarmServiceServer) ApplyCrossAction(context.Context, *ApplyCrossActionRequest) (*ApplyCrossActionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApplyCrossAction not implemented")
 }
+func (UnimplementedCrossFarmServiceServer) ExecuteCrossAction(context.Context, *ExecuteCrossActionRequest) (*ExecuteCrossActionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExecuteCrossAction not implemented")
+}
 func (UnimplementedCrossFarmServiceServer) DeliverCrossResult(context.Context, *DeliverCrossResultRequest) (*DeliverCrossResultResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeliverCrossResult not implemented")
 }
 func (UnimplementedCrossFarmServiceServer) AcknowledgeCrossResult(context.Context, *AcknowledgeCrossResultRequest) (*Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeCrossResult not implemented")
+}
+func (UnimplementedCrossFarmServiceServer) AcknowledgeCrossResults(context.Context, *AcknowledgeCrossResultsRequest) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AcknowledgeCrossResults not implemented")
 }
 func (UnimplementedCrossFarmServiceServer) mustEmbedUnimplementedCrossFarmServiceServer() {}
 func (UnimplementedCrossFarmServiceServer) testEmbeddedByValue()                          {}
@@ -178,6 +216,24 @@ func _CrossFarmService_ApplyCrossAction_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CrossFarmService_ExecuteCrossAction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteCrossActionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CrossFarmServiceServer).ExecuteCrossAction(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CrossFarmService_ExecuteCrossAction_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CrossFarmServiceServer).ExecuteCrossAction(ctx, req.(*ExecuteCrossActionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CrossFarmService_DeliverCrossResult_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeliverCrossResultRequest)
 	if err := dec(in); err != nil {
@@ -214,6 +270,24 @@ func _CrossFarmService_AcknowledgeCrossResult_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CrossFarmService_AcknowledgeCrossResults_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AcknowledgeCrossResultsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CrossFarmServiceServer).AcknowledgeCrossResults(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CrossFarmService_AcknowledgeCrossResults_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CrossFarmServiceServer).AcknowledgeCrossResults(ctx, req.(*AcknowledgeCrossResultsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CrossFarmService_ServiceDesc is the grpc.ServiceDesc for CrossFarmService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -230,12 +304,20 @@ var CrossFarmService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CrossFarmService_ApplyCrossAction_Handler,
 		},
 		{
+			MethodName: "ExecuteCrossAction",
+			Handler:    _CrossFarmService_ExecuteCrossAction_Handler,
+		},
+		{
 			MethodName: "DeliverCrossResult",
 			Handler:    _CrossFarmService_DeliverCrossResult_Handler,
 		},
 		{
 			MethodName: "AcknowledgeCrossResult",
 			Handler:    _CrossFarmService_AcknowledgeCrossResult_Handler,
+		},
+		{
+			MethodName: "AcknowledgeCrossResults",
+			Handler:    _CrossFarmService_AcknowledgeCrossResults_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

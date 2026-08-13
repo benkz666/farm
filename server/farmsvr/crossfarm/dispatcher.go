@@ -28,6 +28,7 @@ const (
 type OutboxDispatcher struct {
 	store       store.OutboxStore
 	client      *GRPCClient
+	players     PlayerDeltaPublisher
 	now         func() int64
 	wakeup      chan struct{}
 	stop        chan struct{}
@@ -37,7 +38,12 @@ type OutboxDispatcher struct {
 }
 
 // NewOutboxDispatcher starts the background outbox fan-out worker.
-func NewOutboxDispatcher(outboxStore store.OutboxStore, client *GRPCClient, now func() int64) *OutboxDispatcher {
+func NewOutboxDispatcher(
+	outboxStore store.OutboxStore,
+	client *GRPCClient,
+	now func() int64,
+	players ...PlayerDeltaPublisher,
+) *OutboxDispatcher {
 	if now == nil {
 		now = func() int64 { return time.Now().UnixMilli() }
 	}
@@ -48,6 +54,9 @@ func NewOutboxDispatcher(outboxStore store.OutboxStore, client *GRPCClient, now 
 		wakeup: make(chan struct{}, 1),
 		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
+	}
+	if len(players) > 0 {
+		d.players = players[0]
 	}
 	go d.run()
 	return d
@@ -116,10 +125,15 @@ func (d *OutboxDispatcher) deliverRow(row store.OutboxRow) {
 			_ = d.store.MarkOutboxPublished(ctx, row.EventID)
 			return
 		}
-		_, _, code, err := d.client.DeliverCrossResult(ctx, domain)
+		_, playerDelta, code, err := d.client.DeliverCrossResult(ctx, domain)
 		if err != nil || code == errcode.Internal {
 			d.scheduleRetry(row)
 			return
+		}
+		// The direct path returns this delta to Gateway. The dispatcher is the
+		// only fallback consumer, so it owns the one best-effort push here.
+		if playerDelta != nil && d.players != nil {
+			_ = d.players.PublishPlayerDelta(context.Background(), domain.VisitorUID, *playerDelta)
 		}
 	default:
 		_ = d.store.MarkOutboxPublished(ctx, row.EventID)

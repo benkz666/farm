@@ -127,6 +127,36 @@ func TestFanoutPublisherExcludesOriginatorFromBatch(t *testing.T) {
 	}
 }
 
+func TestFanoutPublisherResolvesQueuedDeltasInOneBatch(t *testing.T) {
+	t.Parallel()
+
+	backend := newRegistryBackend()
+	registry := presence.NewWithBackend(backend)
+	const count = 128
+	jobs := make([]queuedDelta, 0, count)
+	for uid := uint64(1); uid <= count; uid++ {
+		origin := presence.ConnRef{ConnID: uid, GatewayID: "gateway-a"}
+		if err := registry.Subscribe(t.Context(), uid, origin.ConnID, origin.GatewayID); err != nil {
+			t.Fatalf("Subscribe %d: %v", uid, err)
+		}
+		jobs = append(jobs, queuedDelta{
+			delta:      farm.FarmDelta{OwnerUID: uid, FarmSeq: 1},
+			originator: origin,
+		})
+	}
+	pusher := &recordingBatchPusher{}
+	publisher := NewFanoutPublisher(registry, pusher)
+	if err := publisher.PublishBatch(t.Context(), jobs); err != nil {
+		t.Fatalf("PublishBatch: %v", err)
+	}
+	if calls := backend.batchCallCount(); calls != 1 {
+		t.Fatalf("subscriber batch calls = %d, want 1", calls)
+	}
+	if batches := pusher.batches(); len(batches) != 0 {
+		t.Fatalf("originator-only jobs produced pushes: %#v", batches)
+	}
+}
+
 func TestFanoutPublisherMetricsCountsBatchesPerGateway(t *testing.T) {
 	t.Parallel()
 

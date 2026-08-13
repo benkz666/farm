@@ -2,10 +2,10 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -123,15 +123,13 @@ func (s *Store) Delete(ctx context.Context, token string) error {
 	return nil
 }
 
-// LoadFarm 实现规格 5.4 节加载路径：先查 Redis `farm:{uid}` 缓存（JSON），
+// LoadFarm 实现规格 5.4 节加载路径：先查 Redis `farm:{uid}` 缓存，
 // miss 则回落 MySQL 并回填 Redis、续期 TTL。
 func (s *Store) LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	cached, err := s.rdb.Get(ctx, farmKey(uid)).Bytes()
 	if err == nil {
-		var agg farm.Aggregate
-		if jsonErr := json.Unmarshal(cached, &agg); jsonErr == nil {
-			ensureItems(&agg)
-			return &agg, nil
+		if agg, decodeErr := decodeFarmCache(cached); decodeErr == nil && agg.UID == uid {
+			return agg, nil
 		}
 		// 缓存内容损坏：忽略并回落 MySQL 重建缓存，而不是直接失败。
 	} else if !errors.Is(err, redis.Nil) {
@@ -148,6 +146,110 @@ func (s *Store) LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, erro
 		return nil, err
 	}
 	return agg, nil
+}
+
+// LoadFarms folds concurrent cold-Actor cache lookups into one Redis MGET. A
+// corrupt or absent value falls back to MySQL with bounded concurrency, then a
+// single pipeline refills every miss. Results are keyed by UID so callers can
+// preserve their own request order without copying aggregates again.
+func (s *Store) LoadFarms(ctx context.Context, uids []uint64) (map[uint64]*farm.Aggregate, error) {
+	results := make(map[uint64]*farm.Aggregate, len(uids))
+	unique := make([]uint64, 0, len(uids))
+	keys := make([]string, 0, len(uids))
+	for _, uid := range uids {
+		if uid == 0 {
+			return nil, errors.New("store: invalid farm UID")
+		}
+		if _, exists := results[uid]; exists {
+			continue
+		}
+		// A nil marker records de-duplication until the cache value is decoded.
+		results[uid] = nil
+		unique = append(unique, uid)
+		keys = append(keys, farmKey(uid))
+	}
+	if len(unique) == 0 {
+		return results, nil
+	}
+
+	values, err := s.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("store: mget farm caches: %w", err)
+	}
+	misses := make([]uint64, 0, len(unique))
+	for index, uid := range unique {
+		value, ok := values[index].(string)
+		if !ok {
+			misses = append(misses, uid)
+			continue
+		}
+		agg, decodeErr := decodeFarmCache([]byte(value))
+		if decodeErr != nil || agg.UID != uid {
+			misses = append(misses, uid)
+			continue
+		}
+		results[uid] = agg
+	}
+	if len(misses) == 0 {
+		return results, nil
+	}
+
+	const mysqlLoadConcurrency = 16
+	workers := min(mysqlLoadConcurrency, len(misses))
+	jobs := make(chan uint64)
+	loaded := make(chan *farm.Aggregate, len(misses))
+	errCh := make(chan error, 1)
+	var wait sync.WaitGroup
+	wait.Add(workers)
+	for range workers {
+		go func() {
+			defer wait.Done()
+			for uid := range jobs {
+				agg, loadErr := s.loadFarmFromMySQL(ctx, uid)
+				if loadErr != nil {
+					select {
+					case errCh <- loadErr:
+					default:
+					}
+					continue
+				}
+				ensureItems(agg)
+				loaded <- agg
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, uid := range misses {
+			select {
+			case jobs <- uid:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	wait.Wait()
+	close(loaded)
+	select {
+	case loadErr := <-errCh:
+		return nil, loadErr
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	refills := make([]*farm.Aggregate, 0, len(misses))
+	for agg := range loaded {
+		results[agg.UID] = agg
+		refills = append(refills, agg)
+	}
+	if len(refills) != len(misses) {
+		return nil, errors.New("store: incomplete farm cache refill")
+	}
+	if err := s.cacheFarmsPipeline(ctx, refills); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 func ensureItems(agg *farm.Aggregate) {
@@ -173,11 +275,11 @@ func (s *Store) DeleteFarmCache(ctx context.Context, uid uint64) error {
 	return nil
 }
 
-// cacheFarm 以 JSON 写入 farm:{uid}，TTL 使用 Store.farmTTL（默认 10 分钟）。
+// cacheFarm 以版本化 Protobuf 写入 farm:{uid}，TTL 使用 Store.farmTTL。
 func (s *Store) cacheFarm(ctx context.Context, agg *farm.Aggregate) error {
-	payload, err := json.Marshal(agg)
+	payload, err := encodeFarmCache(agg)
 	if err != nil {
-		return fmt.Errorf("store: marshal farm cache: %w", err)
+		return err
 	}
 	if err := s.rdb.Set(ctx, farmKey(agg.UID), payload, s.farmTTL).Err(); err != nil {
 		return fmt.Errorf("store: set farm cache: %w", err)

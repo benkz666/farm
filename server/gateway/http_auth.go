@@ -65,6 +65,7 @@ type Gateway struct {
 	crossPending              sync.Map
 	crossSlots                chan struct{}
 	writeSlots                chan struct{}
+	writeAdmission            *DynamicWriteAdmission
 	nextCrossReqID            atomic.Uint64
 	stealHints                store.StealHintStore
 	taskMail                  store.TaskMailStore
@@ -158,9 +159,14 @@ func WithFarmRPC(client farmrpc.Client, routes *sharding.RouteTable) Option {
 
 // WithDebugTimeFanout fans /api/debug/advance to every Farm and peer Gateway
 // over gRPC so sharded smoke keeps all process clocks aligned.
-func WithDebugTimeFanout(pool *grpcx.Pool, farmTargets, gatewayTargets map[string]string, localGatewayID string) Option {
+func WithDebugTimeFanout(
+	pool *grpcx.Pool,
+	farmTargets, gatewayTargets map[string]string,
+	localGatewayID string,
+	directories ...GatewayPeerDirectory,
+) Option {
 	return func(gateway *Gateway) {
-		gateway.debugFanout = NewDebugFanout(pool, farmTargets, gatewayTargets, localGatewayID)
+		gateway.debugFanout = NewDebugFanout(pool, farmTargets, gatewayTargets, localGatewayID, directories...)
 	}
 }
 
@@ -177,6 +183,9 @@ func WithConnectionRegistry(registry *presence.Registry, gatewayID string) Optio
 func WithMetrics(m *telemetry.Metrics) Option {
 	return func(gateway *Gateway) {
 		gateway.metrics = m
+		if gateway.writeAdmission != nil {
+			gateway.writeAdmission.SetMetrics(m)
+		}
 		if gateway.rooms != nil {
 			gateway.rooms.metrics = m
 		}
@@ -219,6 +228,18 @@ func WithWriteInFlightLimit(limit int) Option {
 	}
 }
 
+// WithDynamicWriteAdmission replaces the fixed write-slot guard with a
+// closed-loop controller driven by the durable Redis Stream backlog. The fixed
+// slot channel remains configured as a fallback when no controller is passed.
+func WithDynamicWriteAdmission(admission *DynamicWriteAdmission) Option {
+	return func(gateway *Gateway) {
+		gateway.writeAdmission = admission
+		if gateway.metrics != nil && admission != nil {
+			admission.SetMetrics(gateway.metrics)
+		}
+	}
+}
+
 // WithAPIDocs mounts an already environment-gated, offline documentation handler.
 func WithAPIDocs(handler http.Handler) Option {
 	return func(gateway *Gateway) {
@@ -243,6 +264,9 @@ func New(auth Authenticator, sessions store.SessionStore, runtime FarmRuntime, o
 		if option != nil {
 			option(gateway)
 		}
+	}
+	if gateway.writeAdmission != nil && gateway.metrics != nil {
+		gateway.writeAdmission.SetMetrics(gateway.metrics)
 	}
 	// Random non-sequential start so a restarted Gateway with the same
 	// gatewayID cannot reuse conn_id=1 against leftover connreg leases.

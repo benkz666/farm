@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
+	"farm/server/shared/outbox"
 	"farm/server/shared/telemetry"
 )
 
@@ -30,6 +31,8 @@ const (
 
 	drainRetryMinBackoff = 10 * time.Millisecond
 	drainRetryMaxBackoff = 250 * time.Millisecond
+	coldLoadBatchWindow  = 500 * time.Microsecond
+	coldLoadBatchMax     = 128
 )
 
 var (
@@ -49,6 +52,15 @@ var (
 	requestResultPool = sync.Pool{New: func() any {
 		return make(chan error, 1)
 	}}
+	pairActorRequestPool = sync.Pool{New: func() any {
+		return &pairActorRequest{
+			ready:    make(chan pairActorReady, 1),
+			proceed:  make(chan error, 1),
+			prepared: make(chan pairActorPrepared, 1),
+			complete: make(chan error, 1),
+			done:     make(chan struct{}, 1),
+		}
+	}}
 )
 
 // FarmStore 是 Actor 所需的最小持久化边界。
@@ -62,6 +74,25 @@ type incrementalFarmStore interface {
 	SupportsIncrementalFarmCommits() bool
 }
 
+type batchFarmStore interface {
+	LoadFarms(context.Context, []uint64) (map[uint64]*farm.Aggregate, error)
+}
+
+type coldLoadResult struct {
+	aggregate *farm.Aggregate
+	err       error
+}
+
+type coldLoadRequest struct {
+	uid    uint64
+	result chan coldLoadResult
+}
+
+type coldLoadBatch struct {
+	requests []coldLoadRequest
+	flush    sync.Once
+}
+
 type commitAck struct {
 	generation uint64
 	err        error
@@ -71,6 +102,7 @@ type commitAck struct {
 type Runtime struct {
 	store         FarmStore
 	committers    []*Committer
+	pairCommitter *pairCommitter
 	idleTTL       time.Duration
 	flushInterval time.Duration
 	callTimeout   time.Duration
@@ -85,6 +117,9 @@ type Runtime struct {
 	drainCtx    context.Context
 	drainFailed atomic.Bool
 	wg          sync.WaitGroup
+
+	loadMu    sync.Mutex
+	loadBatch *coldLoadBatch
 }
 
 // IsResident reports whether uid currently has an in-memory actor. Scheduled
@@ -110,6 +145,29 @@ type residentActor struct {
 type request struct {
 	fn     func(*FarmActor) error
 	result chan error
+	pair   *pairActorRequest
+}
+
+// pairActorRequest temporarily lends one Actor to DoPairDurable. The Actor
+// run loop remains blocked until the coordinator has built and committed both
+// UID mutations, so ordinary mailbox serialization is preserved.
+type pairActorRequest struct {
+	ready    chan pairActorReady
+	proceed  chan error
+	prepared chan pairActorPrepared
+	complete chan error
+	done     chan struct{}
+}
+
+type pairActorReady struct {
+	actor *FarmActor
+	err   error
+}
+
+type pairActorPrepared struct {
+	commit      outbox.FarmCommit
+	dirty       bool
+	callbackErr error
 }
 
 // NewRuntime 创建 Actor 运行时。idleTTL 非正时使用 DefaultIdleTTL。
@@ -126,6 +184,7 @@ func NewRuntime(store FarmStore, idleTTL time.Duration) *Runtime {
 		actors:        make(map[uint64]*residentActor),
 	}
 	r.committers = []*Committer{NewCommitter(asBatchStore(store), defaultCommitterConfig())}
+	r.pairCommitter = newPairCommitter(asBatchStore(store), defaultPairCommitterConfig(r.ioTimeout))
 	return r
 }
 
@@ -193,6 +252,9 @@ func (r *Runtime) SetTimeouts(call, io time.Duration) {
 		io = DefaultIOTimeout
 	}
 	r.callTimeout, r.ioTimeout = call, io
+	if r.pairCommitter != nil {
+		r.pairCommitter.config.IOTimeout = io
+	}
 }
 
 // SetMaxResident installs a hard admission ceiling for cold Actor loads.
@@ -226,6 +288,9 @@ func (r *Runtime) SetMetrics(m *telemetry.Metrics) {
 		if committer != nil {
 			committer.SetMetrics(m)
 		}
+	}
+	if r.pairCommitter != nil {
+		r.pairCommitter.SetMetrics(m)
 	}
 }
 
@@ -284,6 +349,167 @@ func (r *Runtime) Do(uid uint64, fn func(*FarmActor) error) error {
 	}
 }
 
+// DoPairDurable executes one mutation while two UID-affine Actors are held in
+// deterministic order, then appends both final mutations through one
+// BatchFarmStore call. It is intended for colocated cross-farm commands where
+// visitor reservation, owner adjudication and visitor settlement form one
+// logical transaction in the reliable Redis journal.
+//
+// The callback must not call Runtime.Do/DoPairDurable recursively. Both Actor
+// mailboxes are exclusively owned until the shared durable append completes.
+func (r *Runtime) DoPairDurable(
+	firstUID, secondUID uint64,
+	fn func(first, second *FarmActor) error,
+) error {
+	if r == nil {
+		return errors.New("actor: runtime is nil")
+	}
+	if r.store == nil {
+		return errors.New("actor: farm store is nil")
+	}
+	if firstUID == 0 || secondUID == 0 || firstUID == secondUID {
+		return errors.New("actor: invalid actor pair")
+	}
+	if fn == nil {
+		return errors.New("actor: pair callback is nil")
+	}
+
+	lowUID, highUID := firstUID, secondUID
+	if lowUID > highUID {
+		lowUID, highUID = highUID, lowUID
+	}
+	low := newPairActorRequest()
+	defer recyclePairActorRequest(low)
+	if err := r.sendPairActorRequest(lowUID, low); err != nil {
+		return err
+	}
+	lowReady := <-low.ready
+	if lowReady.err != nil {
+		<-low.done
+		return lowReady.err
+	}
+
+	high := newPairActorRequest()
+	defer recyclePairActorRequest(high)
+	if err := r.sendPairActorRequest(highUID, high); err != nil {
+		releasePairActor(low, err)
+		return err
+	}
+	highReady := <-high.ready
+	if highReady.err != nil {
+		<-high.done
+		releasePairActor(low, highReady.err)
+		return highReady.err
+	}
+
+	firstActor, secondActor := lowReady.actor, highReady.actor
+	if firstUID > secondUID {
+		firstActor, secondActor = secondActor, firstActor
+	}
+	callbackErr := invokePairCallback(fn, firstActor, secondActor)
+	low.proceed <- callbackErr
+	high.proceed <- callbackErr
+	lowPrepared := <-low.prepared
+	highPrepared := <-high.prepared
+
+	commitErr := callbackErr
+	if commitErr == nil {
+		commitErr = lowPrepared.callbackErr
+		if commitErr == nil {
+			commitErr = highPrepared.callbackErr
+		}
+	}
+	if commitErr == nil {
+		var commitBuffer [2]outbox.FarmCommit
+		commits := commitBuffer[:0]
+		if lowPrepared.dirty {
+			commits = append(commits, lowPrepared.commit)
+		}
+		if highPrepared.dirty {
+			commits = append(commits, highPrepared.commit)
+		}
+		if len(commits) > 0 {
+			commitErr = r.commitPair(commits)
+		}
+	}
+	low.complete <- commitErr
+	high.complete <- commitErr
+	<-low.done
+	<-high.done
+	if commitErr != nil {
+		return fmt.Errorf("actor: commit pair %d/%d: %w", firstUID, secondUID, commitErr)
+	}
+	return nil
+}
+
+func newPairActorRequest() *pairActorRequest {
+	return pairActorRequestPool.Get().(*pairActorRequest)
+}
+
+func recyclePairActorRequest(pair *pairActorRequest) {
+	if pair != nil {
+		pairActorRequestPool.Put(pair)
+	}
+}
+
+func (r *Runtime) sendPairActorRequest(uid uint64, pair *pairActorRequest) error {
+	deadline := time.NewTimer(r.callTimeout)
+	defer deadline.Stop()
+	for {
+		resident, err := r.getOrStartActor(uid)
+		if err != nil {
+			return err
+		}
+		depth := int(resident.waiters.Add(1))
+		if m := r.metrics; m != nil {
+			m.ObserveMailboxDepth(depth)
+		}
+		select {
+		case resident.mailbox <- request{pair: pair}:
+			resident.waiters.Add(-1)
+			return nil
+		case <-resident.done:
+			resident.waiters.Add(-1)
+		case <-deadline.C:
+			resident.waiters.Add(-1)
+			if m := r.metrics; m != nil {
+				m.ActorDoBusy.Inc()
+			}
+			return ErrBusy
+		}
+	}
+}
+
+func releasePairActor(pair *pairActorRequest, err error) {
+	if pair == nil {
+		return
+	}
+	pair.proceed <- err
+	<-pair.prepared
+	pair.complete <- err
+	<-pair.done
+}
+
+func invokePairCallback(fn func(*FarmActor, *FarmActor) error, first, second *FarmActor) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("actor: pair callback panic: %v", recovered)
+		}
+	}()
+	return fn(first, second)
+}
+
+func (r *Runtime) commitPair(commits []outbox.FarmCommit) error {
+	if r.pairCommitter == nil {
+		return errors.New("actor: pair committer is nil")
+	}
+	if pressure, ok := asBatchStore(r.store).(foregroundPressureStore); ok {
+		pressure.AdjustForegroundPressure(1)
+		defer pressure.AdjustForegroundPressure(-1)
+	}
+	return r.pairCommitter.Commit(commits)
+}
+
 // Shutdown 疏散全部驻留 Actor：拒绝新请求，让每个 Actor 处理完手上的请求后落盘
 // 退出，并等待它们结束或 ctx 超时，最后排空组提交器。
 func (r *Runtime) Shutdown(ctx context.Context) error {
@@ -324,6 +550,11 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 			if err := committer.Shutdown(ctx); err != nil {
 				shutdownErrors = append(shutdownErrors, err)
 			}
+		}
+	}
+	if r.pairCommitter != nil {
+		if err := r.pairCommitter.Shutdown(ctx); err != nil {
+			shutdownErrors = append(shutdownErrors, err)
 		}
 	}
 	return errors.Join(shutdownErrors...)
@@ -382,6 +613,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 	var actor FarmActor
 	var generation uint64
 	var committedGen uint64
+	var enqueuedGen uint64
 	commitAcks := make(chan commitAck, 16)
 
 	for {
@@ -390,10 +622,51 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			if actor.Aggregate == nil {
 				aggregate, err := r.load(uid)
 				if err != nil {
-					req.result <- err
+					if req.pair != nil {
+						req.pair.ready <- pairActorReady{err: err}
+						req.pair.done <- struct{}{}
+					} else {
+						req.result <- err
+					}
 					return
 				}
 				actor.Aggregate = aggregate
+			}
+			if req.pair != nil {
+				if err := r.ensurePairBaseline(uid, &actor, generation, &committedGen, &enqueuedGen, commitAcks); err != nil {
+					req.pair.ready <- pairActorReady{err: err}
+					req.pair.done <- struct{}{}
+					resetTimer(idle, r.idleTTL)
+					continue
+				}
+				req.pair.ready <- pairActorReady{actor: &actor}
+				callbackErr := <-req.pair.proceed
+				dirty := actor.consumeDirty()
+				actor.syncFlush = false
+				prepared := pairActorPrepared{dirty: dirty, callbackErr: callbackErr}
+				if dirty {
+					generation++
+					actor.stampOutboxGeneration(generation)
+					actor.stampSideEffectGeneration(generation)
+					actor.stampPersistGeneration(generation)
+					prepared.commit, prepared.callbackErr = r.buildPairCommit(&actor, prepared.callbackErr)
+				}
+				req.pair.prepared <- prepared
+				commitErr := <-req.pair.complete
+				if dirty && commitErr == nil {
+					committedGen = generation
+					enqueuedGen = generation
+					actor.ackOutbox(committedGen)
+					actor.ackSideEffects(committedGen)
+					actor.ackPersistPlan(committedGen)
+				} else if dirty {
+					// The final mutation remains stamped and the ordinary flush ticker
+					// will retry it; do not claim this generation was enqueued.
+					enqueuedGen = committedGen
+				}
+				req.pair.done <- struct{}{}
+				resetTimer(idle, r.idleTTL)
+				continue
 			}
 
 			err, panicked := invokeCallback(req.fn, &actor)
@@ -414,7 +687,9 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			needSyncFlush := actor.syncFlush
 			if needSyncFlush {
 				actor.syncFlush = false
-				r.finishRequestAfterDurable(uid, &actor, generation, err, req.result, commitAcks)
+				if r.finishRequestAfterDurable(uid, &actor, generation, err, req.result, commitAcks) {
+					enqueuedGen = generation
+				}
 			} else {
 				req.result <- err
 			}
@@ -424,10 +699,13 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 			if committedGen >= generation {
 				continue
 			}
-			r.enqueueWriteBehind(uid, &actor, generation, commitAcks)
+			if enqueuedGen < generation && r.enqueueWriteBehind(uid, &actor, generation, commitAcks) {
+				enqueuedGen = generation
+			}
 
 		case ack := <-commitAcks:
 			if ack.err != nil {
+				enqueuedGen = committedGen
 				telemetry.L().Error("actor flush failed",
 					"component", "actor",
 					"op", "write_behind",
@@ -458,6 +736,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				continue
 			}
 			committedGen = generation
+			enqueuedGen = generation
 			actor.ackOutbox(committedGen)
 			actor.ackSideEffects(committedGen)
 			actor.ackPersistPlan(committedGen)
@@ -499,6 +778,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 					}
 				}
 				committedGen = generation
+				enqueuedGen = generation
 				actor.ackOutbox(committedGen)
 				actor.ackSideEffects(committedGen)
 				actor.ackPersistPlan(committedGen)
@@ -532,7 +812,7 @@ func (r *Runtime) enqueueSave(uid uint64, actor *FarmActor, generation uint64, d
 		actor.pendingPersistPlan(), durable)
 }
 
-func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation uint64, commitAcks chan commitAck) {
+func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation uint64, commitAcks chan commitAck) bool {
 	resultCh, err := r.enqueueSave(uid, actor, generation, false)
 	if err != nil {
 		telemetry.L().Error("actor enqueue write-behind failed",
@@ -541,7 +821,7 @@ func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation ui
 			"uid", uid,
 			"err", err.Error(),
 		)
-		return
+		return false
 	}
 	go func(gen uint64) {
 		res := <-resultCh
@@ -550,6 +830,7 @@ func (r *Runtime) enqueueWriteBehind(uid uint64, actor *FarmActor, generation ui
 		default:
 		}
 	}(generation)
+	return true
 }
 
 func (r *Runtime) enqueueDurableAndWait(uid uint64, actor *FarmActor, generation uint64) error {
@@ -571,7 +852,7 @@ func (r *Runtime) finishRequestAfterDurable(
 	callbackErr error,
 	result chan error,
 	commitAcks chan commitAck,
-) {
+) bool {
 	resultCh, enqueueErr := r.enqueueSave(uid, actor, generation, true)
 	if enqueueErr != nil {
 		telemetry.L().Error("actor flush failed",
@@ -584,7 +865,7 @@ func (r *Runtime) finishRequestAfterDurable(
 			callbackErr = enqueueErr
 		}
 		result <- callbackErr
-		return
+		return false
 	}
 	go func(cbErr error, gen uint64) {
 		res := <-resultCh
@@ -605,6 +886,78 @@ func (r *Runtime) finishRequestAfterDurable(
 		default:
 		}
 	}(callbackErr, generation)
+	return true
+}
+
+func (r *Runtime) ensurePairBaseline(
+	uid uint64,
+	actor *FarmActor,
+	generation uint64,
+	committedGen, enqueuedGen *uint64,
+	commitAcks chan commitAck,
+) error {
+	for *committedGen < generation {
+		if *enqueuedGen < generation {
+			*enqueuedGen = generation
+			if err := r.enqueueDurableAndWait(uid, actor, generation); err != nil {
+				*enqueuedGen = *committedGen
+				return err
+			}
+			*committedGen = generation
+			actor.ackOutbox(generation)
+			actor.ackSideEffects(generation)
+			actor.ackPersistPlan(generation)
+			return nil
+		}
+		wait := time.NewTimer(r.ioTimeout)
+		var ack commitAck
+		select {
+		case ack = <-commitAcks:
+			if !wait.Stop() {
+				select {
+				case <-wait.C:
+				default:
+				}
+			}
+		case <-wait.C:
+			*enqueuedGen = *committedGen
+			return fmt.Errorf("actor: wait prior farm %d generation %d: %w", uid, generation, context.DeadlineExceeded)
+		}
+		if ack.err != nil {
+			*enqueuedGen = *committedGen
+			return fmt.Errorf("actor: wait prior farm %d generation %d: %w", uid, ack.generation, ack.err)
+		}
+		if ack.generation > *committedGen {
+			*committedGen = ack.generation
+			actor.ackOutbox(*committedGen)
+			actor.ackSideEffects(*committedGen)
+			actor.ackPersistPlan(*committedGen)
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) buildPairCommit(actor *FarmActor, callbackErr error) (outbox.FarmCommit, error) {
+	if callbackErr != nil {
+		return outbox.FarmCommit{}, callbackErr
+	}
+	if actor == nil || actor.Aggregate == nil {
+		return outbox.FarmCommit{}, errors.New("actor: pair aggregate is nil")
+	}
+	if incremental, ok := r.store.(incrementalFarmStore); ok && incremental.SupportsIncrementalFarmCommits() {
+		mutation, err := actor.pendingWriteMutation()
+		if err != nil {
+			return outbox.FarmCommit{}, err
+		}
+		return outbox.FarmCommit{Mutation: mutation, Plan: actor.pendingPersistPlan()}, nil
+	}
+	return outbox.FarmCommit{
+		Snapshot:     actor.Aggregate.Clone(),
+		Outbox:       actor.pendingOutboxEvents(),
+		TaskAdvances: actor.pendingTaskAdvances(),
+		CodexRewards: actor.pendingCodexRewards(),
+		Plan:         actor.pendingPersistPlan(),
+	}, nil
 }
 
 func (r *Runtime) load(uid uint64) (*farm.Aggregate, error) {
@@ -612,7 +965,7 @@ func (r *Runtime) load(uid uint64) (*farm.Aggregate, error) {
 	defer cancel()
 
 	start := time.Now()
-	aggregate, err := r.store.LoadFarm(ctx, uid)
+	aggregate, err := r.loadAggregate(ctx, uid)
 	if err != nil {
 		if m := r.metrics; m != nil {
 			m.ObserveActorLoad(time.Since(start), err)
@@ -631,6 +984,67 @@ func (r *Runtime) load(uid uint64) (*farm.Aggregate, error) {
 	}
 	aggregate.HazardSalt = r.hazardSalt
 	return aggregate, nil
+}
+
+func (r *Runtime) loadAggregate(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
+	if _, ok := r.store.(batchFarmStore); !ok {
+		return r.store.LoadFarm(ctx, uid)
+	}
+	request := coldLoadRequest{uid: uid, result: make(chan coldLoadResult, 1)}
+	r.loadMu.Lock()
+	batch := r.loadBatch
+	if batch == nil {
+		batch = &coldLoadBatch{requests: make([]coldLoadRequest, 0, coldLoadBatchMax)}
+		r.loadBatch = batch
+		go r.flushColdLoadBatchAfter(batch, coldLoadBatchWindow)
+	}
+	batch.requests = append(batch.requests, request)
+	full := len(batch.requests) >= coldLoadBatchMax
+	if full && r.loadBatch == batch {
+		// Detach the full batch before releasing the lock. New arrivals can form
+		// the next batch instead of racing the immediate flusher past the cap.
+		r.loadBatch = nil
+	}
+	r.loadMu.Unlock()
+	if full {
+		go r.flushColdLoadBatchAfter(batch, 0)
+	}
+	select {
+	case result := <-request.result:
+		return result.aggregate, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (r *Runtime) flushColdLoadBatchAfter(batch *coldLoadBatch, delay time.Duration) {
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		<-timer.C
+	}
+	batch.flush.Do(func() {
+		r.loadMu.Lock()
+		if r.loadBatch == batch {
+			r.loadBatch = nil
+		}
+		requests := append([]coldLoadRequest(nil), batch.requests...)
+		r.loadMu.Unlock()
+
+		uids := make([]uint64, len(requests))
+		for index, request := range requests {
+			uids[index] = request.uid
+		}
+		loadCtx, cancel := context.WithTimeout(context.Background(), r.ioTimeout)
+		loaded, err := r.store.(batchFarmStore).LoadFarms(loadCtx, uids)
+		cancel()
+		for _, request := range requests {
+			result := coldLoadResult{aggregate: loaded[request.uid], err: err}
+			if err == nil && result.aggregate == nil {
+				result.err = fmt.Errorf("actor: batch load omitted farm %d", request.uid)
+			}
+			request.result <- result
+		}
+	})
 }
 
 func invokeCallback(fn func(*FarmActor) error, actor *FarmActor) (err error, panicked bool) {

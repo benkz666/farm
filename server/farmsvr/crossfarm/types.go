@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"farm/server/domain/farm"
+	"farm/server/gateway/presence"
 	"farm/server/shared/errcode"
 )
 
@@ -28,6 +29,12 @@ type CrossAction struct {
 	PlotIndex    uint8      `json:"plot_index"`
 	CropID       uint16     `json:"crop_id,omitempty"`
 	Compensation int64      `json:"compensation,omitempty"`
+	// FriendshipVerified means the trusted Gateway has already performed the
+	// authoritative friendship check for this internal request.
+	FriendshipVerified bool `json:"friendship_verified,omitempty"`
+	// Originator is transport-only metadata for the colocated fast path. It is
+	// deliberately not persisted in visitor reservations or event payloads.
+	Originator presence.ConnRef `json:"-"`
 }
 
 // CrossResult is sent back to the visitor after the owner farm decides an action.
@@ -42,6 +49,19 @@ type CrossResult struct {
 	Amount       uint16       `json:"amount,omitempty"`
 	Compensation int64        `json:"compensation,omitempty"`
 	DogType      farm.DogType `json:"dog_type,omitempty"`
+}
+
+// CrossExecution is the result of the colocated one-RPC fast path. Production
+// runtimes combine both UID mutations into one durable journal command; the
+// distributed fallback continues to use the three-boundary Saga.
+type CrossExecution struct {
+	Result         CrossResult
+	Reward         VisitorReward
+	PlayerDelta    *farm.PlayerDelta
+	FarmDelta      *farm.FarmDelta
+	Code           errcode.Code
+	OwnerCommitted bool
+	AckRequired    bool
 }
 
 // PendingTimeout 是 Gateway 等待主人侧回执后应答客户端的时限。

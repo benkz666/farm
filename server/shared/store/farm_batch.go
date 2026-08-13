@@ -602,9 +602,9 @@ func (s *Store) cacheFarmsPipeline(ctx context.Context, snapshots []*farm.Aggreg
 		if agg == nil {
 			continue
 		}
-		payload, err := json.Marshal(agg)
+		payload, err := encodeFarmCache(agg)
 		if err != nil {
-			return fmt.Errorf("store: marshal farm cache uid %d: %w", agg.UID, err)
+			return fmt.Errorf("store: encode farm cache uid %d: %w", agg.UID, err)
 		}
 		pipe.Set(ctx, farmKey(agg.UID), payload, s.farmTTL)
 	}

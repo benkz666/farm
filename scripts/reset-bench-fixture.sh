@@ -7,6 +7,42 @@ project_name="${COMPOSE_PROJECT_NAME:-benkz}"
 profile="${PROFILE:?set PROFILE, for example water or hot-economy}"
 fixture="${FIXTURE:?set FIXTURE, for example /fixtures/hot-write-15000x18.json}"
 
+wait_write_journal_idle() {
+  if [[ "${WAIT_WRITE_JOURNAL_IDLE:-1}" != "1" ]]; then
+    return
+  fi
+
+  local timeout_seconds="${WRITE_JOURNAL_IDLE_TIMEOUT_SECONDS:-600}"
+  local poll_seconds="${WRITE_JOURNAL_IDLE_POLL_SECONDS:-2}"
+  local deadline=$((SECONDS + timeout_seconds))
+  local values pending lag
+
+  while ((SECONDS < deadline)); do
+    values="$(
+      docker compose -p "${project_name}" -f "${compose_file}" \
+        --profile app exec -T event-redis sh -lc '
+          for key in $(redis-cli --scan --pattern "*:events"); do
+            redis-cli --raw XINFO GROUPS "$key"
+          done | awk '\''
+            $0 == "pending" { getline; pending += $0 }
+            $0 == "lag" { getline; lag += $0 }
+            END { print pending + 0, lag + 0 }
+          '\''
+        '
+    )"
+    read -r pending lag <<<"${values}"
+    if [[ "${pending:-1}" == "0" && "${lag:-1}" == "0" ]]; then
+      echo "benchfixture: write journal is idle"
+      return
+    fi
+    echo "benchfixture: waiting for write journal pending=${pending:-unknown} lag=${lag:-unknown}"
+    sleep "${poll_seconds}"
+  done
+
+  echo "write journal did not become idle within ${timeout_seconds}s" >&2
+  return 1
+}
+
 case "${profile}" in
   water|water-visitor|harvest|sell|hot-economy|steal) ;;
   *)
@@ -14,6 +50,12 @@ case "${profile}" in
     exit 2
     ;;
 esac
+
+# The fixture rewrite bypasses the asynchronous write journal and updates
+# MySQL directly. Wait for every older projection first; otherwise a projector
+# can commit an earlier benchmark mutation after the reset and make a legal
+# plot appear watered/harvested before the next measurement starts.
+wait_write_journal_idle
 
 docker compose -p "${project_name}" -f "${compose_file}" \
   --profile app --profile fixture run --rm --no-deps benchfixture \

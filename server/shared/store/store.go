@@ -158,6 +158,14 @@ const (
 	defaultMySQLMaxIdleConns = 12
 	defaultMySQLConnLifetime = 5 * time.Minute
 	defaultMySQLConnIdleTime = 1 * time.Minute
+
+	// Go-redis defaults PoolSize to 10*GOMAXPROCS. Farm is deliberately limited
+	// to one CPU in the benchmark topology, but cold Actor loads are I/O bound
+	// and may have hundreds of independent Redis reads in flight. Keep cache
+	// concurrency independent from the CPU quota so those loads do not queue
+	// behind a ten-connection default pool.
+	defaultRedisPoolSize     = 128
+	defaultRedisMinIdleConns = 32
 )
 
 // Store 是 SessionStore 与 FarmStore 的唯一实现，组合 MySQL 与 Redis。
@@ -217,7 +225,11 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 		return nil, nil, fmt.Errorf("store: ping mysql: %w", err)
 	}
 
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         redisAddr,
+		PoolSize:     defaultRedisPoolSize,
+		MinIdleConns: defaultRedisMinIdleConns,
+	})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		db.Close()
 		return nil, nil, fmt.Errorf("store: ping redis: %w", err)

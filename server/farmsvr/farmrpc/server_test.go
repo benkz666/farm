@@ -11,6 +11,7 @@ import (
 	"farm/server/farmsvr/room"
 	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
@@ -39,6 +40,24 @@ func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
 	}
 	if payload.Snapshot.OwnerUID != 42 || payload.ServerTime != 123 || payload.TimeProfile != gameconfig.TimeProfileAuthentic {
 		t.Fatalf("enter payload = %#v", payload)
+	}
+}
+
+func TestHandlerEnterFarmBuildsOnlyRequestedPreparedRepresentation(t *testing.T) {
+	runtime := runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}}
+	handler := NewHandler(runtime, nil, func(uint64) bool { return true }, func() int64 { return 123 })
+
+	response := handler.Execute(CommandRequest{
+		Operation: OperationEnterFarm, FarmUID: 42, PreferPrepared: true,
+	})
+	if response.Err != errcode.OK {
+		t.Fatalf("response error = %d", response.Err)
+	}
+	if len(response.Payload) != 0 {
+		t.Fatalf("prepared response duplicated JSON payload: %s", response.Payload)
+	}
+	if len(response.PreparedPayload) == 0 || response.PreparedField != clientwire.PreparedEnterFarmResponse {
+		t.Fatalf("prepared response metadata = field %d payload %d", response.PreparedField, len(response.PreparedPayload))
 	}
 }
 

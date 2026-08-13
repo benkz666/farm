@@ -32,25 +32,24 @@ type actionResponse struct {
 }
 
 func (g *Gateway) acquireWriteSlot() bool {
-	if g == nil || g.writeSlots == nil {
+	if g == nil {
 		return true
 	}
-	select {
-	case g.writeSlots <- struct{}{}:
-		return true
-	default:
-		return false
+	if g.writeAdmission != nil {
+		return g.writeAdmission.Acquire()
 	}
+	return acquireBoundedSlot(g.writeSlots)
 }
 
 func (g *Gateway) releaseWriteSlot() {
-	if g == nil || g.writeSlots == nil {
+	if g == nil {
 		return
 	}
-	select {
-	case <-g.writeSlots:
-	default:
+	if g.writeAdmission != nil {
+		g.writeAdmission.Release()
+		return
 	}
+	releaseBoundedSlot(g.writeSlots)
 }
 
 func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) Envelope {
@@ -78,6 +77,9 @@ func (g *Gateway) handlePlotOrShop(connection *wsConnection, request Envelope) E
 		}
 	}
 	if !g.acquireWriteSlot() {
+		if g.metrics != nil {
+			g.metrics.ObserveWSRateLimited("write_slot")
+		}
 		response.Err = errcode.RateLimited
 		return response
 	}

@@ -39,6 +39,34 @@ func TestRegistryRegistersLooksUpAndUnregistersConnection(t *testing.T) {
 	}
 }
 
+func TestRegistryLooksUpRoomSubscribersInBatch(t *testing.T) {
+	backend := newMemoryBackend()
+	registry := NewWithBackend(backend)
+	ctx := context.Background()
+	if err := registry.Subscribe(ctx, 42, 8, "gateway-b"); err != nil {
+		t.Fatalf("Subscribe first: %v", err)
+	}
+	if err := registry.Subscribe(ctx, 42, 7, "gateway-a"); err != nil {
+		t.Fatalf("Subscribe second: %v", err)
+	}
+	if err := registry.Subscribe(ctx, 99, 9, "gateway-c"); err != nil {
+		t.Fatalf("Subscribe third: %v", err)
+	}
+
+	got, err := registry.LookupSubscribersBatch(ctx, []uint64{42, 99, 42, 0})
+	if err != nil {
+		t.Fatalf("LookupSubscribersBatch: %v", err)
+	}
+	want42 := []ConnRef{{ConnID: 7, GatewayID: "gateway-a"}, {ConnID: 8, GatewayID: "gateway-b"}}
+	if !reflect.DeepEqual(got[42], want42) {
+		t.Fatalf("uid 42 = %#v, want %#v", got[42], want42)
+	}
+	want99 := []ConnRef{{ConnID: 9, GatewayID: "gateway-c"}}
+	if !reflect.DeepEqual(got[99], want99) {
+		t.Fatalf("uid 99 = %#v, want %#v", got[99], want99)
+	}
+}
+
 func TestRegistryRejectsSecondLiveConnectionFromAnotherGateway(t *testing.T) {
 	backend := newMemoryBackend()
 	registry := NewWithBackend(backend)

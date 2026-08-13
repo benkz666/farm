@@ -2,19 +2,22 @@ package crossfarm
 
 import (
 	"farm/server/domain/farm"
+	"farm/server/gateway/presence"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/errcode"
 )
 
 func actionToProto(action CrossAction) *farmv1.CrossAction {
 	return &farmv1.CrossAction{
-		ReqId:        action.ReqID,
-		Kind:         actionKindToProto(action.Kind),
-		VisitorUid:   action.VisitorUID,
-		OwnerUid:     action.OwnerUID,
-		PlotIndex:    uint32(action.PlotIndex),
-		CropId:       uint32(action.CropID),
-		Compensation: action.Compensation,
+		ReqId:              action.ReqID,
+		Kind:               actionKindToProto(action.Kind),
+		VisitorUid:         action.VisitorUID,
+		OwnerUid:           action.OwnerUID,
+		PlotIndex:          uint32(action.PlotIndex),
+		CropId:             uint32(action.CropID),
+		Compensation:       action.Compensation,
+		FriendshipVerified: action.FriendshipVerified,
+		Originator:         connRefToProto(action.Originator),
 	}
 }
 
@@ -27,14 +30,30 @@ func actionFromProto(action *farmv1.CrossAction) (CrossAction, bool) {
 		return CrossAction{}, false
 	}
 	return CrossAction{
-		ReqID:        action.ReqId,
-		Kind:         kind,
-		VisitorUID:   action.VisitorUid,
-		OwnerUID:     action.OwnerUid,
-		PlotIndex:    uint8(action.PlotIndex),
-		CropID:       uint16(action.CropId),
-		Compensation: action.Compensation,
+		ReqID:              action.ReqId,
+		Kind:               kind,
+		VisitorUID:         action.VisitorUid,
+		OwnerUID:           action.OwnerUid,
+		PlotIndex:          uint8(action.PlotIndex),
+		CropID:             uint16(action.CropId),
+		Compensation:       action.Compensation,
+		FriendshipVerified: action.FriendshipVerified,
+		Originator:         connRefFromProto(action.Originator),
 	}, true
+}
+
+func connRefToProto(ref presence.ConnRef) *farmv1.ConnRef {
+	if ref.ConnID == 0 || ref.GatewayID == "" {
+		return nil
+	}
+	return &farmv1.ConnRef{ConnId: ref.ConnID, GatewayId: ref.GatewayID}
+}
+
+func connRefFromProto(ref *farmv1.ConnRef) presence.ConnRef {
+	if ref == nil || ref.ConnId == 0 || ref.GatewayId == "" {
+		return presence.ConnRef{}
+	}
+	return presence.ConnRef{ConnID: ref.ConnId, GatewayID: ref.GatewayId}
 }
 
 func resultToProto(result CrossResult) *farmv1.CrossResult {

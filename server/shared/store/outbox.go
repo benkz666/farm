@@ -16,10 +16,11 @@ import (
 const (
 	outboxClaimLease = 30 * time.Second
 	outboxBatchLimit = 64
-	// Direct gRPC settlement normally acks within tens of milliseconds. Delay
-	// fallback claiming so the dispatcher does not duplicate every healthy
-	// request; a crashed Gateway still recovers within this bounded window.
-	outboxInitialDelay = 500 * time.Millisecond
+	// Gateway waits up to five seconds for the direct Saga. Claiming earlier
+	// turns ordinary tail latency into duplicate settlement load and creates a
+	// retry storm exactly when Farm is saturated. Recovery starts just after the
+	// foreground timeout and remains below the ten-second reservation expiry.
+	outboxInitialDelay = 6 * time.Second
 )
 
 // OutboxStore manages durable fan-out rows in farm_outbox.
@@ -30,6 +31,12 @@ type OutboxStore interface {
 	MarkOutboxRetry(ctx context.Context, eventID string, attempts int, nextAttemptAt int64) error
 	MarkOutboxDeadLetter(ctx context.Context, eventID string, attempts int) error
 	DeletePublishedOutboxBefore(ctx context.Context, before int64) (int64, error)
+}
+
+// OutboxBatchPublisher is an optional hot-path extension used to acknowledge
+// several already delivered events with one storage round trip.
+type OutboxBatchPublisher interface {
+	MarkOutboxPublishedBatch(ctx context.Context, eventIDs []string) error
 }
 
 // OutboxRow is one claimed outbox entry ready for delivery.
@@ -165,6 +172,32 @@ func (s *Store) MarkOutboxPublished(ctx context.Context, eventID string) error {
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// MarkOutboxPublishedBatch acknowledges multiple rows idempotently in one SQL
+// statement. Missing or already published rows are intentionally ignored.
+func (s *Store) MarkOutboxPublishedBatch(ctx context.Context, eventIDs []string) error {
+	if s == nil || s.db == nil || len(eventIDs) == 0 {
+		return errors.New("store: invalid mark published batch")
+	}
+	placeholders := make([]string, len(eventIDs))
+	args := make([]any, 0, len(eventIDs)+1)
+	args = append(args, time.Now().UnixMilli())
+	for index, eventID := range eventIDs {
+		if eventID == "" {
+			return errors.New("store: invalid mark published batch event")
+		}
+		placeholders[index] = "?"
+		args = append(args, eventID)
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE farm_outbox
+		SET published_at = ?, dead_lettered_at = NULL, claim_token = NULL, claim_until = NULL
+		WHERE event_id IN (`+strings.Join(placeholders, ",")+`) AND published_at IS NULL`, args...)
+	if err != nil {
+		return fmt.Errorf("store: mark outbox published batch: %w", err)
 	}
 	return nil
 }

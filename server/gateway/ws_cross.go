@@ -28,35 +28,44 @@ type CrossFarmClient interface {
 	AcknowledgeCrossResult(ctx context.Context, ownerUID, visitorUID, reqID uint64) error
 }
 
+// colocatedCrossExecutor collapses the three cross-farm RPC hops when the
+// visitor and owner are routed to the same Farm instance.
+type colocatedCrossExecutor interface {
+	CanExecuteCrossAction(action crossfarm.CrossAction) bool
+	ExecuteCrossAction(ctx context.Context, action crossfarm.CrossAction, dayID uint32) (crossfarm.CrossExecution, error)
+}
+
+type crossResultAckEnqueuer interface {
+	EnqueueCrossResultAck(ownerUID, visitorUID, reqID uint64) error
+}
+
+type friendshipRevisionSource interface {
+	Revision() uint64
+}
+
+const friendRoomLeaseTTL = 30 * time.Second
+
 // crossPending 只保存「这次请求该回给谁」的传输态。
 type crossPending struct {
 	connection *wsConnection
 	command    uint32
 	clientSeq  uint32
 	steal      bool
-	timer      *time.Timer
+	deadline   time.Time
 }
 
 func (g *Gateway) acquireCrossSlot() bool {
-	if g == nil || g.crossSlots == nil {
+	if g == nil {
 		return true
 	}
-	select {
-	case g.crossSlots <- struct{}{}:
-		return true
-	default:
-		return false
-	}
+	return acquireBoundedSlot(g.crossSlots)
 }
 
 func (g *Gateway) releaseCrossSlot() {
-	if g == nil || g.crossSlots == nil {
+	if g == nil {
 		return
 	}
-	select {
-	case <-g.crossSlots:
-	default:
-	}
+	releaseBoundedSlot(g.crossSlots)
 }
 
 type stealRequest struct {
@@ -89,6 +98,9 @@ func (g *Gateway) crossReady() bool {
 func (g *Gateway) resolveCrossTarget(connection *wsConnection, claimedOwnerUID uint64) (uint64, errcode.Code) {
 	connection.roomMu.Lock()
 	ownerUID := connection.roomUID
+	leaseUID := connection.friendLeaseUID
+	leaseRevision := connection.friendLeaseRevision
+	leaseExpiresAt := connection.friendLeaseExpiresAt
 	connection.roomMu.Unlock()
 	if ownerUID == 0 || ownerUID == connection.uid || claimedOwnerUID != ownerUID {
 		return 0, errcode.NotOwner
@@ -96,7 +108,12 @@ func (g *Gateway) resolveCrossTarget(connection *wsConnection, claimedOwnerUID u
 	if g.friends == nil {
 		return 0, errcode.NotFriend
 	}
-	friends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+	currentRevision, tracksRevision := g.friendshipRevision()
+	if leaseUID == ownerUID && time.Now().UnixNano() < leaseExpiresAt &&
+		(!tracksRevision || leaseRevision == currentRevision) {
+		return ownerUID, errcode.OK
+	}
+	friends, err := g.refreshFriendLease(connection, ownerUID)
 	if err != nil {
 		return 0, errcode.Internal
 	}
@@ -104,6 +121,43 @@ func (g *Gateway) resolveCrossTarget(connection *wsConnection, claimedOwnerUID u
 		return 0, errcode.NotFriend
 	}
 	return ownerUID, errcode.OK
+}
+
+func (g *Gateway) friendshipRevision() (uint64, bool) {
+	if g == nil || g.friends == nil {
+		return 0, false
+	}
+	source, ok := g.friends.(friendshipRevisionSource)
+	if !ok {
+		return 0, false
+	}
+	return source.Revision(), true
+}
+
+func (g *Gateway) refreshFriendLease(connection *wsConnection, ownerUID uint64) (bool, error) {
+	if g == nil || g.friends == nil || connection == nil || ownerUID == 0 {
+		return false, nil
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		before, tracksRevision := g.friendshipRevision()
+		friends, err := g.friends.AreFriends(context.Background(), connection.uid, ownerUID)
+		if err != nil || !friends {
+			return friends, err
+		}
+		after, _ := g.friendshipRevision()
+		if tracksRevision && before != after {
+			continue
+		}
+		connection.roomMu.Lock()
+		if connection.roomUID == ownerUID {
+			connection.friendLeaseUID = ownerUID
+			connection.friendLeaseRevision = after
+			connection.friendLeaseExpiresAt = time.Now().Add(friendRoomLeaseTTL).UnixNano()
+		}
+		connection.roomMu.Unlock()
+		return true, nil
+	}
+	return false, errors.New("gateway: friendship changed while granting lease")
 }
 
 func (g *Gateway) handleVisitorMutualAid(connection *wsConnection, request Envelope) Envelope {
@@ -140,11 +194,12 @@ func (g *Gateway) handleVisitorMutualAid(connection *wsConnection, request Envel
 	}
 
 	action := crossfarm.CrossAction{
-		ReqID:      g.nextCrossReqID.Add(1),
-		Kind:       actionKind,
-		VisitorUID: connection.uid,
-		OwnerUID:   ownerUID,
-		PlotIndex:  uint8(payload.PlotIndex),
+		ReqID:              g.nextCrossReqID.Add(1),
+		Kind:               actionKind,
+		VisitorUID:         connection.uid,
+		OwnerUID:           ownerUID,
+		PlotIndex:          uint8(payload.PlotIndex),
+		FriendshipVerified: true,
 	}
 	return g.dispatchCrossAction(connection, request, action, g.logicDayID())
 }
@@ -183,13 +238,14 @@ func (g *Gateway) handleVisitorSteal(connection *wsConnection, request Envelope)
 	}
 
 	action := crossfarm.CrossAction{
-		ReqID:        g.nextCrossReqID.Add(1),
-		Kind:         crossfarm.Steal,
-		VisitorUID:   connection.uid,
-		OwnerUID:     ownerUID,
-		PlotIndex:    uint8(payload.PlotIndex),
-		CropID:       uint16(payload.CropID),
-		Compensation: gameconfig.StealCompensation(crop),
+		ReqID:              g.nextCrossReqID.Add(1),
+		Kind:               crossfarm.Steal,
+		VisitorUID:         connection.uid,
+		OwnerUID:           ownerUID,
+		PlotIndex:          uint8(payload.PlotIndex),
+		CropID:             uint16(payload.CropID),
+		Compensation:       gameconfig.StealCompensation(crop),
+		FriendshipVerified: true,
 	}
 	return g.dispatchCrossAction(connection, request, action, 0)
 }
@@ -201,10 +257,22 @@ func (g *Gateway) dispatchCrossAction(
 	dayID uint32,
 ) Envelope {
 	if !g.acquireCrossSlot() {
+		if g.metrics != nil {
+			g.metrics.ObserveWSRateLimited("cross_slot")
+		}
 		return Envelope{
 			Cmd: request.Cmd, ClientSeq: request.ClientSeq,
 			Err: errcode.RateLimited, Payload: emptyPayload,
 		}
+	}
+	if executor, ok := g.crossClient.(colocatedCrossExecutor); ok && executor.CanExecuteCrossAction(action) {
+		action.Originator = g.connectionRef(connection)
+		g.registerCrossPending(connection, request, action)
+		if !gatewayCrossScheduler.submit(func() { g.executeColocatedCrossAction(executor, action, dayID) }) {
+			g.discardCrossPending(action.ReqID)
+			return Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.RateLimited, Payload: emptyPayload}
+		}
+		return Envelope{}
 	}
 	if code := g.reserveCrossVisitor(action, dayID); code != errcode.OK {
 		g.releaseCrossSlot()
@@ -216,19 +284,107 @@ func (g *Gateway) dispatchCrossAction(
 		}
 	}
 
+	g.registerCrossPending(connection, request, action)
+	if !gatewayCrossScheduler.submit(func() { g.applyCrossActionAsync(action) }) {
+		g.discardCrossPending(action.ReqID)
+		return Envelope{Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: errcode.RateLimited, Payload: emptyPayload}
+	}
+	return Envelope{}
+}
+
+func (g *Gateway) registerCrossPending(connection *wsConnection, request Envelope, action crossfarm.CrossAction) {
 	pending := &crossPending{
 		connection: connection,
 		command:    request.Cmd,
 		clientSeq:  request.ClientSeq,
 		steal:      action.Kind == crossfarm.Steal,
+		deadline:   time.Now().Add(crossfarm.PendingTimeout),
 	}
-	pending.timer = time.AfterFunc(crossfarm.PendingTimeout, func() {
-		g.timeoutCrossAction(action.ReqID)
-	})
 	g.crossPending.Store(action.ReqID, pending)
+	gatewayCrossScheduler.scheduleTimeout(g, action.ReqID, pending.deadline)
+}
 
-	go g.applyCrossActionAsync(action)
-	return Envelope{}
+func (g *Gateway) discardCrossPending(reqID uint64) {
+	if _, ok := g.crossPending.LoadAndDelete(reqID); ok {
+		g.releaseCrossSlot()
+	}
+}
+
+func (g *Gateway) executeColocatedCrossAction(
+	executor colocatedCrossExecutor,
+	action crossfarm.CrossAction,
+	dayID uint32,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), crossfarm.PendingTimeout)
+	execution, err := executor.ExecuteCrossAction(ctx, action, dayID)
+	cancel()
+	if err != nil {
+		telemetry.L().Error("colocated cross action failed",
+			"component", "gateway",
+			"op", "execute_colocated_cross_action",
+			"err", err.Error(),
+		)
+		g.failCrossAction(action.ReqID, errcode.Internal)
+		return
+	}
+	g.finishColocatedCrossExecution(execution)
+}
+
+func (g *Gateway) failCrossAction(reqID uint64, code errcode.Code) {
+	raw, ok := g.crossPending.LoadAndDelete(reqID)
+	if !ok {
+		return
+	}
+	pending := raw.(*crossPending)
+	g.releaseCrossSlot()
+	if pending.connection != nil {
+		_ = pending.connection.respond(Envelope{
+			Cmd: pending.command, ClientSeq: pending.clientSeq,
+			Err: code, Payload: emptyPayload,
+		})
+	}
+}
+
+func (g *Gateway) finishColocatedCrossExecution(execution crossfarm.CrossExecution) {
+	raw, ok := g.crossPending.LoadAndDelete(execution.Result.ReqID)
+	if !ok {
+		return
+	}
+	pending := raw.(*crossPending)
+	g.releaseCrossSlot()
+	if execution.OwnerCommitted && execution.AckRequired && execution.Code != errcode.Internal {
+		g.ackCrossResult(execution.Result)
+	}
+	if pending.connection == nil {
+		if execution.PlayerDelta != nil {
+			_ = g.PublishPlayerDelta(context.Background(), execution.Result.VisitorUID, *execution.PlayerDelta)
+		}
+		return
+	}
+	if execution.PlayerDelta != nil {
+		pending.connection.pushPlayerDelta(*execution.PlayerDelta)
+	}
+	if execution.FarmDelta != nil {
+		if err := pending.connection.pushFarmDelta(execution.Result.OwnerUID, *execution.FarmDelta, nil); err != nil {
+			telemetry.L().Debug("colocated FarmDelta delivery failed",
+				"component", "gateway", "op", "deliver_colocated_farm_delta", "err", err.Error())
+		}
+	}
+	execution.Reward.ReqID = execution.Result.ReqID
+	response := Envelope{
+		Cmd:       pending.command,
+		ClientSeq: pending.clientSeq,
+		Err:       execution.Code,
+		Payload:   emptyPayload,
+	}
+	if execution.Code == errcode.OK || (pending.steal && execution.Code == errcode.StealIntercepted) {
+		response.CommandResponse = clientwire.NewVisitorRewardCommandResponse(
+			execution.Reward.ReqID, execution.Reward.ExpGained, execution.Reward.CoinGained,
+			uint32(execution.Reward.CropID), uint32(execution.Reward.Amount),
+			execution.Reward.Compensation, uint32(execution.Reward.DogType),
+		)
+	}
+	_ = pending.connection.respond(response)
 }
 
 func (g *Gateway) applyCrossActionAsync(action crossfarm.CrossAction) {
@@ -274,14 +430,14 @@ func retryableCrossApplyError(err error) bool {
 }
 
 func (g *Gateway) timeoutCrossAction(reqID uint64) {
-	telemetry.L().Debug("cross action timed out",
-		"component", "gateway",
-		"op", "timeout_cross_action",
-	)
 	raw, ok := g.crossPending.LoadAndDelete(reqID)
 	if !ok {
 		return
 	}
+	telemetry.L().Debug("cross action timed out",
+		"component", "gateway",
+		"op", "timeout_cross_action",
+	)
 	pending := raw.(*crossPending)
 	g.releaseCrossSlot()
 	if pending.connection == nil {
@@ -300,9 +456,6 @@ func (g *Gateway) finishCrossResult(result crossfarm.CrossResult) {
 	if raw, ok := g.crossPending.LoadAndDelete(result.ReqID); ok {
 		pending = raw.(*crossPending)
 		g.releaseCrossSlot()
-		if pending.timer != nil {
-			pending.timer.Stop()
-		}
 	}
 	telemetry.L().Debug("cross result finished",
 		"component", "gateway",
@@ -405,7 +558,17 @@ func (g *Gateway) ackCrossResult(result crossfarm.CrossResult) {
 	if g.crossClient == nil {
 		return
 	}
-	go func() {
+	if batcher, ok := g.crossClient.(crossResultAckEnqueuer); ok {
+		if err := batcher.EnqueueCrossResultAck(result.OwnerUID, result.VisitorUID, result.ReqID); err != nil {
+			telemetry.L().Debug("cross result ack enqueue failed",
+				"component", "gateway",
+				"op", "enqueue_cross_result_ack",
+				"err", err.Error(),
+			)
+		}
+		return
+	}
+	if !gatewayCrossScheduler.submit(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := g.crossClient.AcknowledgeCrossResult(ctx, result.OwnerUID, result.VisitorUID, result.ReqID); err != nil {
@@ -415,7 +578,10 @@ func (g *Gateway) ackCrossResult(result crossfarm.CrossResult) {
 				"err", err.Error(),
 			)
 		}
-	}()
+	}) {
+		telemetry.L().Debug("cross result ack queue full",
+			"component", "gateway", "op", "ack_cross_result")
+	}
 }
 
 func crossActionKind(command uint32) (farm.PlotActionKind, crossfarm.ActionKind, bool) {

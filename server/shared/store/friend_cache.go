@@ -20,8 +20,9 @@ const (
 	friendListLocalTTL          = 2 * time.Minute
 	friendListRedisTTL          = 10 * time.Minute
 	friendRelationCacheShards   = 64
+	friendListCacheShards       = 64
 	friendRelationCacheCapacity = 65_536
-	friendListCacheCapacity     = 8_192
+	friendListCacheCapacity     = 32_768
 	friendCacheWriteWorkers     = 2
 	friendCacheWriteQueue       = 8_192
 	friendCacheStateShards      = 1_024
@@ -91,6 +92,14 @@ type friendListCacheEntry struct {
 	expiresAt int64
 }
 
+type friendListCacheShard struct {
+	mu        sync.RWMutex
+	entries   map[uint64]friendListCacheEntry
+	positions map[uint64]int
+	slots     []uint64
+	next      int
+}
+
 type friendRelationCall struct {
 	done  chan struct{}
 	value bool
@@ -101,6 +110,11 @@ type friendListCall struct {
 	done  chan struct{}
 	value []FriendRow
 	err   error
+}
+
+type friendListFlightShard struct {
+	mu    sync.Mutex
+	calls map[uint64]*friendListCall
 }
 
 type friendCacheWrite struct {
@@ -147,21 +161,23 @@ type cachedFriendStore struct {
 	sourceID string
 
 	relationShards  [friendRelationCacheShards]friendRelationShard
-	listMu          sync.RWMutex
-	lists           map[uint64]friendListCacheEntry
+	listShards      [friendListCacheShards]friendListCacheShard
 	relationState   [friendCacheStateShards]friendCacheStateShard
 	listState       [friendCacheStateShards]friendCacheStateShard
 	unsafeMu        sync.RWMutex
 	unsafeRelations map[friendRelationKey]struct{}
 	unsafeLists     map[uint64]struct{}
 
-	flightMu        sync.Mutex
-	relationFlights map[friendRelationKey]*friendRelationCall
-	listFlights     map[uint64]*friendListCall
-	writes          chan friendCacheWrite
-	redisAttempts   atomic.Uint64
-	redisHits       atomic.Uint64
-	redisBypassTill atomic.Int64
+	flightMu            sync.Mutex
+	relationFlights     map[friendRelationKey]*friendRelationCall
+	listFlights         [friendListCacheShards]friendListFlightShard
+	writes              chan friendCacheWrite
+	redisAttempts       atomic.Uint64
+	redisHits           atomic.Uint64
+	redisBypassTill     atomic.Int64
+	listRedisAttempts   atomic.Uint64
+	listRedisHits       atomic.Uint64
+	listRedisBypassTill atomic.Int64
 }
 
 var friendCacheInstanceSequence atomic.Uint64
@@ -176,11 +192,9 @@ func newCachedFriendStoreWithBus(inner FriendStore, client friendCacheRedis, bus
 		redis:           client,
 		bus:             bus,
 		sourceID:        strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatUint(friendCacheInstanceSequence.Add(1), 10),
-		lists:           make(map[uint64]friendListCacheEntry, friendListCacheCapacity),
 		unsafeRelations: make(map[friendRelationKey]struct{}),
 		unsafeLists:     make(map[uint64]struct{}),
 		relationFlights: make(map[friendRelationKey]*friendRelationCall),
-		listFlights:     make(map[uint64]*friendListCall),
 	}
 	if client != nil {
 		cache.writes = make(chan friendCacheWrite, friendCacheWriteQueue)
@@ -191,6 +205,13 @@ func newCachedFriendStoreWithBus(inner FriendStore, client friendCacheRedis, bus
 	perShard := friendRelationCacheCapacity / friendRelationCacheShards
 	for i := range cache.relationShards {
 		cache.relationShards[i].entries = make(map[friendRelationKey]friendRelationEntry, perShard)
+	}
+	listPerShard := friendListCacheCapacity / friendListCacheShards
+	for i := range cache.listShards {
+		cache.listShards[i].entries = make(map[uint64]friendListCacheEntry, listPerShard)
+		cache.listShards[i].positions = make(map[uint64]int, listPerShard)
+		cache.listShards[i].slots = make([]uint64, 0, listPerShard)
+		cache.listFlights[i].calls = make(map[uint64]*friendListCall)
 	}
 	return cache
 }
@@ -233,6 +254,10 @@ func listStateIndex(uid uint64) uint64 {
 	x ^= x >> 27
 	x *= 0x94d049bb133111eb
 	return (x ^ (x >> 31)) & (friendCacheStateShards - 1)
+}
+
+func friendListShardIndex(uid uint64) uint64 {
+	return listStateIndex(uid) & (friendListCacheShards - 1)
 }
 
 func (cache *cachedFriendStore) localRelation(key friendRelationKey, now int64) (bool, bool) {
@@ -286,16 +311,17 @@ func (cache *cachedFriendStore) deleteLocalRelation(key friendRelationKey) {
 }
 
 func (cache *cachedFriendStore) localList(uid uint64, now int64) ([]FriendRow, bool) {
-	cache.listMu.RLock()
-	entry, ok := cache.lists[uid]
-	cache.listMu.RUnlock()
+	shard := &cache.listShards[friendListShardIndex(uid)]
+	shard.mu.RLock()
+	entry, ok := shard.entries[uid]
+	shard.mu.RUnlock()
 	if !ok || now >= entry.expiresAt {
 		if ok {
-			cache.listMu.Lock()
-			if current, exists := cache.lists[uid]; exists && now >= current.expiresAt {
-				delete(cache.lists, uid)
+			shard.mu.Lock()
+			if current, exists := shard.entries[uid]; exists && now >= current.expiresAt {
+				shard.remove(uid)
 			}
-			cache.listMu.Unlock()
+			shard.mu.Unlock()
 		}
 		return nil, false
 	}
@@ -303,29 +329,59 @@ func (cache *cachedFriendStore) localList(uid uint64, now int64) ([]FriendRow, b
 }
 
 func (cache *cachedFriendStore) putLocalList(uid uint64, value []FriendRow, now time.Time) {
-	cache.listMu.Lock()
-	if _, exists := cache.lists[uid]; !exists && len(cache.lists) >= friendListCacheCapacity {
-		for candidate, entry := range cache.lists {
-			if now.UnixNano() >= entry.expiresAt {
-				delete(cache.lists, candidate)
+	shard := &cache.listShards[friendListShardIndex(uid)]
+	shard.mu.Lock()
+	if _, exists := shard.entries[uid]; !exists {
+		perShard := friendListCacheCapacity / friendListCacheShards
+		if len(shard.slots) < perShard {
+			shard.positions[uid] = len(shard.slots)
+			shard.slots = append(shard.slots, uid)
+		} else {
+			if shard.next >= len(shard.slots) {
+				shard.next = 0
 			}
+			victim := shard.slots[shard.next]
+			delete(shard.entries, victim)
+			delete(shard.positions, victim)
+			shard.slots[shard.next] = uid
+			shard.positions[uid] = shard.next
+			shard.next++
 		}
 	}
-	if _, exists := cache.lists[uid]; !exists && len(cache.lists) >= friendListCacheCapacity {
-		for candidate := range cache.lists {
-			delete(cache.lists, candidate)
-			break
-		}
-	}
-	cache.lists[uid] = friendListCacheEntry{value: cloneFriendRows(value), expiresAt: now.Add(friendListLocalTTL).UnixNano()}
-	cache.listMu.Unlock()
+	shard.entries[uid] = friendListCacheEntry{value: cloneFriendRows(value), expiresAt: now.Add(friendListLocalTTL).UnixNano()}
+	shard.mu.Unlock()
 }
 
 func (cache *cachedFriendStore) deleteLocalLists(a, b uint64) {
-	cache.listMu.Lock()
-	delete(cache.lists, a)
-	delete(cache.lists, b)
-	cache.listMu.Unlock()
+	cache.deleteLocalList(a)
+	if b != a {
+		cache.deleteLocalList(b)
+	}
+}
+
+func (cache *cachedFriendStore) deleteLocalList(uid uint64) {
+	shard := &cache.listShards[friendListShardIndex(uid)]
+	shard.mu.Lock()
+	shard.remove(uid)
+	shard.mu.Unlock()
+}
+
+func (shard *friendListCacheShard) remove(uid uint64) {
+	position, exists := shard.positions[uid]
+	if !exists {
+		delete(shard.entries, uid)
+		return
+	}
+	last := len(shard.slots) - 1
+	moved := shard.slots[last]
+	shard.slots[position] = moved
+	shard.positions[moved] = position
+	shard.slots = shard.slots[:last]
+	delete(shard.positions, uid)
+	delete(shard.entries, uid)
+	if len(shard.slots) == 0 || shard.next >= len(shard.slots) {
+		shard.next = 0
+	}
 }
 
 func (cache *cachedFriendStore) AreFriends(ctx context.Context, a, b uint64) (bool, error) {
@@ -406,6 +462,26 @@ func (cache *cachedFriendStore) shouldReadRelationRedis(now time.Time) bool {
 	return true
 }
 
+// shouldReadListRedis avoids paying for a guaranteed Redis miss for every
+// account during a large all-unique cold scan. It periodically probes again so
+// restart recovery and shared-cache hits remain available.
+func (cache *cachedFriendStore) shouldReadListRedis(now time.Time) bool {
+	if cache == nil || cache.redis == nil {
+		return false
+	}
+	if now.UnixNano() < cache.listRedisBypassTill.Load() {
+		return false
+	}
+	attempt := cache.listRedisAttempts.Add(1)
+	if attempt >= friendRedisProbeWindow && cache.listRedisAttempts.CompareAndSwap(attempt, 0) {
+		hits := cache.listRedisHits.Swap(0)
+		if hits < friendRedisMinimumHits {
+			cache.listRedisBypassTill.Store(now.Add(friendRedisBypassDuration).UnixNano())
+		}
+	}
+	return true
+}
+
 func (cache *cachedFriendStore) ListFriends(ctx context.Context, uid uint64) ([]FriendRow, error) {
 	if cache == nil || cache.inner == nil {
 		return nil, nil
@@ -419,11 +495,12 @@ func (cache *cachedFriendStore) ListFriends(ctx context.Context, uid uint64) ([]
 		}
 		state := &cache.listState[listStateIndex(uid)]
 		startedVersion := state.version.Load()
-		if cache.redis != nil && !cache.isUnsafeList(uid) {
+		if !cache.isUnsafeList(uid) && cache.shouldReadListRedis(time.Now()) {
 			encoded, err := cache.redis.Get(ctx, friendListRedisKey(uid)).Bytes()
 			if err == nil {
 				var value []FriendRow
 				if json.Unmarshal(encoded, &value) == nil {
+					cache.listRedisHits.Add(1)
 					state.mu.Lock()
 					current := state.version.Load()
 					if current == startedVersion && !cache.isUnsafeList(uid) {
@@ -529,9 +606,10 @@ func (cache *cachedFriendStore) coalesceRelation(ctx context.Context, key friend
 }
 
 func (cache *cachedFriendStore) coalesceList(ctx context.Context, uid uint64, load func() ([]FriendRow, error)) ([]FriendRow, error) {
-	cache.flightMu.Lock()
-	if call := cache.listFlights[uid]; call != nil {
-		cache.flightMu.Unlock()
+	shard := &cache.listFlights[friendListShardIndex(uid)]
+	shard.mu.Lock()
+	if call := shard.calls[uid]; call != nil {
+		shard.mu.Unlock()
 		select {
 		case <-call.done:
 			return cloneFriendRows(call.value), call.err
@@ -540,14 +618,14 @@ func (cache *cachedFriendStore) coalesceList(ctx context.Context, uid uint64, lo
 		}
 	}
 	call := &friendListCall{done: make(chan struct{})}
-	cache.listFlights[uid] = call
-	cache.flightMu.Unlock()
+	shard.calls[uid] = call
+	shard.mu.Unlock()
 
 	call.value, call.err = load()
-	cache.flightMu.Lock()
-	delete(cache.listFlights, uid)
+	shard.mu.Lock()
+	delete(shard.calls, uid)
 	close(call.done)
-	cache.flightMu.Unlock()
+	shard.mu.Unlock()
 	return cloneFriendRows(call.value), call.err
 }
 

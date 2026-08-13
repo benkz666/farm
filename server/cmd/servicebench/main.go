@@ -29,27 +29,38 @@ import (
 )
 
 type result struct {
-	Mode       string                `json:"mode"`
-	TargetQPS  int                   `json:"target_qps"`
-	Sent       uint64                `json:"sent"`
-	Succeeded  uint64                `json:"succeeded"`
-	Failed     uint64                `json:"failed"`
-	ActualQPS  float64               `json:"actual_qps"`
-	AverageMS  float64               `json:"average_ms"`
-	P50MS      float64               `json:"p50_ms"`
-	P95MS      float64               `json:"p95_ms"`
-	P99MS      float64               `json:"p99_ms"`
-	MaxMS      float64               `json:"max_ms"`
-	WallMillis int64                 `json:"wall_millis"`
-	FirstError int32                 `json:"first_error_code,omitempty"`
-	TimedOut   bool                  `json:"timed_out,omitempty"`
-	Steps      map[string]stepResult `json:"steps,omitempty"`
+	Mode               string                `json:"mode"`
+	WarmupMode         string                `json:"warmup_mode,omitempty"`
+	RequestsPerAccount int                   `json:"requests_per_account,omitempty"`
+	TargetQPS          int                   `json:"target_qps"`
+	Sent               uint64                `json:"sent"`
+	Succeeded          uint64                `json:"succeeded"`
+	Failed             uint64                `json:"failed"`
+	ActualQPS          float64               `json:"actual_qps"`
+	AverageMS          float64               `json:"average_ms"`
+	P50MS              float64               `json:"p50_ms"`
+	P90MS              float64               `json:"p90_ms"`
+	P95MS              float64               `json:"p95_ms"`
+	P99MS              float64               `json:"p99_ms"`
+	MaxMS              float64               `json:"max_ms"`
+	WallMillis         int64                 `json:"wall_millis"`
+	StartedMS          int64                 `json:"measurement_start_unix_ms"`
+	EndedMS            int64                 `json:"measurement_end_unix_ms"`
+	FirstError         int32                 `json:"first_error_code,omitempty"`
+	TimedOut           bool                  `json:"timed_out,omitempty"`
+	Steps              map[string]stepResult `json:"steps,omitempty"`
 }
+
+const (
+	gatewayWarmupFull        = "full"
+	gatewayWarmupSessionOnly = "session-only"
+)
 
 type stepResult struct {
 	Succeeded uint64  `json:"succeeded"`
 	Failed    uint64  `json:"failed"`
 	AverageMS float64 `json:"average_ms"`
+	P90MS     float64 `json:"p90_ms"`
 	P95MS     float64 `json:"p95_ms"`
 	P99MS     float64 `json:"p99_ms"`
 	MaxMS     float64 `json:"max_ms"`
@@ -82,9 +93,11 @@ func main() {
 	qps := flag.Int("qps", 20000, "open-loop target QPS")
 	duration := flag.Duration("duration", 20*time.Second, "measurement duration")
 	concurrency := flag.Int("concurrency", 512, "maximum in-flight requests")
-	warmupConcurrency := flag.Int("warmup-concurrency", 512, "maximum concurrent WebSocket/Actor warmups before measurement")
+	warmupConcurrency := flag.Int("warmup-concurrency", 512, "maximum concurrent WebSocket setup/warmup operations before measurement")
 	warmupSettle := flag.Duration("warmup-settle", 2*time.Second, "idle time after WebSocket/Actor warmup and before measurement")
-	fixedConnections := flag.Int("fixed-connections", 0, "exact prewarmed WebSocket count for comparable gateway scenarios; zero derives it from target QPS")
+	fixedConnections := flag.Int("fixed-connections", 0, "exact WebSocket count for comparable gateway scenarios; zero derives it from target QPS")
+	warmupMode := flag.String("warmup-mode", gatewayWarmupFull, "gateway warmup mode: full or session-only")
+	requestsPerAccount := flag.Int("requests-per-account", 0, "maximum measured requests per account/UID; zero is unlimited")
 	uidBase := flag.Uint64("uid-base", 1470, "first fixture UID")
 	uidCount := flag.Uint64("uid-count", 2600, "number of fixture UIDs")
 	operation := flag.String("operation", "sync", "operation: enter, sync, sync-snapshot, ping, water, harvest, steal, water-visitor, buy, sell, friend-list, search-user, task-list or mail-list")
@@ -93,8 +106,11 @@ func main() {
 	perConnectionQPS := flag.Int("per-connection-qps", 8, "gateway-ws maximum commands per connection per second")
 	output := flag.String("output", "", "optional JSON result path")
 	flag.Parse()
-	if *qps <= 0 || *duration <= 0 || *concurrency <= 0 || *warmupConcurrency <= 0 || *warmupSettle < 0 || *fixedConnections < 0 || *uidCount == 0 {
-		panic("qps, duration, concurrency, warmup-concurrency and uid-count must be positive; warmup-settle and fixed-connections must not be negative")
+	if *qps <= 0 || *duration <= 0 || *concurrency <= 0 || *warmupConcurrency <= 0 || *warmupSettle < 0 || *fixedConnections < 0 || *requestsPerAccount < 0 || *uidCount == 0 {
+		panic("qps, duration, concurrency, warmup-concurrency and uid-count must be positive; warmup-settle, fixed-connections and requests-per-account must not be negative")
+	}
+	if !validGatewayWarmupMode(*warmupMode) {
+		panic(fmt.Sprintf("unsupported warmup mode %q", *warmupMode))
 	}
 
 	// Large formal fixtures can prewarm tens of thousands of Actor/WebSocket
@@ -115,7 +131,7 @@ func main() {
 		}
 		measured, err = runFarmStream(ctx, conn, *qps, *duration, *concurrency, *uidBase, *uidCount, *operation)
 	case "gateway-ws":
-		measured, err = runGatewayWS(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *perConnectionQPS, *fixedConnections, *operation)
+		measured, err = runGatewayWS(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *perConnectionQPS, *fixedConnections, *operation, *warmupMode, *requestsPerAccount)
 	case "gateway-handshake":
 		measured, err = runGatewayHandshake(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency)
 	case "gateway-startup":
@@ -127,7 +143,7 @@ func main() {
 		if connErr != nil {
 			panic(connErr)
 		}
-		measured, err = runSocial(ctx, conn, *qps, *duration, *concurrency, *uidBase, *uidCount)
+		measured, err = runSocial(ctx, conn, *qps, *duration, *concurrency, *uidBase, *uidCount, *requestsPerAccount)
 	default:
 		err = fmt.Errorf("unsupported mode %q", *mode)
 	}
@@ -189,7 +205,7 @@ func runGatewayHandshake(ctx context.Context, fixturePath, gatewayURLs string, q
 			defer workers.Done()
 			for account := range jobs {
 				started := time.Now()
-				client, openErr := openGatewayBenchConnection(ctx, account, "handshake", fixture.TimeProfile)
+				client, openErr := openGatewayBenchConnection(ctx, account, "handshake", fixture.TimeProfile, gatewayWarmupFull)
 				if client != nil {
 					_ = client.conn.Close()
 				}
@@ -358,7 +374,7 @@ func runGatewayStartupChain(ctx context.Context, httpClient *http.Client, accoun
 	}
 
 	handshakeStarted := time.Now()
-	client, err := openGatewayBenchConnection(ctx, gatewayAccount{Token: token, WSURL: account.WSURL}, "enter", "")
+	client, err := openGatewayBenchConnection(ctx, gatewayAccount{Token: token, WSURL: account.WSURL}, "enter", "", gatewayWarmupFull)
 	steps.handshake.add(time.Since(handshakeStarted), err == nil, -1)
 	if err != nil {
 		return -1, err
@@ -450,9 +466,15 @@ func parseGatewayURLs(raw string) ([]string, error) {
 	return urls, nil
 }
 
-func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, maxConnections, warmupConcurrency int, warmupSettle time.Duration, perConnectionQPS, fixedConnections int, operation string) (result, error) {
+func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, maxConnections, warmupConcurrency int, warmupSettle time.Duration, perConnectionQPS, fixedConnections int, operation, warmupMode string, requestsPerAccount int) (result, error) {
 	if !gatewayOperationSupported(operation) {
 		return result{}, fmt.Errorf("unsupported gateway operation %q", operation)
+	}
+	if !validGatewayWarmupMode(warmupMode) {
+		return result{}, fmt.Errorf("unsupported gateway warmup mode %q", warmupMode)
+	}
+	if requestsPerAccount < 0 {
+		return result{}, fmt.Errorf("requests-per-account must not be negative")
 	}
 	if fixturePath == "" {
 		return result{}, fmt.Errorf("gateway-ws requires -accounts")
@@ -492,6 +514,12 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 	minimumConnections := (qps + perConnectionQPS - 1) / perConnectionQPS
 	connections := minimumConnections
 	plannedOperations := oneShotOperationCount(qps, duration)
+	if requestsPerAccount > 0 {
+		connectionsForFirstPass := (plannedOperations + requestsPerAccount - 1) / requestsPerAccount
+		if connectionsForFirstPass > connections {
+			connections = connectionsForFirstPass
+		}
+	}
 	if gatewayOperationOneShot(operation) {
 		// Formal fixtures expose multiple independent legal plots per account.
 		// Size the default connection pool by both the requested arrival rate and
@@ -523,6 +551,12 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 			minimumConnections, qps, perConnectionQPS, connections,
 		)
 	}
+	if requestsPerAccount > 0 {
+		capacity := connections * requestsPerAccount
+		if plannedOperations > capacity {
+			plannedOperations = capacity
+		}
+	}
 	oneShotActions := 1
 	if gatewayOperationOneShot(operation) {
 		oneShotActions = minimumGatewayActionCount(fixture.Accounts[:connections], operation)
@@ -549,7 +583,7 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 				connectErrs <- ctx.Err()
 				return
 			}
-			client, dialErr := openGatewayBenchConnection(ctx, fixture.Accounts[index], operation, fixture.TimeProfile)
+			client, dialErr := openGatewayBenchConnection(ctx, fixture.Accounts[index], operation, fixture.TimeProfile, warmupMode)
 			if dialErr != nil {
 				connectErrs <- dialErr
 				return
@@ -571,7 +605,7 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 	// process-local Task/Mail cache TTL. Refresh those read paths only after all
 	// connections are ready, so the measured window really starts with the
 	// complete working set hot instead of mixing cache expiry into the result.
-	if gatewayOperationNeedsFinalReadWarmup(operation) {
+	if warmupMode == gatewayWarmupFull && gatewayOperationNeedsFinalReadWarmup(operation) {
 		if err := refreshGatewayReadCache(ctx, clients, operation, warmupConcurrency); err != nil {
 			for _, client := range clients {
 				_ = client.conn.Close()
@@ -610,6 +644,9 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 			defer client.conn.Close()
 			<-start
 			for round := 0; ; round++ {
+				if requestsPerAccount > 0 && round >= requestsPerAccount {
+					return
+				}
 				globalIndex := round*connections + index
 				if globalIndex >= plannedOperations {
 					return
@@ -642,7 +679,10 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 	close(start)
 	workers.Wait()
 	wall := time.Since(measurementStarted)
-	return summarize("gateway-ws-"+operation, qps, sent.Load(), wall, recorded, ctx.Err() != nil), nil
+	measured := summarize("gateway-ws-"+operation, qps, sent.Load(), wall, recorded, ctx.Err() != nil)
+	measured.WarmupMode = warmupMode
+	measured.RequestsPerAccount = requestsPerAccount
+	return measured, nil
 }
 
 func refreshGatewayReadCache(ctx context.Context, clients []*gatewayBenchConnection, operation string, concurrency int) error {
@@ -725,7 +765,7 @@ func waitUntil(ctx context.Context, due time.Time) error {
 	}
 }
 
-func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, operation, timeProfile string) (*gatewayBenchConnection, error) {
+func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, operation, timeProfile, warmupMode string) (*gatewayBenchConnection, error) {
 	if account.Token == "" || account.WSURL == "" {
 		return nil, fmt.Errorf("gateway account token/ws_url is empty")
 	}
@@ -755,13 +795,13 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 		_ = conn.Close()
 		return nil, fmt.Errorf("gateway handshake: err=%v code=%d", err, response.Err)
 	}
-	if gatewayOperationNeedsOwnActor(operation) {
+	if warmupMode == gatewayWarmupFull && gatewayOperationNeedsOwnActor(operation) {
 		if err := client.prewarmFarm("0"); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
 	}
-	if operation == "steal" || operation == "water-visitor" {
+	if warmupMode == gatewayWarmupFull && (operation == "steal" || operation == "water-visitor") {
 		ownerUID := account.PeerUID
 		if operation == "water-visitor" && account.OwnerUID != "" && account.OwnerUID != "0" {
 			ownerUID = account.OwnerUID
@@ -775,7 +815,7 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 			return nil, err
 		}
 	}
-	if gatewayOperationWarmRequest(operation) {
+	if warmupMode == gatewayWarmupFull && gatewayOperationWarmRequest(operation) {
 		response, err := client.exchange(client.request(operation))
 		if err != nil || response.Err != 0 {
 			_ = conn.Close()
@@ -974,6 +1014,10 @@ func gatewayOperationNeedsFinalReadWarmup(operation string) bool {
 	return operation == "task-list" || operation == "mail-list"
 }
 
+func validGatewayWarmupMode(mode string) bool {
+	return mode == gatewayWarmupFull || mode == gatewayWarmupSessionOnly
+}
+
 func (client *gatewayBenchConnection) exchange(request gateway.Envelope) (gateway.Envelope, error) {
 	frame, err := gateway.EncodeBinaryBatch([]gateway.Envelope{request})
 	if err != nil {
@@ -1114,7 +1158,7 @@ sendLoop:
 	return summarize("farm-stream-"+operation, qps, sent, wall, recorded, false), nil
 }
 
-func runSocial(ctx context.Context, conn grpc.ClientConnInterface, qps int, duration time.Duration, concurrency int, uidBase, uidCount uint64) (result, error) {
+func runSocial(ctx context.Context, conn grpc.ClientConnInterface, qps int, duration time.Duration, concurrency int, uidBase, uidCount uint64, requestsPerUID int) (result, error) {
 	client := farmv1.NewSocialServiceClient(conn)
 	type job struct {
 		id      uint64
@@ -1141,15 +1185,19 @@ func runSocial(ctx context.Context, conn grpc.ClientConnInterface, qps int, dura
 	started := time.Now()
 	deadline := started.Add(duration)
 	var sent uint64
+	var requestLimit uint64
+	if requestsPerUID > 0 {
+		requestLimit = uidCount * uint64(requestsPerUID)
+	}
 	ticker := time.NewTicker(time.Millisecond)
 	defer ticker.Stop()
 sendLoop:
 	for now := range ticker.C {
-		if !now.Before(deadline) {
+		if !now.Before(deadline) || (requestLimit > 0 && sent >= requestLimit) {
 			break
 		}
 		expected := uint64(now.Sub(started).Seconds() * float64(qps))
-		for sent < expected {
+		for sent < expected && (requestLimit == 0 || sent < requestLimit) {
 			sent++
 			select {
 			case jobs <- job{id: sent, started: time.Now()}:
@@ -1161,7 +1209,9 @@ sendLoop:
 	close(jobs)
 	workers.Wait()
 	wall := time.Since(started)
-	return summarize("social-are-friends", qps, sent, wall, recorded, ctx.Err() != nil), nil
+	measured := summarize("social-are-friends", qps, sent, wall, recorded, ctx.Err() != nil)
+	measured.RequestsPerAccount = requestsPerUID
+	return measured, nil
 }
 
 func markOutstandingFailed(recorded *recorder, sent uint64) {
@@ -1172,6 +1222,7 @@ func markOutstandingFailed(recorded *recorder, sent uint64) {
 }
 
 func summarize(mode string, targetQPS int, sent uint64, wall time.Duration, recorder *recorder, timedOut bool) result {
+	endedAt := time.Now()
 	recorder.mu.Lock()
 	latencies := append([]time.Duration(nil), recorder.latencies...)
 	recorder.mu.Unlock()
@@ -1183,6 +1234,8 @@ func summarize(mode string, targetQPS int, sent uint64, wall time.Duration, reco
 		Succeeded:  recorder.succeeded.Load(),
 		Failed:     recorder.failed.Load(),
 		WallMillis: wall.Milliseconds(),
+		StartedMS:  endedAt.Add(-wall).UnixMilli(),
+		EndedMS:    endedAt.UnixMilli(),
 		FirstError: recorder.firstErr.Load(),
 		TimedOut:   timedOut,
 	}
@@ -1198,6 +1251,7 @@ func summarize(mode string, targetQPS int, sent uint64, wall time.Duration, reco
 	}
 	measured.AverageMS = float64(total) / float64(len(latencies)) / float64(time.Millisecond)
 	measured.P50MS = millis(percentile(latencies, 0.50))
+	measured.P90MS = millis(percentile(latencies, 0.90))
 	measured.P95MS = millis(percentile(latencies, 0.95))
 	measured.P99MS = millis(percentile(latencies, 0.99))
 	measured.MaxMS = millis(latencies[len(latencies)-1])
@@ -1221,6 +1275,7 @@ func summarizeStep(recorder *recorder) stepResult {
 		total += latency
 	}
 	measured.AverageMS = float64(total) / float64(len(latencies)) / float64(time.Millisecond)
+	measured.P90MS = millis(percentile(latencies, 0.90))
 	measured.P95MS = millis(percentile(latencies, 0.95))
 	measured.P99MS = millis(percentile(latencies, 0.99))
 	measured.MaxMS = millis(latencies[len(latencies)-1])

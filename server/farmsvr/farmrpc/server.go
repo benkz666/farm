@@ -541,11 +541,11 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 			refreshHint = true
 		}
 		var err error
-		snapshot, err = farmActor.EncodedSnapshot()
-		if err != nil {
-			return err
+		if command.PreferPrepared {
+			snapshotProto, err = farmActor.EncodedSnapshotProto()
+		} else {
+			snapshot, err = farmActor.EncodedSnapshot()
 		}
-		snapshotProto, err = farmActor.EncodedSnapshotProto()
 		if err != nil {
 			return err
 		}
@@ -558,15 +558,18 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
+	if command.PreferPrepared {
+		prepared, err := clientwire.MarshalEnterFarmResponsePayload(snapshotProto, farmSeq, serverTime, timeProfile)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		return CommandResponse{Err: errcode.OK, FarmSeq: farmSeq, PreparedPayload: prepared, PreparedField: clientwire.PreparedEnterFarmResponse}
+	}
 	payload, err := marshalSnapshotResponse(snapshot, farmSeq, serverTime, timeProfile)
 	if err != nil {
 		return CommandResponse{Err: errcode.Internal}
 	}
-	prepared, err := clientwire.MarshalEnterFarmResponsePayload(snapshotProto, farmSeq, serverTime, timeProfile)
-	if err != nil {
-		return CommandResponse{Err: errcode.Internal}
-	}
-	return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: farmSeq, PreparedPayload: prepared, PreparedField: clientwire.PreparedEnterFarmResponse}
+	return CommandResponse{Err: errcode.OK, Payload: payload, FarmSeq: farmSeq}
 }
 
 func (h *Handler) plotAction(command CommandRequest) CommandResponse {

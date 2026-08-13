@@ -3,6 +3,8 @@ package farmrpc
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"farm/server/domain/farm"
@@ -19,32 +21,106 @@ import (
 
 // GatewayPushClient delivers internal push RPCs to Gateway instances.
 type GatewayPushClient struct {
-	pool    *grpcx.Pool
-	targets map[string]string
+	pool      *grpcx.Pool
+	targets   map[string]string
+	resolver  GatewayTargetResolver
+	now       func() time.Time
+	cacheTTL  time.Duration
+	targetTTL sync.Map
 }
+
+// GatewayTargetResolver resolves a dynamically registered Gateway instance.
+type GatewayTargetResolver interface {
+	ResolveGateway(ctx context.Context, gatewayID string) (string, error)
+}
+
+type gatewayTargetCacheEntry struct {
+	target    string
+	expiresAt time.Time
+}
+
+const defaultGatewayTargetCacheTTL = 30 * time.Second
 
 // NewGatewayPushClient constructs a Gateway push client keyed by gateway ID.
 func NewGatewayPushClient(pool *grpcx.Pool, targets map[string]string) *GatewayPushClient {
+	return NewResolvingGatewayPushClient(pool, targets, nil)
+}
+
+// NewResolvingGatewayPushClient keeps static targets for Compose compatibility
+// and falls back to dynamic discovery for replaceable Kubernetes Gateway Pods.
+// Dynamic results are cached locally so Redis is not on the push hot path.
+func NewResolvingGatewayPushClient(
+	pool *grpcx.Pool,
+	targets map[string]string,
+	resolver GatewayTargetResolver,
+) *GatewayPushClient {
 	copied := make(map[string]string, len(targets))
 	for gatewayID, target := range targets {
-		copied[gatewayID] = target
+		copied[gatewayID] = strings.TrimSpace(target)
 	}
-	return &GatewayPushClient{pool: pool, targets: copied}
+	return &GatewayPushClient{
+		pool:     pool,
+		targets:  copied,
+		resolver: resolver,
+		now:      time.Now,
+		cacheTTL: defaultGatewayTargetCacheTTL,
+	}
 }
 
 func (client *GatewayPushClient) service(ctx context.Context, gatewayID string) (farmv1.GatewayPushServiceClient, error) {
 	if client == nil || client.pool == nil {
 		return nil, fmt.Errorf("farmrpc: gateway push client is nil")
 	}
-	target := client.targets[gatewayID]
-	if target == "" {
-		return nil, fmt.Errorf("farmrpc: no gRPC target configured for gateway %q", gatewayID)
+	target, err := client.target(ctx, gatewayID)
+	if err != nil {
+		return nil, err
 	}
 	conn, err := client.pool.Conn(ctx, target)
 	if err != nil {
 		return nil, err
 	}
 	return farmv1.NewGatewayPushServiceClient(conn), nil
+}
+
+func (client *GatewayPushClient) target(ctx context.Context, gatewayID string) (string, error) {
+	gatewayID = strings.TrimSpace(gatewayID)
+	if gatewayID == "" {
+		return "", fmt.Errorf("farmrpc: gateway ID is empty")
+	}
+	if target := strings.TrimSpace(client.targets[gatewayID]); target != "" {
+		return target, nil
+	}
+	now := time.Now()
+	if client.now != nil {
+		now = client.now()
+	}
+	if cached, ok := client.targetTTL.Load(gatewayID); ok {
+		entry, valid := cached.(gatewayTargetCacheEntry)
+		if valid && entry.target != "" && now.Before(entry.expiresAt) {
+			return entry.target, nil
+		}
+		client.targetTTL.Delete(gatewayID)
+	}
+	if client.resolver == nil {
+		return "", fmt.Errorf("farmrpc: no gRPC target configured for gateway %q", gatewayID)
+	}
+	target, err := client.resolver.ResolveGateway(ctx, gatewayID)
+	if err != nil {
+		return "", fmt.Errorf("farmrpc: resolve gateway %q: %w", gatewayID, err)
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", fmt.Errorf("farmrpc: resolver returned an empty target for gateway %q", gatewayID)
+	}
+	ttl := client.cacheTTL
+	if ttl <= 0 {
+		ttl = defaultGatewayTargetCacheTTL
+	}
+	client.targetTTL.Store(gatewayID, gatewayTargetCacheEntry{
+		target:    target,
+		expiresAt: now.Add(ttl),
+	})
+	return target, nil
 }
 
 // GRPCDeltaPusher implements DeltaBatchPusher over gRPC.

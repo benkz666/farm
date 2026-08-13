@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestAPIDocsEnabled(t *testing.T) {
 	tests := []struct {
@@ -40,5 +43,28 @@ func TestWriteInFlightSetting(t *testing.T) {
 	value, err := nonNegativeIntSetting("FARM_WRITE_MAX_IN_FLIGHT", 512)
 	if err != nil || value != 640 {
 		t.Fatalf("nonNegativeIntSetting = %d, %v", value, err)
+	}
+}
+
+func TestGatewayAdvertiseTargetUsesPodHostAndListenerPort(t *testing.T) {
+	env := map[string]string{"FARM_GATEWAY_ADVERTISE_HOST": "10.42.0.7"}
+	target, err := gatewayAdvertiseTarget(":9202", func(name string) string { return env[name] })
+	if err != nil || target != "10.42.0.7:9202" {
+		t.Fatalf("gatewayAdvertiseTarget = %q, %v", target, err)
+	}
+}
+
+func TestGatewayAdvertiseTargetRejectsBadExplicitTarget(t *testing.T) {
+	_, err := gatewayAdvertiseTarget(":9202", func(string) string { return "bad-target" })
+	if err == nil {
+		t.Fatal("gatewayAdvertiseTarget accepted invalid endpoint")
+	}
+}
+
+func TestPositiveDurationSetting(t *testing.T) {
+	t.Setenv("FARM_GATEWAY_INSTANCE_TTL", "45s")
+	value, err := positiveDurationSetting("FARM_GATEWAY_INSTANCE_TTL", 30*time.Second)
+	if err != nil || value != 45*time.Second {
+		t.Fatalf("positiveDurationSetting = %s, %v", value, err)
 	}
 }

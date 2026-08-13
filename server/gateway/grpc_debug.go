@@ -50,16 +50,31 @@ type DebugFanout struct {
 	farmTargets  map[string]string
 	gatewayPeers map[string]string
 	localGateway string
+	directory    GatewayPeerDirectory
+}
+
+// GatewayPeerDirectory lists the current dynamically registered Gateway Pods.
+type GatewayPeerDirectory interface {
+	ListGateways(ctx context.Context) (map[string]string, error)
 }
 
 // NewDebugFanout constructs a debug fan-out client.
-func NewDebugFanout(pool *grpcx.Pool, farmTargets, gatewayPeers map[string]string, localGateway string) *DebugFanout {
-	return &DebugFanout{
+func NewDebugFanout(
+	pool *grpcx.Pool,
+	farmTargets, gatewayPeers map[string]string,
+	localGateway string,
+	directories ...GatewayPeerDirectory,
+) *DebugFanout {
+	fanout := &DebugFanout{
 		pool:         pool,
 		farmTargets:  copyTargets(farmTargets),
 		gatewayPeers: copyTargets(gatewayPeers),
 		localGateway: localGateway,
 	}
+	if len(directories) > 0 {
+		fanout.directory = directories[0]
+	}
+	return fanout
 }
 
 func copyTargets(input map[string]string) map[string]string {
@@ -80,11 +95,15 @@ func (fanout *DebugFanout) Advance(ctx context.Context, ms int64) error {
 			return fmt.Errorf("gateway: debug advance farm %s: %w", farmID, err)
 		}
 	}
-	for _, peerID := range sortedKeys(fanout.gatewayPeers) {
+	gatewayPeers, err := fanout.currentGatewayPeers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, peerID := range sortedKeys(gatewayPeers) {
 		if peerID == fanout.localGateway {
 			continue
 		}
-		if err := fanout.advanceTarget(ctx, fanout.gatewayPeers[peerID], ms); err != nil {
+		if err := fanout.advanceTarget(ctx, gatewayPeers[peerID], ms); err != nil {
 			return fmt.Errorf("gateway: debug advance gateway %s: %w", peerID, err)
 		}
 	}
@@ -101,15 +120,34 @@ func (fanout *DebugFanout) SetTimeProfile(ctx context.Context, profile string) e
 			return fmt.Errorf("gateway: debug time profile farm %s: %w", farmID, err)
 		}
 	}
-	for _, peerID := range sortedKeys(fanout.gatewayPeers) {
+	gatewayPeers, err := fanout.currentGatewayPeers(ctx)
+	if err != nil {
+		return err
+	}
+	for _, peerID := range sortedKeys(gatewayPeers) {
 		if peerID == fanout.localGateway {
 			continue
 		}
-		if err := fanout.setProfileTarget(ctx, fanout.gatewayPeers[peerID], profile); err != nil {
+		if err := fanout.setProfileTarget(ctx, gatewayPeers[peerID], profile); err != nil {
 			return fmt.Errorf("gateway: debug time profile gateway %s: %w", peerID, err)
 		}
 	}
 	return nil
+}
+
+func (fanout *DebugFanout) currentGatewayPeers(ctx context.Context) (map[string]string, error) {
+	peers := copyTargets(fanout.gatewayPeers)
+	if fanout.directory == nil {
+		return peers, nil
+	}
+	dynamic, err := fanout.directory.ListGateways(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: list debug Gateway peers: %w", err)
+	}
+	for gatewayID, target := range dynamic {
+		peers[gatewayID] = target
+	}
+	return peers, nil
 }
 
 func sortedKeys(targets map[string]string) []string {

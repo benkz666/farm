@@ -1,0 +1,2 @@
+FROM prom/prometheus:v2.54.1
+COPY --chown=65534:65534 deploy/k8s/prometheus.yml /etc/prometheus/prometheus.yml

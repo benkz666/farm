@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: benkz
+  labels:
+    app.kubernetes.io/name: migrate
+    app.kubernetes.io/part-of: farm
+spec:
+  backoffLimit: 8
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: benkz/migrate:k3s
+          imagePullPolicy: Never
+          env:
+            - name: FARM_MYSQL_HOST
+              value: mysql
+            - name: FARM_MYSQL_USER
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-user}
+            - name: FARM_MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-password}
+            - name: FARM_MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-database}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}

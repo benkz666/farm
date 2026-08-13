@@ -34,10 +34,14 @@ const (
 	writeJournalOutboxAck     = "outbox_ack"
 	writeJournalBarrier       = "direct_write_barrier"
 	defaultWriteJournalShards = 32
-	defaultWriteJournalBatch  = 512
+	defaultWriteJournalBatch  = 1024
 )
 
-const projectionForegroundHold = 50 * time.Millisecond
+const (
+	projectionForegroundHold = 50 * time.Millisecond
+	projectionBacklogHold    = time.Second
+	projectionForegroundMax  = 2
+)
 
 const maxRetainedJournalProtoBuffer = 64 << 10
 
@@ -197,6 +201,27 @@ end
 return stream_id
 `)
 
+// appendFarmWriteBatchScript makes a multi-UID farm commit one Redis command.
+// Each UID still owns its shard stream record (so projector ordering remains
+// unchanged), while all records become visible atomically and share one
+// foreground network round trip.
+var appendFarmWriteBatchScript = redis.NewScript(`
+local result = {}
+local arg = 1
+for key = 1, #KEYS, 2 do
+  local stream_id = redis.call('XADD', KEYS[key], '*',
+    'event_id', ARGV[arg], 'kind', ARGV[arg + 1], 'uid', ARGV[arg + 2],
+    'farm_seq', ARGV[arg + 3], 'body', ARGV[arg + 4])
+  if ARGV[arg + 5] == '1' then
+    redis.call('HSET', KEYS[key + 1], 'event_id', ARGV[arg], 'body', ARGV[arg + 4])
+    redis.call('PEXPIRE', KEYS[key + 1], ARGV[arg + 6])
+  end
+  result[#result + 1] = stream_id
+  arg = arg + 7
+end
+return result
+`)
+
 var deleteLatestJournalScript = redis.NewScript(`
 if redis.call('HGET', KEYS[1], 'event_id') == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -204,11 +229,18 @@ end
 return 0
 `)
 
+var acknowledgeWriteJournalScript = redis.NewScript(`
+local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], unpack(ARGV, 2))
+redis.call('XDEL', KEYS[1], unpack(ARGV, 2))
+return acknowledged
+`)
+
 // FarmWriteJournal is both the low-latency Redis Streams append boundary and
 // the owner of ordered MySQL projector workers.
 type FarmWriteJournal struct {
 	base      *Store
-	rdb       *redis.Client // projector/read-side pool
+	rdb       *redis.Client // blocking projector/read-side pool
+	lookupRDB *redis.Client // non-blocking latest/barrier metadata pool
 	appendRDB *redis.Client // foreground durable-append pool
 	config    FarmWriteJournalConfig
 	metrics   *telemetry.Metrics
@@ -229,6 +261,7 @@ type FarmWriteJournal struct {
 	appendInFlight  atomic.Int32
 	foregroundQueue atomic.Int64
 	lastForeground  atomic.Int64
+	backlogUntil    atomic.Int64
 }
 
 // OpenFarmWriteJournal opens a dedicated Redis client. redisAddr may point at
@@ -246,21 +279,36 @@ func OpenFarmWriteJournal(
 	if strings.TrimSpace(redisAddr) == "" {
 		return nil, nil, errors.New("store: write journal Redis address is empty")
 	}
-	projectClient := redis.NewClient(&redis.Options{Addr: redisAddr, PoolSize: 32, MinIdleConns: 2})
+	// Every journal shard owns a blocking XREADGROUP loop. The projector pool
+	// therefore needs at least one connection per shard, but metadata lookups
+	// must not share it: otherwise all connections can remain blocked for the
+	// configured XREAD window and every cold Actor EXISTS inherits that delay.
+	projectPoolSize := max(config.Shards+config.Projectors+8, 64)
+	projectClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr, PoolSize: projectPoolSize, MinIdleConns: min(config.Shards, projectPoolSize),
+	})
 	if err := projectClient.Ping(ctx).Err(); err != nil {
 		_ = projectClient.Close()
 		return nil, nil, fmt.Errorf("store: ping write journal Redis: %w", err)
 	}
+	lookupClient := redis.NewClient(&redis.Options{Addr: redisAddr, PoolSize: 128, MinIdleConns: 32})
+	if err := lookupClient.Ping(ctx).Err(); err != nil {
+		_ = lookupClient.Close()
+		_ = projectClient.Close()
+		return nil, nil, fmt.Errorf("store: ping write journal lookup Redis: %w", err)
+	}
 	appendClient := redis.NewClient(&redis.Options{Addr: redisAddr, PoolSize: 64, MinIdleConns: 8})
 	if err := appendClient.Ping(ctx).Err(); err != nil {
 		_ = appendClient.Close()
+		_ = lookupClient.Close()
 		_ = projectClient.Close()
 		return nil, nil, fmt.Errorf("store: ping write journal append Redis: %w", err)
 	}
 	journal := NewFarmWriteJournal(base, projectClient, config)
+	journal.lookupRDB = lookupClient
 	journal.appendRDB = appendClient
 	closeClients := func() error {
-		return errors.Join(appendClient.Close(), projectClient.Close())
+		return errors.Join(appendClient.Close(), lookupClient.Close(), projectClient.Close())
 	}
 	return journal, closeClients, nil
 }
@@ -268,7 +316,7 @@ func OpenFarmWriteJournal(
 func NewFarmWriteJournal(base *Store, client *redis.Client, config FarmWriteJournalConfig) *FarmWriteJournal {
 	config = normalizeFarmWriteJournalConfig(config)
 	return &FarmWriteJournal{
-		base: base, rdb: client, appendRDB: client, config: config,
+		base: base, rdb: client, lookupRDB: client, appendRDB: client, config: config,
 		// Keep rolling instances distinct. A replacement only takes over an old
 		// worker's pending message after ClaimIdle instead of racing the active
 		// projector and applying the same batch concurrently.
@@ -281,6 +329,9 @@ func NewFarmWriteJournal(base *Store, client *redis.Client, config FarmWriteJour
 
 func (journal *FarmWriteJournal) SetMetrics(metrics *telemetry.Metrics) {
 	journal.metrics = metrics
+	if metrics != nil {
+		metrics.SetWriteJournalProjectionLimit(journal.projectLimiter.Limit())
+	}
 }
 
 func (journal *FarmWriteJournal) SetTaskObserver(observer func(uint64, Task)) {
@@ -353,6 +404,10 @@ type journalFarmStore struct {
 	journal *FarmWriteJournal
 }
 
+type farmBatchLoader interface {
+	LoadFarms(context.Context, []uint64) (map[uint64]*farm.Aggregate, error)
+}
+
 func (*journalFarmStore) SupportsIncrementalFarmCommits() bool { return true }
 
 func (store *journalFarmStore) AdjustForegroundPressure(delta int) {
@@ -366,17 +421,76 @@ func (store *journalFarmStore) AdjustForegroundPressure(delta int) {
 }
 
 func (store *journalFarmStore) LoadFarm(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
-	if pending, err := store.journal.hasLatestFarm(ctx, uid); err != nil {
+	loaded, err := store.LoadFarms(ctx, []uint64{uid})
+	if err != nil {
 		return nil, err
-	} else if pending {
-		// The hot Actor owns the latest state. A cold reload first places a
-		// per-UID barrier behind any unprojected mutations, then loads MySQL.
-		// This replaces the former full-snapshot JSON stored in Redis.
+	}
+	agg := loaded[uid]
+	if agg == nil {
+		return nil, fmt.Errorf("store: batch farm load omitted uid %d", uid)
+	}
+	return agg, nil
+}
+
+// LoadFarms overlaps the event-log freshness lookup with the business-cache
+// MGET. The common cache-hot path therefore costs one parallel Redis round
+// trip instead of two serial round trips per cold Actor. Only UIDs with an
+// unprojected mutation pay the barrier and targeted reload cost.
+func (store *journalFarmStore) LoadFarms(ctx context.Context, uids []uint64) (map[uint64]*farm.Aggregate, error) {
+	type loadResult struct {
+		farms map[uint64]*farm.Aggregate
+		err   error
+	}
+	loadedCh := make(chan loadResult, 1)
+	go func() {
+		farms, err := store.loadBaseFarms(ctx, uids)
+		loadedCh <- loadResult{farms: farms, err: err}
+	}()
+
+	pending, latestErr := store.journal.latestFarmUIDs(ctx, uids)
+	loaded := <-loadedCh
+	if latestErr != nil {
+		return nil, latestErr
+	}
+	if loaded.err != nil {
+		return nil, loaded.err
+	}
+	if len(pending) == 0 {
+		return loaded.farms, nil
+	}
+	// Barriers are rare on cold EnterFarm. Keep them ordered and explicit so a
+	// reload can never observe a partially projected sequence for the same UID.
+	for _, uid := range pending {
 		if err := store.journal.WaitUIDProjected(ctx, uid); err != nil {
 			return nil, err
 		}
 	}
-	return store.FarmStore.LoadFarm(ctx, uid)
+	refreshed, err := store.loadBaseFarms(ctx, pending)
+	if err != nil {
+		return nil, err
+	}
+	for uid, aggregate := range refreshed {
+		loaded.farms[uid] = aggregate
+	}
+	return loaded.farms, nil
+}
+
+func (store *journalFarmStore) loadBaseFarms(ctx context.Context, uids []uint64) (map[uint64]*farm.Aggregate, error) {
+	if batch, ok := store.FarmStore.(farmBatchLoader); ok {
+		return batch.LoadFarms(ctx, uids)
+	}
+	loaded := make(map[uint64]*farm.Aggregate, len(uids))
+	for _, uid := range uids {
+		if _, exists := loaded[uid]; exists {
+			continue
+		}
+		agg, err := store.FarmStore.LoadFarm(ctx, uid)
+		if err != nil {
+			return nil, err
+		}
+		loaded[uid] = agg
+	}
+	return loaded, nil
 }
 
 func (store *journalFarmStore) SaveFarm(ctx context.Context, aggregate *farm.Aggregate) error {
@@ -446,6 +560,10 @@ func (store *journalOutboxStore) MarkOutboxPublished(ctx context.Context, eventI
 	return store.journal.AppendOutboxAck(ctx, eventID)
 }
 
+func (store *journalOutboxStore) MarkOutboxPublishedBatch(ctx context.Context, eventIDs []string) error {
+	return store.journal.AppendOutboxAcks(ctx, eventIDs)
+}
+
 func (journal *FarmWriteJournal) AppendFarmCommits(ctx context.Context, commits []outbox.FarmCommit) error {
 	if err := journal.accepting(); err != nil {
 		return err
@@ -506,18 +624,16 @@ func (journal *FarmWriteJournal) AppendFarmCommits(ctx context.Context, commits 
 	started := time.Now()
 	connection := journal.appendRDB.Conn()
 	defer connection.Close()
-	pipe := connection.Pipeline()
+	keys := make([]string, 0, len(encoded)*2)
+	args := make([]any, 0, len(encoded)*7)
 	for _, item := range encoded {
 		uid, _ := strconv.ParseUint(item.record.UID, 10, 64)
 		shard := journal.shard(uid)
-		// Pipelines cannot observe NOSCRIPT until Exec, so queue EVAL directly
-		// instead of Script.Run's optimistic EVALSHA fallback.
-		appendWriteJournalScript.Eval(ctx, pipe, []string{
-			journal.streamKey(shard), journal.latestKey(shard, uid),
-		}, item.record.EventID, item.record.Kind, item.record.UID, item.record.FarmSeq,
+		keys = append(keys, journal.streamKey(shard), journal.latestKey(shard, uid))
+		args = append(args, item.record.EventID, item.record.Kind, item.record.UID, item.record.FarmSeq,
 			item.body, "1", journal.config.LatestTTL.Milliseconds())
 	}
-	_, err := pipe.Exec(ctx)
+	_, err := appendFarmWriteBatchScript.Eval(ctx, connection, keys, args...).Result()
 	journal.observeAppend(started, len(encoded), err)
 	if err != nil {
 		return fmt.Errorf("store: append farm write journal: %w", err)
@@ -607,6 +723,67 @@ func (journal *FarmWriteJournal) AppendOutboxAck(ctx context.Context, eventID st
 	}
 	record.EventID = deterministicJournalID(writeJournalOutboxAck, []byte(eventID))
 	return journal.appendRecord(ctx, ownerUID, record, false)
+}
+
+// AppendOutboxAcks writes a group of independent ACK records with one Redis
+// pipeline and one optional WAIT barrier. Outbox recovery makes the operation
+// safe to retry or lose during process shutdown.
+func (journal *FarmWriteJournal) AppendOutboxAcks(ctx context.Context, eventIDs []string) error {
+	if err := journal.accepting(); err != nil {
+		return err
+	}
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	type encodedAck struct {
+		ownerUID uint64
+		record   writeJournalRecord
+		body     []byte
+	}
+	encoded := make([]encodedAck, 0, len(eventIDs))
+	seen := make(map[string]struct{}, len(eventIDs))
+	for _, eventID := range eventIDs {
+		if _, duplicate := seen[eventID]; duplicate {
+			continue
+		}
+		seen[eventID] = struct{}{}
+		ownerUID, err := ownerUIDFromOutboxEventID(eventID)
+		if err != nil {
+			return err
+		}
+		record := writeJournalRecord{
+			Version: writeJournalVersion,
+			Kind:    writeJournalOutboxAck,
+			UID:     strconv.FormatUint(ownerUID, 10),
+			Ack:     &journalOutboxAck{EventID: eventID},
+		}
+		record.EventID = deterministicJournalID(writeJournalOutboxAck, []byte(eventID))
+		body, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("store: encode outbox ack journal record: %w", err)
+		}
+		encoded = append(encoded, encodedAck{ownerUID: ownerUID, record: record, body: body})
+	}
+	if len(encoded) == 0 {
+		return nil
+	}
+	started := time.Now()
+	connection := journal.appendRDB.Conn()
+	defer connection.Close()
+	pipe := connection.Pipeline()
+	for _, item := range encoded {
+		shard := journal.shard(item.ownerUID)
+		appendWriteJournalScript.Eval(ctx, pipe, []string{
+			journal.streamKey(shard), journal.latestKey(shard, item.ownerUID),
+		}, item.record.EventID, item.record.Kind, item.record.UID, item.record.FarmSeq,
+			item.body, "0", journal.config.LatestTTL.Milliseconds())
+	}
+	_, err := pipe.Exec(ctx)
+	journal.observeAppend(started, len(encoded), err)
+	if err != nil {
+		return fmt.Errorf("store: append outbox ack batch: %w", err)
+	}
+	return journal.waitForReplicas(ctx, connection)
 }
 
 func (journal *FarmWriteJournal) WaitUIDProjected(ctx context.Context, uid uint64) error {
@@ -708,14 +885,48 @@ func (journal *FarmWriteJournal) accepting() error {
 }
 
 func (journal *FarmWriteJournal) hasLatestFarm(ctx context.Context, uid uint64) (bool, error) {
-	if journal == nil || journal.rdb == nil || uid == 0 {
+	if journal == nil || journal.lookupRDB == nil || uid == 0 {
 		return false, nil
 	}
-	exists, err := journal.rdb.Exists(ctx, journal.latestKey(journal.shard(uid), uid)).Result()
+	exists, err := journal.lookupRDB.Exists(ctx, journal.latestKey(journal.shard(uid), uid)).Result()
 	if err != nil {
 		return false, fmt.Errorf("store: check latest journal farm: %w", err)
 	}
 	return exists > 0, nil
+}
+
+func (journal *FarmWriteJournal) latestFarmUIDs(ctx context.Context, uids []uint64) ([]uint64, error) {
+	if journal == nil || journal.lookupRDB == nil || len(uids) == 0 {
+		return nil, nil
+	}
+	unique := make([]uint64, 0, len(uids))
+	keys := make([]string, 0, len(uids))
+	seen := make(map[uint64]struct{}, len(uids))
+	for _, uid := range uids {
+		if uid == 0 {
+			continue
+		}
+		if _, exists := seen[uid]; exists {
+			continue
+		}
+		seen[uid] = struct{}{}
+		unique = append(unique, uid)
+		keys = append(keys, journal.latestKey(journal.shard(uid), uid))
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	values, err := journal.lookupRDB.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("store: check latest journal farms: %w", err)
+	}
+	pending := make([]uint64, 0)
+	for index, value := range values {
+		if value != nil {
+			pending = append(pending, unique[index])
+		}
+	}
+	return pending, nil
 }
 
 func (journal *FarmWriteJournal) runProjector(shard int) {
@@ -743,6 +954,7 @@ func (journal *FarmWriteJournal) runProjector(shard int) {
 		if len(messages) == 0 {
 			continue
 		}
+		journal.markProjectionBacklog(len(messages))
 		journal.adjustProjectionLimit()
 		if !journal.projectLimiter.Acquire(journal.ctx) {
 			return
@@ -770,18 +982,44 @@ func (journal *FarmWriteJournal) adjustProjectionLimit() {
 	queue := journal.foregroundQueue.Load()
 	now := time.Now()
 	if inFlight > 0 || queue > 0 {
-		// On a one-core Farm, even two concurrent MySQL projectors can steal a
-		// material share of the CPU needed to acknowledge durable foreground
-		// appends. Keep one projector making progress while gameplay is active.
+		// A single projector protects the one-core Farm's foreground path. When
+		// Redis repeatedly returns a full batch, permit exactly one additional
+		// projector so sustained writes cannot grow the recovery log forever.
 		journal.lastForeground.Store(now.UnixNano())
 		limit = 1
+		if journal.projectionBacklogged(now) {
+			limit = min(projectionForegroundMax, journal.config.Projectors)
+		}
 	} else if last := journal.lastForeground.Load(); last > 0 && now.Sub(time.Unix(0, last)) < projectionForegroundHold {
 		// Group commits create very short gaps between batches. Holding the
 		// reduced limit avoids oscillating 1→4→1 and starting expensive MySQL
 		// work just before the next foreground batch arrives.
 		limit = 1
+		if journal.projectionBacklogged(now) {
+			limit = min(projectionForegroundMax, journal.config.Projectors)
+		}
 	}
-	journal.projectLimiter.SetLimit(limit)
+	changed := journal.projectLimiter.SetLimit(limit)
+	if changed && journal.metrics != nil {
+		journal.metrics.SetWriteJournalProjectionLimit(limit)
+	}
+}
+
+func (journal *FarmWriteJournal) markProjectionBacklog(records int) {
+	if journal == nil || journal.config.BatchSize <= 0 || int64(records) < journal.config.BatchSize {
+		return
+	}
+	until := time.Now().Add(projectionBacklogHold).UnixNano()
+	for {
+		current := journal.backlogUntil.Load()
+		if current >= until || journal.backlogUntil.CompareAndSwap(current, until) {
+			return
+		}
+	}
+}
+
+func (journal *FarmWriteJournal) projectionBacklogged(now time.Time) bool {
+	return journal != nil && journal.backlogUntil.Load() > now.UnixNano()
 }
 
 type adaptiveProjectionLimiter struct {
@@ -823,15 +1061,28 @@ func (limiter *adaptiveProjectionLimiter) Release() {
 	limiter.mu.Unlock()
 }
 
-func (limiter *adaptiveProjectionLimiter) SetLimit(limit int) {
+func (limiter *adaptiveProjectionLimiter) SetLimit(limit int) bool {
 	limiter.mu.Lock()
+	changed := false
 	limit = max(limit, 1)
 	if limiter.limit != limit {
 		limiter.limit = limit
+		changed = true
 		close(limiter.wake)
 		limiter.wake = make(chan struct{})
 	}
 	limiter.mu.Unlock()
+	return changed
+}
+
+func (limiter *adaptiveProjectionLimiter) Limit() int {
+	if limiter == nil {
+		return 1
+	}
+	limiter.mu.Lock()
+	limit := limiter.limit
+	limiter.mu.Unlock()
+	return limit
 }
 
 func (journal *FarmWriteJournal) claimPending(shard int) ([]redis.XMessage, error) {
@@ -897,12 +1148,18 @@ func (journal *FarmWriteJournal) processMessages(shard int, messages []redis.XMe
 		for offset := range group {
 			ids[offset] = group[offset].ID
 		}
-		if err := journal.rdb.XAck(journal.ctx, journal.streamKey(shard), journal.groupName(), ids...).Err(); err != nil {
-			return fmt.Errorf("store: ack write journal: %w", err)
+		// The stream is a recovery log, not long-term analytics storage. One Lua
+		// call preserves ACK-before-delete semantics while removing an extra RTT.
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, journal.groupName())
+		for _, id := range ids {
+			args = append(args, id)
 		}
-		// The stream is a recovery log, not long-term analytics storage. Once
-		// MySQL has committed and the group has acknowledged, deletion is safe.
-		_ = journal.rdb.XDel(journal.ctx, journal.streamKey(shard), ids...).Err()
+		if err := acknowledgeWriteJournalScript.Run(
+			journal.ctx, journal.rdb, []string{journal.streamKey(shard)}, args...,
+		).Err(); err != nil {
+			return fmt.Errorf("store: acknowledge and trim write journal: %w", err)
+		}
 		index = end
 	}
 	return nil
@@ -1583,14 +1840,28 @@ func (journal *FarmWriteJournal) streamTag(shard int) string {
 }
 
 func (journal *FarmWriteJournal) streamKey(shard int) string {
-	return journal.config.Prefix + ":{" + journal.streamTag(shard) + "}:events"
+	return FarmWriteJournalStreamKey(journal.config.Prefix, journal.config.InstanceID, shard)
 }
 
 func (journal *FarmWriteJournal) latestKey(shard int, uid uint64) string {
 	return journal.config.Prefix + ":{" + journal.streamTag(shard) + "}:latest:" + strconv.FormatUint(uid, 10)
 }
 
-func (journal *FarmWriteJournal) groupName() string { return "mysql-projector" }
+// FarmWriteJournalProjectorGroup is the Redis consumer group that materializes
+// the recovery log into MySQL. Gateway admission uses the same group when it
+// samples real pending and lag values from XINFO GROUPS.
+const FarmWriteJournalProjectorGroup = "mysql-projector"
+
+// FarmWriteJournalStreamKey returns the canonical stream key shared by Farm
+// writers, Projectors and Gateway backlog admission. Keeping this construction
+// in one package prevents a deployment from silently monitoring the wrong key.
+func FarmWriteJournalStreamKey(prefix, instanceID string, shard int) string {
+	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), ":")
+	instanceID = sanitizeJournalPart(instanceID)
+	return prefix + ":{" + instanceID + "-" + strconv.Itoa(shard) + "}:events"
+}
+
+func (journal *FarmWriteJournal) groupName() string { return FarmWriteJournalProjectorGroup }
 
 func (journal *FarmWriteJournal) consumerName(shard int) string {
 	return journal.consumerID + "-" + strconv.Itoa(shard)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	farmv1 "farm/server/gen/farm/v1"
@@ -12,8 +13,10 @@ import (
 )
 
 const (
-	defaultTTL      = 2 * time.Second
-	defaultCapacity = 4096
+	// Invalidation streams keep relationship changes coherent, so the hot true
+	// cache can cover the full active-user fixture without a two-second churn.
+	defaultTTL      = 30 * time.Second
+	defaultCapacity = 65536
 	friendListTTL   = 30 * time.Second
 	userSearchTTL   = 5 * time.Minute
 	searchMissTTL   = 30 * time.Second
@@ -56,6 +59,7 @@ type Cache struct {
 	inner     store.FriendStore
 	ttl       time.Duration
 	capacity  int
+	revision  atomic.Uint64
 	relations [cacheShardCount]relationShard
 	lists     [cacheShardCount]friendListShard
 	searches  [cacheShardCount]userSearchShard
@@ -141,6 +145,19 @@ func (c *Cache) Invalidate(a, b uint64) {
 	if b != a {
 		c.deleteFriendList(b)
 	}
+	// A single monotonic epoch deliberately invalidates all connection-local
+	// leases. Friendship changes are rare, so this is cheaper and less fragile
+	// than maintaining a second pair-indexed watcher registry in Gateway.
+	c.revision.Add(1)
+}
+
+// Revision exposes the invalidation epoch used by Gateway's short-lived room
+// authorization lease. It does not expose cache contents.
+func (c *Cache) Revision() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.revision.Load()
 }
 
 func (c *Cache) AddFriends(ctx context.Context, a, b uint64) error {

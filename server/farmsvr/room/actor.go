@@ -243,6 +243,27 @@ func (a *FarmActor) RequireCrossOwnerFlush(plotIndex uint8, event outbox.Event) 
 		return
 	}
 	a.outboxEvents = append(a.outboxEvents, stampedOutboxEvent{event: event})
+	a.requireCrossOwnerFlush(plotIndex)
+}
+
+// RequireCrossOwnerCompositeFlush persists the owner-side final state without
+// creating a result outbox. The colocated pair commit writes visitor and owner
+// mutations atomically to the reliable journal, so there is no remote Saga to
+// acknowledge or repair.
+func (a *FarmActor) RequireCrossOwnerCompositeFlush(plotIndex uint8) {
+	if a == nil {
+		return
+	}
+	a.requireCrossOwnerFlush(plotIndex)
+}
+
+func (a *FarmActor) requireCrossOwnerFlush(plotIndex uint8) {
+	if a.dirtyPlots == nil {
+		a.dirtyPlots = make(map[uint8]uint64, 1)
+	}
+	if a.Aggregate != nil && int(plotIndex) < len(a.Aggregate.Plots) {
+		a.dirtyPlots[plotIndex] = 0
+	}
 	a.requirePlannedFlush(outbox.PersistPlan{Mode: outbox.PersistCrossOwner, PlotIndex: plotIndex})
 }
 

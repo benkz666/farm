@@ -343,6 +343,49 @@ func TestGRPCDeltaPusherDeliverBatch(t *testing.T) {
 	}
 }
 
+func TestGatewayPushClientResolvesAndCachesDynamicTarget(t *testing.T) {
+	resolver := &recordingGatewayTargetResolver{target: "dynamic:9202"}
+	client := NewResolvingGatewayPushClient(nil, nil, resolver)
+	client.pool = &grpcx.Pool{}
+	client.now = func() time.Time { return time.Unix(100, 0) }
+
+	first, err := client.target(t.Context(), "gateway-pod")
+	if err != nil || first != "dynamic:9202" {
+		t.Fatalf("first target = %q, %v", first, err)
+	}
+	resolver.target = "changed:9202"
+	second, err := client.target(t.Context(), "gateway-pod")
+	if err != nil || second != "dynamic:9202" {
+		t.Fatalf("cached target = %q, %v", second, err)
+	}
+	if resolver.calls != 1 {
+		t.Fatalf("resolver calls = %d, want 1", resolver.calls)
+	}
+}
+
+func TestGatewayPushClientPrefersStaticTarget(t *testing.T) {
+	resolver := &recordingGatewayTargetResolver{target: "dynamic:9202"}
+	client := NewResolvingGatewayPushClient(nil, map[string]string{"gateway-0": "static:9202"}, resolver)
+	target, err := client.target(t.Context(), "gateway-0")
+	if err != nil || target != "static:9202" {
+		t.Fatalf("target = %q, %v", target, err)
+	}
+	if resolver.calls != 0 {
+		t.Fatalf("resolver calls = %d, want 0", resolver.calls)
+	}
+}
+
+type recordingGatewayTargetResolver struct {
+	target string
+	err    error
+	calls  int
+}
+
+func (resolver *recordingGatewayTargetResolver) ResolveGateway(context.Context, string) (string, error) {
+	resolver.calls++
+	return resolver.target, resolver.err
+}
+
 func TestCommandServerRejectsUnownedFarm(t *testing.T) {
 	handler := NewHandler(runtimeStub{}, []byte("internal-token"), func(uint64) bool { return false }, nil)
 	client := newCommandTestClient(t, handler, func(uint64) bool { return false })

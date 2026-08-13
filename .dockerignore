@@ -1,17 +1,50 @@
+# Git、IDE 和 Codex 本地状态不属于镜像源码。
 .git
+.gitmodules
+.worktrees
+.idea
+.vscode
+.cursor
+.codegraph
+.agents
+.codex
+.superpowers
+.codex-ppt-skill-runtime
+
+# 不上传本地密钥；保留可公开的配置示例。
 .env
 .env.*
 !.env.example
+
+# 依赖、构建输出和语言工具缓存会在镜像内重建。
+**/node_modules
+**/dist
+**/.cache
+**/.vite
+**/.turbo
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.venv
+**/coverage
+**/coverage.out
+
+# 压测原始数据、profile 和运行时产物不得进入构建上下文。
 .run
-.worktrees
-.superpowers
-client/node_modules
-client/dist
-docs/api/node_modules
-docs/api/.cache
-server/.run
-.cursor
-.codegraph
-server/**/coverage.out
+**/.run
+output
+**/results
 *.log
-.DS_Store
+*.pprof
+*.prof
+*.trace
+
+# 文档、PPT 和图片报告占用数 GiB，业务镜像不依赖它们。
+docs
+deliverables
+PPT
+经典农场_*PPT
+
+# 操作系统杂项。
+**/.DS_Store
+Thumbs.db

@@ -123,6 +123,28 @@ func TestProjectionLimiterPrioritizesForegroundAndAvoidsBatchGapOscillation(t *t
 	}
 }
 
+func TestProjectionLimiterAddsOnlyOneWorkerForConfirmedBacklog(t *testing.T) {
+	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 4, BatchSize: 8})
+	journal.foregroundQueue.Store(1)
+	journal.markProjectionBacklog(8)
+	journal.adjustProjectionLimit()
+	journal.projectLimiter.mu.Lock()
+	limit := journal.projectLimiter.limit
+	journal.projectLimiter.mu.Unlock()
+	if limit != 2 {
+		t.Fatalf("projector limit with foreground and full batch = %d, want 2", limit)
+	}
+
+	journal.backlogUntil.Store(time.Now().Add(-time.Millisecond).UnixNano())
+	journal.adjustProjectionLimit()
+	journal.projectLimiter.mu.Lock()
+	limit = journal.projectLimiter.limit
+	journal.projectLimiter.mu.Unlock()
+	if limit != 1 {
+		t.Fatalf("projector limit after backlog pressure expires = %d, want 1", limit)
+	}
+}
+
 func TestCoalesceJournalFarmCommitsUsesLatestSnapshotAndSmallestSafePlan(t *testing.T) {
 	records := []writeJournalRecord{
 		{

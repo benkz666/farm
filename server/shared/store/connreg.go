@@ -10,3 +10,12 @@ func (s *Store) ConnectionRegistry() *presence.Registry {
 	}
 	return presence.New(s.rdb)
 }
+
+// GatewayDirectory returns the Redis-backed ephemeral Gateway discovery
+// directory used by Farm-to-Gateway push routing.
+func (s *Store) GatewayDirectory() *presence.GatewayDirectory {
+	if s == nil {
+		return presence.NewGatewayDirectory(nil)
+	}
+	return presence.NewGatewayDirectory(s.rdb)
+}

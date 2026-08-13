@@ -173,6 +173,43 @@ func TestRuntimeReturnsLoadErrorAndUnloadsActor(t *testing.T) {
 	}
 }
 
+func TestRuntimeCoalescesConcurrentColdLoads(t *testing.T) {
+	store := &batchLoadFarmStore{memoryFarmStore: *newMemoryFarmStore(farm.NewAggregate(1, "batch"))}
+	runtime := NewRuntime(store, time.Hour)
+	const requests = 64
+	start := make(chan struct{})
+	errs := make(chan error, requests)
+	var wait sync.WaitGroup
+	for index := range requests {
+		wait.Add(1)
+		go func(uid uint64) {
+			defer wait.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			agg, err := runtime.loadAggregate(ctx, uid)
+			if err == nil && (agg == nil || agg.UID != uid) {
+				err = errors.New("batch loader returned the wrong aggregate")
+			}
+			errs <- err
+		}(uint64(index + 1))
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.mu.Lock()
+	batchCalls, largestBatch := store.batchCalls, store.largestBatch
+	store.mu.Unlock()
+	if batchCalls >= requests || largestBatch <= 1 {
+		t.Fatalf("cold loads were not coalesced: calls=%d largest=%d", batchCalls, largestBatch)
+	}
+}
+
 // 只在空闲时落盘是不够的：在线玩家的 Actor 永不空闲，所以写回周期到点也必须落盘，
 // 否则被强杀时丢掉的是整段在线期间的改动。
 func TestRuntimeFlushesDirtyActorOnFlushIntervalWithoutIdling(t *testing.T) {
@@ -481,6 +518,26 @@ type memoryFarmStore struct {
 	transientSaveFailures int
 	transientSaveErr      error
 	saved                 chan struct{}
+}
+
+type batchLoadFarmStore struct {
+	memoryFarmStore
+	batchCalls   int
+	largestBatch int
+}
+
+func (s *batchLoadFarmStore) LoadFarms(_ context.Context, uids []uint64) (map[uint64]*farm.Aggregate, error) {
+	s.mu.Lock()
+	s.batchCalls++
+	if len(uids) > s.largestBatch {
+		s.largestBatch = len(uids)
+	}
+	s.mu.Unlock()
+	loaded := make(map[uint64]*farm.Aggregate, len(uids))
+	for _, uid := range uids {
+		loaded[uid] = farm.NewAggregate(uid, "batch")
+	}
+	return loaded, nil
 }
 
 func newMemoryFarmStore(aggregate *farm.Aggregate) *memoryFarmStore {

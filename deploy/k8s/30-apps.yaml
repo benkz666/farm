@@ -1,0 +1,338 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: social
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: social
+  ports:
+    - {name: http, port: 9004, targetPort: 9004}
+    - {name: grpc, port: 9204, targetPort: 9204}
+    - {name: admin, port: 9304, targetPort: 9304}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social
+  namespace: benkz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: social
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: social
+        app.kubernetes.io/part-of: farm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9304"
+    spec:
+      containers:
+        - name: social
+          image: benkz/social:k3s
+          imagePullPolicy: Never
+          env:
+            - {name: FARM_ENV, value: dev}
+            - name: FARM_MYSQL_DSN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-dsn}
+            - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
+            - {name: FARM_SOCIAL_HTTP_ADDR, value: ":9004"}
+            - {name: FARM_SOCIAL_GRPC_ADDR, value: ":9204"}
+            - {name: FARM_SOCIAL_ADMIN_ADDR, value: ":9304"}
+            - {name: GOMAXPROCS, value: "1"}
+            - {name: GOMEMLIMIT, value: 800MiB}
+          ports:
+            - {name: http, containerPort: 9004}
+            - {name: grpc, containerPort: 9204}
+            - {name: admin, containerPort: 9304}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: farm
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: farm
+  ports:
+    - {name: http, port: 9100, targetPort: 9100}
+    - {name: grpc, port: 9210, targetPort: 9210}
+    - {name: admin, port: 9310, targetPort: 9310}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: farm
+  namespace: benkz
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: farm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: farm
+        app.kubernetes.io/part-of: farm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9310"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: farm
+          image: benkz/farm:k3s
+          imagePullPolicy: Never
+          env:
+            - {name: FARM_ENV, value: dev}
+            - name: FARM_MYSQL_DSN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-dsn}
+            - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_EVENT_REDIS_ADDR, value: "event-redis:6379"}
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
+            - {name: FARM_FARM_HTTP_ADDR, value: ":9100"}
+            - {name: FARM_FARM_GRPC_ADDR, value: ":9210"}
+            - {name: FARM_FARM_ADMIN_ADDR, value: ":9310"}
+            - {name: FARM_FARM_INSTANCE_ID, value: farm-0}
+            - {name: FARM_ROUTE_TABLE, value: deploy/route-table.local.json}
+            - {name: FARM_FARM_GRPC_TARGETS, value: '{"farm-0":"farm:9210"}'}
+            - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
+            - {name: FARM_SOCIAL_GRPC_TARGET, value: "social:9204"}
+            - name: FARM_HAZARD_SECRET
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: hazard-secret}
+            - {name: FARM_TIME_PROFILE, value: demo}
+            - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
+            - {name: FARM_ACTOR_IDLE_TTL, value: 2m}
+            - {name: FARM_ACTOR_MAX_RESIDENT, value: "20000"}
+            - {name: FARM_COMMITTER_SHARDS, value: "16"}
+            - {name: FARM_WRITE_JOURNAL_SHARDS, value: "32"}
+            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "4"}
+            - {name: FARM_WRITE_JOURNAL_BATCH, value: "1024"}
+            - {name: FARM_WRITE_JOURNAL_BLOCK, value: 50ms}
+            - {name: FARM_WRITE_JOURNAL_LATEST_TTL, value: 24h}
+            - {name: FARM_WRITE_JOURNAL_CLAIM_IDLE, value: 5s}
+            - {name: FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT, value: 5m}
+            - {name: FARM_WRITE_JOURNAL_REPLICAS, value: "0"}
+            - {name: GOMAXPROCS, value: "1"}
+            - {name: GOMEMLIMIT, value: 800MiB}
+          ports:
+            - {name: http, containerPort: 9100}
+            - {name: grpc, containerPort: 9210}
+            - {name: admin, containerPort: 9310}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - {name: http, port: 9002, targetPort: 9002}
+    - {name: grpc, port: 9202, targetPort: 9202}
+    - {name: admin, port: 9302, targetPort: 9302}
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-public
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - {name: http, port: 9002, targetPort: 9002, nodePort: 31902}
+  type: NodePort
+  sessionAffinity: None
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: benkz
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        app.kubernetes.io/part-of: farm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9302"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: gateway
+          image: benkz/gateway:k3s
+          imagePullPolicy: Never
+          env:
+            - {name: FARM_ENV, value: dev}
+            - name: FARM_MYSQL_DSN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-dsn}
+            - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_EVENT_REDIS_ADDR, value: "event-redis:6379"}
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
+            - {name: FARM_GATEWAY_HTTP_ADDR, value: ":9002"}
+            - {name: FARM_GATEWAY_GRPC_ADDR, value: ":9202"}
+            - {name: FARM_GATEWAY_ADMIN_ADDR, value: ":9302"}
+            - name: FARM_GATEWAY_INSTANCE_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.uid}
+            - name: FARM_GATEWAY_ADVERTISE_HOST
+              valueFrom:
+                fieldRef: {fieldPath: status.podIP}
+            - {name: FARM_GATEWAY_ADVERTISE_PORT, value: "9202"}
+            - {name: FARM_GATEWAY_INSTANCE_TTL, value: 30s}
+            - {name: FARM_ROUTE_TABLE, value: deploy/route-table.local.json}
+            - {name: FARM_FARM_GRPC_TARGETS, value: '{"farm-0":"farm:9210"}'}
+            - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
+            - {name: FARM_SOCIAL_GRPC_TARGET, value: "social:9204"}
+            - {name: FARM_CROSS_MAX_IN_FLIGHT, value: "1024"}
+            - {name: FARM_WRITE_MAX_IN_FLIGHT, value: "512"}
+            - {name: FARM_WRITE_DYNAMIC_ADMISSION, value: "1"}
+            - {name: FARM_WRITE_MIN_IN_FLIGHT, value: "64"}
+            - {name: FARM_WRITE_BACKLOG_LOW, value: "8192"}
+            - {name: FARM_WRITE_BACKLOG_HIGH, value: "65536"}
+            - {name: FARM_WRITE_BACKLOG_HARD, value: "262144"}
+            - {name: FARM_WRITE_RECOVERY_STEP, value: "64"}
+            - {name: FARM_WRITE_BACKLOG_POLL, value: 250ms}
+            - {name: FARM_WRITE_BACKLOG_TIMEOUT, value: 150ms}
+            - {name: FARM_WRITE_BACKLOG_ERROR_GRACE, value: 2s}
+            - {name: FARM_DISABLE_WS_RATE_LIMIT, value: "0"}
+            - {name: FARM_ENABLE_API_DOCS, value: "1"}
+            - name: FARM_INVITE_SECRET
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: invite-secret}
+            - {name: FARM_TIME_PROFILE, value: demo}
+            - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
+            - {name: GOMAXPROCS, value: "1"}
+            - {name: GOMEMLIMIT, value: 800MiB}
+          ports:
+            - {name: http, containerPort: 9002}
+            - {name: grpc, containerPort: 9202}
+            - {name: admin, containerPort: 9302}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway
+  namespace: benkz
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: web
+  ports:
+    - {name: http, port: 80, targetPort: 80, nodePort: 31901}
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: benkz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: farm
+    spec:
+      containers:
+        - name: web
+          image: benkz/web:k3s
+          imagePullPolicy: Never
+          ports:
+            - {name: http, containerPort: 80}
+          resources:
+            requests: {cpu: 250m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 15

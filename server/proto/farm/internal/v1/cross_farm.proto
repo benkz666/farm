@@ -12,9 +12,14 @@ import "farm/public/v3/client.proto";
 service CrossFarmService {
   rpc ReserveCrossAction(ReserveCrossActionRequest) returns (ReserveCrossActionResponse);
   rpc ApplyCrossAction(ApplyCrossActionRequest) returns (ApplyCrossActionResponse);
+  // Executes the complete operation inside one Farm instance. Colocated
+  // runtimes append visitor and owner final mutations as one composite commit.
+  rpc ExecuteCrossAction(ExecuteCrossActionRequest) returns (ExecuteCrossActionResponse);
   rpc DeliverCrossResult(DeliverCrossResultRequest) returns (DeliverCrossResultResponse);
   // Gateway calls after visitor durable settlement to suppress redundant outbox delivery.
   rpc AcknowledgeCrossResult(AcknowledgeCrossResultRequest) returns (Empty);
+  // Hot-path equivalent that amortizes gRPC and Redis round trips.
+  rpc AcknowledgeCrossResults(AcknowledgeCrossResultsRequest) returns (Empty);
 }
 
 message ReserveCrossActionRequest {
@@ -42,6 +47,13 @@ message CrossAction {
   uint32 plot_index = 5;
   uint32 crop_id = 6;
   int64 compensation = 7;
+  // Set only by the trusted Gateway after its authoritative friendship check.
+  // Non-Gateway callers leave it false and the owner revalidates friendship.
+  bool friendship_verified = 8;
+  // Identifies the requesting WebSocket only on the colocated fast path. Farm
+  // excludes it from fan-out because ExecuteCrossAction returns its delta
+  // directly; other room subscribers still receive the normal broadcast.
+  ConnRef originator = 9;
 }
 
 message CrossResult {
@@ -73,6 +85,26 @@ message ApplyCrossActionResponse {
   CrossResult result = 1;
 }
 
+message ExecuteCrossActionRequest {
+  CrossAction action = 1;
+  uint32 day_id = 2;
+}
+
+message ExecuteCrossActionResponse {
+  CrossResult result = 1;
+  VisitorReward reward = 2;
+  farm.public.v3.PlayerDelta player_delta = 3;
+  // Final visitor-side settlement code; 0 means success.
+  int32 err = 4;
+  // True once the owner result/outbox has crossed its durable boundary.
+  bool owner_committed = 5;
+  // Authoritative owner patch for the requesting connection. Returning it on
+  // the existing RPC avoids a second Farm -> Gateway callback.
+  farm.public.v3.FarmDelta farm_delta = 6;
+  // True only when the distributed Saga created an owner outbox record.
+  bool ack_required = 7;
+}
+
 message DeliverCrossResultRequest {
   CrossResult result = 1;
 }
@@ -88,4 +120,8 @@ message AcknowledgeCrossResultRequest {
   uint64 owner_uid = 1;
   uint64 visitor_uid = 2;
   uint64 req_id = 3;
+}
+
+message AcknowledgeCrossResultsRequest {
+  repeated AcknowledgeCrossResultRequest acknowledgements = 1;
 }

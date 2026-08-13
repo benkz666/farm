@@ -91,6 +91,13 @@ type Backend interface {
 	AliveMembers(ctx context.Context, key string, nowUnixMilli int64) ([]string, error)
 }
 
+// aliveMembersBatchBackend is an optional production acceleration. Keeping it
+// separate from Backend preserves small in-memory/test implementations while
+// allowing Redis to resolve many room keys in one pipeline round trip.
+type aliveMembersBatchBackend interface {
+	AliveMembersBatch(ctx context.Context, keys []string, nowUnixMilli int64) (map[string][]string, error)
+}
+
 // Option configures Registry clock and lease duration (tests inject short TTL).
 type Option func(*Registry)
 
@@ -229,6 +236,53 @@ func (r *Registry) LookupSubscribers(ctx context.Context, ownerUID uint64) ([]Co
 	return r.lookup(ctx, roomKey(ownerUID))
 }
 
+// LookupSubscribersBatch resolves multiple farm-room subscriber sets at one
+// timestamp. Redis-backed registries pipeline the cleanup and range commands;
+// other backends retain the same semantics through the scalar fallback.
+func (r *Registry) LookupSubscribersBatch(ctx context.Context, ownerUIDs []uint64) (map[uint64][]ConnRef, error) {
+	if r == nil || r.backend == nil {
+		return nil, errors.New("connreg: registry backend is nil")
+	}
+	result := make(map[uint64][]ConnRef, len(ownerUIDs))
+	if len(ownerUIDs) == 0 {
+		return result, nil
+	}
+	keys := make([]string, 0, len(ownerUIDs))
+	uidByKey := make(map[string]uint64, len(ownerUIDs))
+	for _, uid := range ownerUIDs {
+		if uid == 0 {
+			continue
+		}
+		key := roomKey(uid)
+		if _, exists := uidByKey[key]; exists {
+			continue
+		}
+		uidByKey[key] = uid
+		keys = append(keys, key)
+	}
+	nowMs := r.now().UnixMilli()
+	membersByKey := make(map[string][]string, len(keys))
+	if batch, ok := r.backend.(aliveMembersBatchBackend); ok {
+		var err error
+		membersByKey, err = batch.AliveMembersBatch(ctx, keys, nowMs)
+		if err != nil {
+			return nil, fmt.Errorf("connreg: batch lookup connections: %w", err)
+		}
+	} else {
+		for _, key := range keys {
+			members, err := r.backend.AliveMembers(ctx, key, nowMs)
+			if err != nil {
+				return nil, fmt.Errorf("connreg: batch lookup connections: %w", err)
+			}
+			membersByKey[key] = members
+		}
+	}
+	for key, uid := range uidByKey {
+		result[uid] = decodeConnRefs(membersByKey[key])
+	}
+	return result, nil
+}
+
 func (r *Registry) upsert(ctx context.Context, key string, connID uint64, gatewayID string) error {
 	if r == nil || r.backend == nil {
 		return errors.New("connreg: registry backend is nil")
@@ -269,6 +323,10 @@ func (r *Registry) lookup(ctx context.Context, key string) ([]ConnRef, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connreg: lookup connections: %w", err)
 	}
+	return decodeConnRefs(members), nil
+}
+
+func decodeConnRefs(members []string) []ConnRef {
 	refs := make([]ConnRef, 0, len(members))
 	for _, member := range members {
 		ref, ok := decodeRefField(member)
@@ -283,7 +341,7 @@ func (r *Registry) lookup(ctx context.Context, key string) ([]ConnRef, error) {
 		}
 		return refs[i].ConnID < refs[j].ConnID
 	})
-	return refs, nil
+	return refs
 }
 
 func encodeRefField(gatewayID string, connID uint64) string {
@@ -425,4 +483,41 @@ func (b redisBackend) AliveMembers(ctx context.Context, key string, nowUnixMilli
 		return nil, err
 	}
 	return rangeCmd.Result()
+}
+
+func (b redisBackend) AliveMembersBatch(ctx context.Context, keys []string, nowUnixMilli int64) (map[string][]string, error) {
+	if b.client == nil {
+		return nil, errors.New("redis client is nil")
+	}
+	result := make(map[string][]string, len(keys))
+	if len(keys) == 0 {
+		return result, nil
+	}
+	nowText := strconv.FormatInt(nowUnixMilli, 10)
+	pipe := b.client.Pipeline()
+	commands := make(map[string]*redis.StringSliceCmd, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, exists := commands[key]; exists {
+			continue
+		}
+		pipe.ZRemRangeByScore(ctx, key, "-inf", nowText)
+		commands[key] = pipe.ZRangeByScore(ctx, key, &redis.ZRangeBy{
+			Min: "(" + nowText,
+			Max: "+inf",
+		})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	for key, command := range commands {
+		members, err := command.Result()
+		if err != nil {
+			return nil, err
+		}
+		result[key] = members
+	}
+	return result, nil
 }
