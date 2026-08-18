@@ -1,0 +1,77 @@
+{
+  "name": "capacity-production-plan-v1",
+  "workload": {
+    "peak_business_qps": 333333.3333333333,
+    "peak_connections": 4000000,
+    "peak_session_arrivals_per_second": 3333.3333333333,
+    "enter_friend_qps": 17000,
+    "actor_idle_seconds": 120,
+    "unique_offline_actor_activation_ratio": 0.5,
+    "registered_accounts_lower_bound": 30000000,
+    "redis_active_accounts_policy": "farm_actor_working_set"
+  },
+  "planning": {
+    "cpu_utilization": 0.7,
+    "memory_utilization": 0.7,
+    "quantity_utilization": 0.7,
+    "horizontal_efficiency": {
+      "gateway": 0.9,
+      "farm": 0.9,
+      "social": 0.9,
+      "mysql": 0.85,
+      "redis": 0.85
+    },
+    "mysql_disk_expansion_factor": 2.0,
+    "redis_dataset_expansion_factor": 1.3
+  },
+  "validated_limits": {
+    "single_round_stable_mixed_qps": 15000,
+    "candidate_topology": {
+      "gateway": 3,
+      "farm": 1,
+      "social": 1,
+      "mysql": 1,
+      "redis": 1
+    },
+    "gateway_connections_per_instance_lower_bound": 18000,
+    "farm_actors_per_instance_configured_limit": 20000
+  },
+  "production_instance_specs": {
+    "gateway": {
+      "cpu_cores": 2,
+      "memory_gib": 2
+    },
+    "farm": {
+      "cpu_cores": 1,
+      "memory_gib": 2
+    },
+    "social": {
+      "cpu_cores": 2,
+      "memory_gib": 1
+    },
+    "mysql": {
+      "cpu_cores": 8,
+      "memory_gib": 16,
+      "usable_disk_gib": 1024,
+      "buffer_pool_gib": 8
+    },
+    "redis": {
+      "cpu_cores": 4,
+      "memory_gib": 4,
+      "maxmemory_gib": 2
+    }
+  },
+  "disaster_recovery": {
+    "failure_model": "three availability zones, continue carrying baseline peak after any one zone is lost",
+    "stateless_and_actor_capacity_multiplier": 1.5,
+    "mysql_copies_per_primary_shard": 3,
+    "redis_copies_per_primary_shard": 3
+  },
+  "limitations": [
+    "三千万注册账号只是用DAU要求代入的磁盘下界，正式规划必须替换为实际注册账号预测。",
+    "Gateway单实例18000连接是已验证下界，不是破坏性连接上限。",
+    "当前没有数百实例环境，水平扩展效率是公开的保守假设。",
+    "MySQL和Redis数量代表可写主分片，普通副本不能增加主节点写容量。",
+    "候选档采用一轮30秒接口认证，低权重接口与偶发长尾的统计置信度低于多轮认证。"
+  ]
+}

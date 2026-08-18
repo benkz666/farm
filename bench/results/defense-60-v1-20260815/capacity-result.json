@@ -1,0 +1,87 @@
+{
+  "capacity": {
+    "farm": {
+      "base": 358,
+      "by_business_cpu": 31,
+      "by_full_mix_qps": 29,
+      "by_resident_actors": 358,
+      "estimated_resident_actors": 5003691
+    },
+    "full_tested_topology_units_by_qps": 29,
+    "gateway": {
+      "base": 411,
+      "by_business_cpu": 40,
+      "by_connections": 411,
+      "by_handshake": 1
+    },
+    "mysql": {
+      "base_primary_capacity_shards": 11,
+      "by_cpu": 11,
+      "by_statement_qps": 6,
+      "peak_statements_per_second": 73414.67
+    },
+    "redis": {
+      "base_primary_capacity_shards": 26,
+      "by_command_qps": 5,
+      "by_cpu": 26,
+      "peak_commands_per_second": 1242383.029
+    },
+    "social": {
+      "base": 10,
+      "by_business_cpu": 10,
+      "by_call_qps": 5,
+      "peak_calls_per_second": 63394.845
+    }
+  },
+  "deployment": {
+    "farm": {
+      "instances": 358,
+      "per_instance": "1 CPU / 2 GiB"
+    },
+    "gateway": {
+      "instances": 411,
+      "per_instance": "1 CPU / 1 GiB"
+    },
+    "mysql_primary_capacity_shards": {
+      "instances": 11,
+      "per_instance": "2 CPU / 4 GiB"
+    },
+    "redis_primary_capacity_shards": {
+      "instances": 26,
+      "per_instance": "1 CPU / 4 GiB"
+    },
+    "social": {
+      "instances": 10,
+      "per_instance": "1 CPU / 1 GiB"
+    }
+  },
+  "inputs": {
+    "business_qps": 200000.0,
+    "compute_utilization": 0.7,
+    "connection_utilization": 0.65,
+    "demand_sources": [
+      "bench/results/defense-60-v1-20260815/final-9000-r1-demand-v3.json",
+      "bench/results/defense-60-v1-20260815/final-9000-r2-demand-v3.json",
+      "bench/results/defense-60-v1-20260815/final-chain-balanced-10000-r4-demand-v3.json"
+    ],
+    "max_cpu_ms_per_business_request": {
+      "farm": 0.10541365414246771,
+      "gateway": 0.13829629629629642,
+      "mysql": 0.06569824126298292,
+      "redis": 0.05903095739006416,
+      "social": 0.03155555555555591
+    },
+    "mysql_operations_per_business_request": 0.33374001626731736,
+    "pcu": 4000000.0,
+    "redis_operations_per_business_request": 4.211915143272398,
+    "session_arrivals_per_second": 3333.333333,
+    "stable_mixed_qps": 10000
+  },
+  "limitations": [
+    "MySQL and Redis counts are capacity-equivalent primary shards; horizontal scaling requires UID-aware sharding.",
+    "Redis memory capacity cannot be closed from a 15,000-account fixture and must be recalculated from production key cardinality and value sizes.",
+    "The 10,000 QPS stable point is based on one final 30-second validation; repeat it and run longer endurance tests before production procurement."
+  ],
+  "model": "defense-60-v1",
+  "scope": "base capacity only; no HA, replicas, AZ or failure-domain allowance"
+}

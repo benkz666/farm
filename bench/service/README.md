@@ -86,9 +86,50 @@ docker compose -p benkz -f deploy/compose.yml --profile app --profile loadtool \
 服务端返回完整快照的恢复路径。两者必须分开报告。
 
 `benchstub` 只在 Gateway 隔离测试时使用，提供固定大小的 Farm 响应和固定
-Social 响应，不得部署到生产环境。结果中的 `actual_qps` 按成功请求数除以包含
-排空时间的总耗时计算；`timed_out=true` 表示压力明显越过容量，不应把目标 QPS
-当成服务吞吐。
+Social 响应，不得部署到生产环境。普通模式的 `actual_qps` 按成功请求数除以包含
+排空时间的总耗时计算；混合模式按固定 `measurement_millis` 计算，同时单列
+`completion_qps` 和 `drain_millis`。`timed_out=true` 表示压力明显越过容量，
+不应把目标 QPS 当成服务吞吐。
+
+## 行为模型混合压测
+
+`gateway-mixed` 从 JSON 行为模型读取全部接口权重，以开环总 QPS 按比例发压。
+每条 WebSocket 内部仍串行，账号分成本地、访客和社交池；结果会分别记录固定
+测量窗口与排空时间，并按接口、错误码汇总。示例：
+
+```bash
+.run/service-bench/bin/servicebench \
+  -mode gateway-mixed \
+  -accounts /fixtures/ratio-15000x18.json \
+  -behavior-model /fixtures/user-behavior.normal-v1.json \
+  -gateway-urls ws://gateway-1:9002/ws,ws://gateway-2:9002/ws,ws://gateway-3:9002/ws \
+  -qps 500 -duration 30s \
+  -concurrency 15000 -fixed-connections 15000 \
+  -warmup-concurrency 512 -warmup-settle 2s
+```
+
+瓶颈隔离时可以排除少量操作，但结果只能用于对照，不能代替完整容量：
+
+```bash
+.run/service-bench/bin/servicebench \
+  -mode gateway-mixed \
+  -accounts /fixtures/ratio-15000x18.json \
+  -behavior-model /fixtures/user-behavior.normal-v1.json \
+  -exclude-operations task-claim,mail-claim \
+  -qps 5000 -duration 10s \
+  -concurrency 15000 -fixed-connections 15000
+```
+
+当前 3000 万 DAU 假设、实测输入、容量公式和报告位于
+`bench/model/user-behavior.normal-v1.json`、
+`bench/results/mixed-normal-v1-20260813/`。重新计算：
+
+```bash
+python3 bench/api/mixed_capacity.py \
+  --model bench/model/user-behavior.normal-v1.json \
+  --benchmarks bench/results/mixed-normal-v1-20260813/benchmark-summary.json \
+  --output bench/results/mixed-normal-v1-20260813/capacity-result.json
+```
 
 快速测试只需选择一个预期高点和一个越界点。观察 CPU、内存、MySQL 与 Redis
 利用率后给出大致容量，不做细密的二分边界搜索。

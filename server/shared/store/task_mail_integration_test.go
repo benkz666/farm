@@ -328,6 +328,140 @@ func TestTaskClaimConcurrentCreditsOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestMailClaimConcurrentCreditsOnlyOnce(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	uid := testUID(t)
+	if err := s.SaveAccount(ctx, uid, "mc_"+strconv.FormatUint(uid, 10), "hash"); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	before, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm before claim: %v", err)
+	}
+
+	db := openIntegrationMySQL(t)
+	const attachment = int64(321)
+	result, err := db.ExecContext(ctx, `
+		INSERT INTO mail (uid, title, attachment_coin, created_at)
+		VALUES (?, 'concurrent reward', ?, ?)`, uid, attachment, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatalf("insert reward mail: %v", err)
+	}
+	mailID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("mail ID: %v", err)
+	}
+
+	const claimers = 8
+	start := make(chan struct{})
+	errs := make(chan error, claimers)
+	var group sync.WaitGroup
+	group.Add(claimers)
+	for range claimers {
+		go func() {
+			defer group.Done()
+			<-start
+			_, claimErr := s.ClaimMail(context.Background(), uid, uint64(mailID))
+			errs <- claimErr
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errs)
+
+	successes, alreadyClaimed := 0, 0
+	for claimErr := range errs {
+		switch {
+		case claimErr == nil:
+			successes++
+		case errors.Is(claimErr, store.ErrMailAlreadyClaimed):
+			alreadyClaimed++
+		default:
+			t.Fatalf("concurrent ClaimMail error = %v", claimErr)
+		}
+	}
+	if successes != 1 || alreadyClaimed != claimers-1 {
+		t.Fatalf("mail claim results: successes=%d already_claimed=%d, want 1 and %d",
+			successes, alreadyClaimed, claimers-1)
+	}
+	after, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm after claim: %v", err)
+	}
+	if after.Coin != before.Coin+attachment {
+		t.Fatalf("coin after concurrent mail claim = %d, want %d", after.Coin, before.Coin+attachment)
+	}
+}
+
+func TestDirectClaimsPersistActorEconomyAndFenceOlderFarmProjection(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	uid := testUID(t)
+	if err := s.SaveAccount(ctx, uid, "fenced_claim_"+strconv.FormatUint(uid, 10), "hash"); err != nil {
+		t.Fatalf("SaveAccount: %v", err)
+	}
+	before, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm before fenced claims: %v", err)
+	}
+
+	dayKey := gameconfig.LocalDayKey(time.Now().UnixMilli())
+	tasks, err := s.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	gameplay := requireRandomTask(t, tasks)
+	if _, err := s.AdvanceTask(ctx, uid, dayKey, gameplay.ID, gameplay.Target); err != nil {
+		t.Fatalf("AdvanceTask: %v", err)
+	}
+	taskState := store.DirectClaimState{Coin: before.Coin + 700, NextFarmSeq: before.FarmSeq + 7}
+	taskReward, err := s.ClaimTaskAtState(ctx, uid, dayKey, gameplay.ID, taskState)
+	if err != nil {
+		t.Fatalf("ClaimTaskAtState: %v", err)
+	}
+	if err := s.DeleteFarmCache(ctx, uid); err != nil {
+		t.Fatalf("DeleteFarmCache after task: %v", err)
+	}
+	afterTask, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm after task: %v", err)
+	}
+	if afterTask.Coin != taskState.Coin+taskReward.Coin || afterTask.FarmSeq != taskState.NextFarmSeq {
+		t.Fatalf("task claim farm coin=%d seq=%d, want %d/%d",
+			afterTask.Coin, afterTask.FarmSeq, taskState.Coin+taskReward.Coin, taskState.NextFarmSeq)
+	}
+
+	db := openIntegrationMySQL(t)
+	const attachment = int64(321)
+	result, err := db.ExecContext(ctx, `
+		INSERT INTO mail (uid, title, attachment_coin, created_at)
+		VALUES (?, 'fenced reward', ?, ?)`, uid, attachment, time.Now().UnixMilli())
+	if err != nil {
+		t.Fatalf("insert fenced reward mail: %v", err)
+	}
+	mailID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("mail ID: %v", err)
+	}
+	mailState := store.DirectClaimState{Coin: afterTask.Coin + 900, NextFarmSeq: afterTask.FarmSeq + 9}
+	mail, err := s.ClaimMailAtState(ctx, uid, uint64(mailID), mailState)
+	if err != nil {
+		t.Fatalf("ClaimMailAtState: %v", err)
+	}
+	if err := s.DeleteFarmCache(ctx, uid); err != nil {
+		t.Fatalf("DeleteFarmCache after mail: %v", err)
+	}
+	afterMail, err := s.LoadFarm(ctx, uid)
+	if err != nil {
+		t.Fatalf("LoadFarm after mail: %v", err)
+	}
+	if afterMail.Coin != mailState.Coin+mail.AttachmentCoin || afterMail.FarmSeq != mailState.NextFarmSeq {
+		t.Fatalf("mail claim farm coin=%d seq=%d, want %d/%d",
+			afterMail.Coin, afterMail.FarmSeq, mailState.Coin+mail.AttachmentCoin, mailState.NextFarmSeq)
+	}
+}
+
 func TestDailyLoginClaimConcurrentFirstInitializationCreditsOnlyOnce(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

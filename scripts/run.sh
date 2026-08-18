@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 本地开发一键启动：基础设施 → 迁移 → 三个 Go 热重载服务 → Vite HMR。
+# 本地源码开发一键启动：Docker 中间件 → 迁移 → Go 热重载服务 → Vite HMR。
 # 支持用户以 `sh scripts/run.sh` 或在 scripts 目录中执行 `sh run.sh`。
 # 本脚本使用了 Bash 的 `[[ ... ]]` 与进程替换，非 Bash 时先重启到正确解释器。
 if [ -z "${BASH_VERSION:-}" ]; then
@@ -199,15 +199,18 @@ release_app_ports() {
   done
 }
 
-start_direct() {
+start_dev() {
   for command in docker go node npm python3 curl lsof find sort; do
     need_cmd "$command"
   done
 
-  # Compose 应用容器会占用同一组端口。开发模式只保留 MySQL/Redis，
+  info "启动本地源码开发环境（业务服务跑源码，MySQL/Redis 跑 Docker）"
+
+  # Compose 应用容器会占用同一组端口。源码开发模式只保留 MySQL/Redis，
   # 后端与前端均直接从工作区启动，代码保存后无需重新 build/deploy。
-  info "停止可能占用开发端口的 compose 应用容器"
-  docker compose -f deploy/compose.yml --profile app stop web gateway farm social >/dev/null 2>&1 || true
+  info "清理旧业务进程（保留 Docker 中的 MySQL/Redis）"
+  docker compose -f deploy/compose.yml --profile app \
+    stop web gateway-1 gateway-2 gateway-3 farm social >/dev/null 2>&1 || true
   stop_local_processes
   release_app_ports
   ensure_dependencies
@@ -245,67 +248,22 @@ start_direct() {
 
   cat <<EOF
 
-启动完成（源码热重载开发模式）。
+本地源码开发环境已启动（非 k3s）。
 
-  前端:    http://127.0.0.1:${VITE_PORT}/
-  Gateway: http://127.0.0.1:${GATEWAY_PORT}/
-  Social:  gRPC 127.0.0.1:${SOCIAL_GRPC_PORT}
-  Farm:    gRPC 127.0.0.1:${FARM_GRPC_PORT}
+  前端入口: http://127.0.0.1:${VITE_PORT}/
+  Gateway:  http://127.0.0.1:${GATEWAY_PORT}/
+  Social:   gRPC 127.0.0.1:${SOCIAL_GRPC_PORT}
+  Farm:     gRPC 127.0.0.1:${FARM_GRPC_PORT}
 
-日志目录: ${LOG_DIR}
+  中间件:   MySQL/Redis（Docker Compose）
+  日志目录: ${LOG_DIR}
 
-保存 client/src 下的文件会由 Vite HMR 立即更新；
-保存 server 下的 Go 文件会自动重新编译并重启三个后端服务。
+修改 client/src 会由 Vite 热更新；修改 server 会自动重编译后端。
 EOF
 }
 
-start_deploy() {
-  for command in docker curl lsof; do
-    need_cmd "$command"
-  done
-
-  # Compose 是容器化运行，不是 Kubernetes Pod；每次启动都会按当前源码构建镜像。
-  info "停止本地热重载进程并释放应用端口"
-  stop_local_processes
-  release_app_ports
-  info "构建并启动 Docker Compose 应用容器"
-  docker compose -f deploy/compose.yml --profile app up -d --build --remove-orphans
-  wait_http "http://127.0.0.1:${GATEWAY_PORT}/api/login" "400" "gateway" POST
-  wait_http "http://127.0.0.1:${VITE_PORT}/" "200" "web"
-
-  cat <<EOF
-
-启动完成（Docker Compose 容器化运行模式）。
-
-  前端:    http://127.0.0.1:${VITE_PORT}/
-  Gateway: http://127.0.0.1:${GATEWAY_PORT}/
-
-查看日志:
-  docker compose -f deploy/compose.yml --profile app logs -f
-
-代码变更后请重新执行本脚本并选择 2，以重新构建镜像。
-EOF
-}
-
-choose_mode() {
-  local choice="${1:-}"
-  case "$choice" in
-    1|direct|dev) printf 'direct' ;;
-    2|deploy|compose) printf 'deploy' ;;
-    '')
-      [[ -t 0 ]] || die "非交互环境请显式指定模式：$0 [1|2]（1=直接运行，2=容器化运行）"
-      printf '\n请选择启动方式：\n' >&2
-      printf '  1) 直接运行（Go 热重载 + Vite HMR，MySQL/Redis 使用容器）\n' >&2
-      printf '  2) 容器化运行（Docker Compose 构建并运行全部应用容器）\n' >&2
-      read -r -p '输入 1 或 2: ' choice
-      choose_mode "$choice"
-      ;;
-    *) die "无效模式：${choice}（可选 1/direct 或 2/deploy）" ;;
-  esac
-}
-
-if [[ $# -gt 1 ]]; then
-  die "usage: $0 [1|2]"
+if [[ $# -ne 0 ]]; then
+  die "usage: $0（无需参数；仅启动本地源码开发环境）"
 fi
 
 if [[ ! -f .env ]]; then
@@ -314,8 +272,4 @@ if [[ ! -f .env ]]; then
 fi
 load_env
 
-mode="$(choose_mode "${1:-}")"
-case "$mode" in
-  direct) start_direct ;;
-  deploy) start_deploy ;;
-esac
+start_dev

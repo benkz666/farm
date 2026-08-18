@@ -1,0 +1,71 @@
+{
+  "name": "normal-v1",
+  "description": "3000万 DAU 农场游戏常态峰值行为模型；无生产埋点时用于容量基线，必须在上线后用 P95 日的埋点回填。",
+  "population": {
+    "dau": 30000000,
+    "sessions_per_dau": 2.0,
+    "average_session_minutes": 20.0,
+    "peak_to_daily_average": 3.6,
+    "peak_concurrent_users": 3000000,
+    "peak_session_arrivals_per_second": 2500
+  },
+  "personas": [
+    {"name": "quick", "session_share": 0.35, "minutes": 8, "peak_online_share": 0.14},
+    {"name": "routine", "session_share": 0.40, "minutes": 20, "peak_online_share": 0.40},
+    {"name": "social", "session_share": 0.20, "minutes": 30, "peak_online_share": 0.30},
+    {"name": "heavy", "session_share": 0.05, "minutes": 64, "peak_online_share": 0.16}
+  ],
+  "startup_and_connection_load": {
+    "register_qps": 62.5,
+    "login_qps": 2437.5,
+    "reconnect_qps": 250.0,
+    "websocket_handshake_qps": 2750.0,
+    "websocket_connections": 3000000,
+    "server_ping_per_second": 100000.0,
+    "client_pong_per_second": 100000.0,
+    "redis_session_and_lease_commands_per_second": 300000.0
+  },
+  "operations": [
+    {"name": "enter-self", "reference_qps": 4525.0, "pool": "local", "enabled": true},
+    {"name": "enter-friend", "reference_qps": 5725.0, "pool": "visitor", "enabled": true},
+    {"name": "sync", "reference_qps": 1130.0, "pool": "local", "enabled": true},
+    {"name": "till", "reference_qps": 1662.5, "pool": "local", "enabled": true},
+    {"name": "clear", "reference_qps": 2062.5, "pool": "local", "enabled": true},
+    {"name": "plant", "reference_qps": 2512.5, "pool": "local", "enabled": true},
+    {"name": "water-local", "reference_qps": 5762.5, "pool": "local", "enabled": true},
+    {"name": "weed-local", "reference_qps": 1462.5, "pool": "local", "enabled": true},
+    {"name": "pest-local", "reference_qps": 1162.5, "pool": "local", "enabled": true},
+    {"name": "fertilize", "reference_qps": 1125.0, "pool": "local", "enabled": true},
+    {"name": "harvest", "reference_qps": 2750.0, "pool": "local", "enabled": true},
+    {"name": "water-cross", "reference_qps": 2570.0, "pool": "visitor", "enabled": true},
+    {"name": "weed-cross", "reference_qps": 1535.0, "pool": "visitor", "enabled": true},
+    {"name": "pest-cross", "reference_qps": 1101.25, "pool": "visitor", "enabled": true},
+    {"name": "steal", "reference_qps": 2968.75, "pool": "visitor", "enabled": true},
+    {"name": "buy", "reference_qps": 1570.0, "pool": "local", "enabled": true},
+    {"name": "sell", "reference_qps": 775.63, "pool": "local", "enabled": true},
+    {"name": "friend-list", "reference_qps": 4178.88, "pool": "social", "enabled": true},
+    {"name": "gen-share", "reference_qps": 255.0, "pool": "social", "enabled": true},
+    {"name": "search-user", "reference_qps": 596.25, "pool": "social", "enabled": true},
+    {"name": "list-friend-requests", "reference_qps": 4940.13, "pool": "social", "enabled": true},
+    {"name": "pet-status", "reference_qps": 3456.25, "pool": "local", "enabled": true},
+    {"name": "pet-activate", "reference_qps": 34.25, "pool": "local", "enabled": true},
+    {"name": "pet-feed", "reference_qps": 328.75, "pool": "local", "enabled": true},
+    {"name": "task-list", "reference_qps": 6006.25, "pool": "local", "enabled": true},
+    {"name": "task-claim", "reference_qps": 1618.75, "pool": "local", "enabled": true},
+    {"name": "mail-list", "reference_qps": 5342.63, "pool": "local", "enabled": true},
+    {"name": "mail-read", "reference_qps": 948.13, "pool": "local", "enabled": true},
+    {"name": "mail-claim", "reference_qps": 326.25, "pool": "local", "enabled": true},
+    {"name": "mail-delete", "reference_qps": 76.25, "pool": "local", "enabled": true},
+    {"name": "codex-list", "reference_qps": 756.25, "pool": "local", "enabled": true},
+    {"name": "accept-invite", "reference_qps": 78.13, "pool": "social", "enabled": false, "reason": "会永久消费邀请关系；在独立的一次性 Social 场景验证"},
+    {"name": "remove-friend", "reference_qps": 20.13, "pool": "social", "enabled": false, "reason": "会破坏跨农场夹具关系；在独立的一次性 Social 场景验证"},
+    {"name": "request-friend", "reference_qps": 298.13, "pool": "social", "enabled": false, "reason": "需要独立的未关联账号对；在独立的一次性 Social 场景验证"},
+    {"name": "accept-friend-request", "reference_qps": 188.75, "pool": "social", "enabled": false, "reason": "消费好友申请；在独立的一次性 Social 场景验证"},
+    {"name": "reject-friend-request", "reference_qps": 45.13, "pool": "social", "enabled": false, "reason": "消费好友申请；在独立的一次性 Social 场景验证"}
+  ],
+  "derived_reference_business_qps": {
+    "mixed_executable": 69264.65,
+    "destructive_social_separate": 630.27,
+    "total": 69894.92
+  }
+}

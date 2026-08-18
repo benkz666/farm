@@ -23,6 +23,14 @@ func (s *Store) IssueCodexRewards(ctx context.Context, uid uint64, progress farm
 	if s == nil || s.db == nil || uid == 0 || !ok || progress.HarvestCount == 0 {
 		return nil, fmt.Errorf("store: invalid codex reward request")
 	}
+	// Most harvests do not cross a plaque milestone. Opening and committing an
+	// empty transaction for every one of them used to add two MySQL exchanges to
+	// the hottest projected write path. Reject the no-op before touching the
+	// pool; recovery still evaluates every reached tier once a milestone is
+	// possible, so an older missing reward can be repaired idempotently.
+	if !hasEligibleCodexReward(progress.HarvestCount) {
+		return nil, nil
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("store: begin codex reward: %w", err)
@@ -66,6 +74,15 @@ func (s *Store) IssueCodexRewards(ctx context.Context, uid uint64, progress farm
 		s.invalidateMailboxAfterCommit(uid)
 	}
 	return issued, nil
+}
+
+func hasEligibleCodexReward(harvestCount uint32) bool {
+	for _, milestone := range gameconfig.CodexTiers {
+		if harvestCount >= milestone.HarvestCount {
+			return true
+		}
+	}
+	return false
 }
 
 func codexTierLabel(tier string) string {

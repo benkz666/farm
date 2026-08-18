@@ -4,6 +4,7 @@ package farmrpc
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"farm/server/domain/farm"
@@ -41,12 +42,14 @@ const (
 // CommandRequest is Farm's typed in-process application command. The public
 // request remains Protobuf from Gateway through ClientHandler to this layer.
 type CommandRequest struct {
-	Operation     Operation
-	FarmUID       uint64
-	Originator    presence.ConnRef
-	ClientCommand uint32
-	ClientRequest *publicv3.CommandRequest
-	SyncRequest   *publicv3.SyncFarmRequest
+	Context        context.Context
+	Operation      Operation
+	FarmUID        uint64
+	Originator     presence.ConnRef
+	PreferPrepared bool
+	ClientCommand  uint32
+	ClientRequest  *publicv3.CommandRequest
+	SyncRequest    *publicv3.SyncFarmRequest
 }
 
 // CommandResponse preserves protocol-level errors inside a successful internal
@@ -54,10 +57,35 @@ type CommandRequest struct {
 type CommandResponse struct {
 	Err               errcode.Code
 	FarmSeq           uint64
+	PreparedPayload   []byte
+	PreparedField     uint32
+	SyncCaughtUp      bool
+	SyncServerTime    int64
+	SyncTimeProfile   string
 	EnterFarmResponse *publicv3.EnterFarmResponse
 	SyncFarmResponse  *publicv3.SyncFarmResponse
 	ClientResponse    *publicv3.CommandResponse
 }
+
+// syncFarmExecution keeps the many values shared with the Actor callback in
+// one reusable object. The callback crosses a goroutine boundary, so capturing
+// each local separately made a large closure escape on every hot SyncFarm.
+type syncFarmExecution struct {
+	farmUID          uint64
+	fromSeq          uint64
+	preferPrepared   bool
+	deltas           []farm.FarmDelta
+	farmSeq          uint64
+	serverTime       int64
+	timeProfile      string
+	snapshotProto    *publicv3.FarmSnapshot
+	snapshotPayload  []byte
+	delta            *farm.FarmDelta
+	stealable        bool
+	refreshStealHint bool
+}
+
+var syncFarmExecutionPool = sync.Pool{New: func() any { return new(syncFarmExecution) }}
 
 // PlotActionRequest carries one owner-authoritative plot mutation.
 type plotActionRequest struct {
@@ -138,6 +166,20 @@ type TaskClaimer interface {
 	ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (store.TaskReward, error)
 }
 
+// taskStateClaimer persists the Actor-authoritative post-claim economy in the
+// same transaction as the task marker. Journal-backed production storage uses
+// it to avoid a full projection barrier; simple test/legacy stores retain the
+// TaskClaimer fallback above.
+type taskStateClaimer interface {
+	ClaimTaskAtState(
+		ctx context.Context,
+		uid uint64,
+		dayKey int64,
+		taskID uint32,
+		state store.DirectClaimState,
+	) (store.TaskReward, error)
+}
+
 // DailyLoginClaimer atomically records and credits the daily login reward.
 type DailyLoginClaimer interface {
 	ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (store.TaskReward, error)
@@ -146,6 +188,15 @@ type DailyLoginClaimer interface {
 // MailClaimer atomically marks and credits a mail attachment in durable storage.
 type MailClaimer interface {
 	ClaimMail(ctx context.Context, uid uint64, mailID uint64) (store.Mail, error)
+}
+
+type mailStateClaimer interface {
+	ClaimMailAtState(
+		ctx context.Context,
+		uid uint64,
+		mailID uint64,
+		state store.DirectClaimState,
+	) (store.Mail, error)
 }
 
 // Option configures optional Farm RPC behavior.
@@ -410,6 +461,7 @@ func (h *Handler) Execute(request CommandRequest) CommandResponse {
 
 func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	var snapshotProto *publicv3.FarmSnapshot
+	var snapshotPayload []byte
 	var farmSeq uint64
 	var serverTime int64
 	var timeProfile string
@@ -438,7 +490,11 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 			refreshHint = true
 		}
 		var err error
-		snapshotProto, err = farmActor.SnapshotProto()
+		if command.PreferPrepared {
+			snapshotPayload, err = farmActor.EncodedSnapshotProto()
+		} else {
+			snapshotProto, err = farmActor.SnapshotProto()
+		}
 		if err != nil {
 			return err
 		}
@@ -450,6 +506,18 @@ func (h *Handler) enterFarm(command CommandRequest) CommandResponse {
 	h.publishDelta(delta, command.Originator)
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
+	}
+	if command.PreferPrepared {
+		prepared, err := clientwire.MarshalEnterFarmResponsePayload(
+			snapshotPayload, farmSeq, serverTime, timeProfile, false, "SELF",
+		)
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		return CommandResponse{
+			Err: errcode.OK, FarmSeq: farmSeq,
+			PreparedPayload: prepared, PreparedField: clientwire.PreparedEnterFarmResponse,
+		}
 	}
 	return CommandResponse{
 		Err: errcode.OK, FarmSeq: farmSeq,
@@ -483,9 +551,17 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 	var delta *farm.FarmDelta
 	var stealable bool
 	var refreshHint bool
+	var taskNotify *store.Task
+	taskID := gameplayTaskID(request.Kind)
+	dayKey := gameconfig.LocalDayKey(h.now())
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		if h.bundleJournalEffects && taskID != 0 {
+			if err := h.ensureActorTasks(commandContext(command), command.FarmUID, dayKey, farmActor); err != nil {
+				return err
+			}
 		}
 		beforeFarmSeq := farmActor.Aggregate.FarmSeq
 		result = farmActor.Aggregate.ApplyPlotAction(farm.PlotAction{
@@ -530,10 +606,13 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 			}
 		}
 		if result.Err == errcode.OK && h.bundleJournalEffects {
-			if taskID := gameplayTaskID(request.Kind); taskID != 0 && h.taskProgress != nil {
-				farmActor.RecordTaskAdvance(outbox.TaskAdvance{
-					DayKey: gameconfig.LocalDayKey(h.now()), TaskID: taskID, Amount: 1,
-				})
+			if taskID != 0 && h.taskProgress != nil {
+				advanced, _ := farmActor.AdvanceTaskState(dayKey, taskID, 1)
+				if advanced.Changed {
+					farmActor.RecordTaskAdvance(outbox.TaskAdvance{DayKey: dayKey, TaskID: taskID, Amount: 1})
+					copy := advanced.Task
+					taskNotify = &copy
+				}
 			}
 			if response.Patch.Codex != nil && h.codexRewards != nil {
 				farmActor.RecordCodexChange(response.Patch.Codex.CropID)
@@ -550,6 +629,9 @@ func (h *Handler) plotAction(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: result.Err}
 	}
 	h.publishDelta(delta, command.Originator)
+	if taskNotify != nil {
+		h.publishTaskNotify(command.FarmUID, *taskNotify)
+	}
 	if refreshHint {
 		h.writeStealHint(command.FarmUID, stealable)
 	}
@@ -625,9 +707,16 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 	var result farm.ActionResult
 	var response actionCommandResult
 	var delta *farm.FarmDelta
+	var taskNotify *store.Task
+	dayKey := gameconfig.LocalDayKey(h.now())
 	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
+		}
+		if !request.Buy && h.bundleJournalEffects {
+			if err := h.ensureActorTasks(commandContext(command), command.FarmUID, dayKey, farmActor); err != nil {
+				return err
+			}
 		}
 		beforeFarmSeq := farmActor.Aggregate.FarmSeq
 		if request.Buy {
@@ -645,9 +734,12 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 			farmActor.RequireEconomyFlush()
 			farmActor.RecordItemCounts(result.Patch.Items)
 			if !request.Buy && h.bundleJournalEffects && h.taskProgress != nil {
-				farmActor.RecordTaskAdvance(outbox.TaskAdvance{
-					DayKey: gameconfig.LocalDayKey(h.now()), TaskID: store.TaskSellID, Amount: 1,
-				})
+				advanced, _ := farmActor.AdvanceTaskState(dayKey, store.TaskSellID, 1)
+				if advanced.Changed {
+					farmActor.RecordTaskAdvance(outbox.TaskAdvance{DayKey: dayKey, TaskID: store.TaskSellID, Amount: 1})
+					copy := advanced.Task
+					taskNotify = &copy
+				}
 			}
 			response = actionCommandResult{
 				FarmSeq: farmActor.Aggregate.FarmSeq,
@@ -672,6 +764,9 @@ func (h *Handler) shop(command CommandRequest) CommandResponse {
 		return CommandResponse{Err: result.Err}
 	}
 	h.publishDelta(delta, command.Originator)
+	if taskNotify != nil {
+		h.publishTaskNotify(command.FarmUID, *taskNotify)
+	}
 	if !request.Buy && !h.bundleJournalEffects {
 		if err := h.advanceSellTask(command.FarmUID); err != nil {
 			telemetry.L().Error("farmrpc advance sell task failed",
@@ -716,78 +811,158 @@ func (h *Handler) syncFarm(command CommandRequest) CommandResponse {
 	if command.SyncRequest == nil {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
-	fromSeq := command.SyncRequest.FromSeq
-	var deltas []farm.FarmDelta
-	var farmSeq uint64
-	var serverTime int64
-	var timeProfile string
-	var snapshotProto *publicv3.FarmSnapshot
-	var delta *farm.FarmDelta
-	var stealable bool
-	var refreshHint bool
-	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
-		if farmActor == nil || farmActor.Aggregate == nil {
-			return errors.New("farmrpc: actor aggregate is nil")
-		}
-		now := h.now()
-		changes := farmActor.Aggregate.AdvanceAllWithProfile(now, h.timeProfiles.Get())
-		if len(changes) > 0 {
-			// SyncFarm 是客户端在风险窗口和成熟点触发的惰性推进屏障。
-			farmActor.RequireFlush()
-			emitted := farm.FarmDelta{
-				OwnerUID: command.FarmUID,
-				FarmSeq:  farmActor.Aggregate.FarmSeq,
-				Plots:    changes,
-			}
-			farmActor.Deltas.Append(emitted)
-			delta = &emitted
-			stealable = farmActor.Aggregate.HasStealable()
-			refreshHint = true
-		}
-		farmSeq = farmActor.Aggregate.FarmSeq
-		serverTime = now
-		timeProfile = h.timeProfiles.Get()
-		if fromSeq == farmSeq {
-			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
-			return nil
-		}
-		if fromSeq > farmSeq {
-			var err error
-			snapshotProto, err = farmActor.SnapshotProto()
-			if err != nil {
-				return err
-			}
-			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
-			return nil
-		}
-		var ok bool
-		deltas, ok = farmActor.Deltas.Since(fromSeq + 1)
-		if !ok || len(deltas) == 0 {
-			var err error
-			snapshotProto, err = farmActor.SnapshotProto()
-			if err != nil {
-				return err
-			}
-			h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
-			return nil
-		}
-		h.scheduleAdvance(command.FarmUID, farmActor.Aggregate)
-		return nil
+	return h.syncFarmFromSeq(command, command.SyncRequest.FromSeq, false)
+}
+
+// syncFarmPreparedSelf is used only by the trusted flat Gateway/Farm stream
+// for a self SyncFarm. It preserves the general command path as a fallback but
+// lets a caught-up response remain scalar until it reaches Gateway.
+func (h *Handler) syncFarmPreparedSelf(
+	ctx context.Context,
+	farmUID uint64,
+	originator presence.ConnRef,
+	fromSeq uint64,
+) CommandResponse {
+	return h.syncFarmFromSeq(CommandRequest{
+		Context:   ctx,
+		Operation: OperationSyncFarm, FarmUID: farmUID,
+		Originator: originator, PreferPrepared: true,
+	}, fromSeq, true)
+}
+
+func (h *Handler) syncFarmFromSeq(
+	command CommandRequest,
+	fromSeq uint64,
+	deferCaughtUpPayload bool,
+) CommandResponse {
+	execution := syncFarmExecutionPool.Get().(*syncFarmExecution)
+	*execution = syncFarmExecution{
+		farmUID: command.FarmUID, fromSeq: fromSeq,
+		preferPrepared: command.PreferPrepared,
+	}
+	defer func() {
+		*execution = syncFarmExecution{}
+		syncFarmExecutionPool.Put(execution)
+	}()
+
+	if err := h.runtime.Do(execution.farmUID, func(farmActor *room.FarmActor) error {
+		return h.executeSyncFarmActor(execution, farmActor)
 	}); err != nil {
 		return CommandResponse{Err: errcode.Internal}
 	}
-	h.publishDelta(delta, command.Originator)
-	if refreshHint {
-		h.writeStealHint(command.FarmUID, stealable)
+	h.publishDelta(execution.delta, command.Originator)
+	if execution.refreshStealHint {
+		h.writeStealHint(execution.farmUID, execution.stealable)
+	}
+	if command.PreferPrepared {
+		// A caught-up SyncFarm is the dominant hot path. Do not allocate and then
+		// discard a complete typed response merely to discover that it has neither
+		// a snapshot nor deltas.
+		if len(execution.snapshotPayload) == 0 && len(execution.deltas) == 0 {
+			if deferCaughtUpPayload {
+				return CommandResponse{
+					Err: errcode.OK, FarmSeq: execution.farmSeq,
+					PreparedField:   clientwire.PreparedSyncFarmResponse,
+					SyncCaughtUp:    true,
+					SyncServerTime:  execution.serverTime,
+					SyncTimeProfile: execution.timeProfile,
+				}
+			}
+			return CommandResponse{
+				Err: errcode.OK, FarmSeq: execution.farmSeq,
+				PreparedPayload: clientwire.MarshalSyncFarmCaughtUpPayload(
+					execution.farmSeq, execution.serverTime, execution.timeProfile, false,
+				),
+				PreparedField: clientwire.PreparedSyncFarmResponse,
+			}
+		}
 	}
 	typed := &publicv3.SyncFarmResponse{
-		Snapshot: snapshotProto, FarmSeq: farmSeq,
-		ServerTime: serverTime, TimeProfile: timeProfile,
+		Snapshot: execution.snapshotProto, FarmSeq: execution.farmSeq,
+		ServerTime: execution.serverTime, TimeProfile: execution.timeProfile,
 	}
-	for _, item := range deltas {
+	for _, item := range execution.deltas {
 		typed.Deltas = append(typed.Deltas, clientwire.FarmDeltaToProto(item))
 	}
-	return CommandResponse{Err: errcode.OK, FarmSeq: farmSeq, SyncFarmResponse: typed}
+	if command.PreferPrepared {
+		var prepared []byte
+		var err error
+		switch {
+		case len(execution.snapshotPayload) != 0:
+			prepared, err = clientwire.MarshalSyncFarmSnapshotPayload(
+				execution.snapshotPayload, execution.farmSeq,
+				execution.serverTime, execution.timeProfile, false,
+			)
+		default:
+			prepared, err = clientwire.MarshalSyncFarmResponsePayload(typed)
+		}
+		if err != nil {
+			return CommandResponse{Err: errcode.Internal}
+		}
+		return CommandResponse{
+			Err: errcode.OK, FarmSeq: execution.farmSeq,
+			PreparedPayload: prepared, PreparedField: clientwire.PreparedSyncFarmResponse,
+		}
+	}
+	return CommandResponse{Err: errcode.OK, FarmSeq: execution.farmSeq, SyncFarmResponse: typed}
+}
+
+func (h *Handler) executeSyncFarmActor(
+	execution *syncFarmExecution,
+	farmActor *room.FarmActor,
+) error {
+	if farmActor == nil || farmActor.Aggregate == nil {
+		return errors.New("farmrpc: actor aggregate is nil")
+	}
+	now := h.now()
+	profile := h.timeProfiles.Get()
+	changes := farmActor.Aggregate.AdvanceAllWithProfile(now, profile)
+	if len(changes) > 0 {
+		// SyncFarm 是客户端在风险窗口和成熟点触发的惰性推进屏障。
+		farmActor.RequireFlush()
+		emitted := farm.FarmDelta{
+			OwnerUID: execution.farmUID,
+			FarmSeq:  farmActor.Aggregate.FarmSeq,
+			Plots:    changes,
+		}
+		farmActor.Deltas.Append(emitted)
+		execution.delta = &emitted
+		execution.stealable = farmActor.Aggregate.HasStealable()
+		execution.refreshStealHint = true
+	}
+	execution.farmSeq = farmActor.Aggregate.FarmSeq
+	execution.serverTime = now
+	execution.timeProfile = profile
+	if execution.fromSeq == execution.farmSeq {
+		h.scheduleAdvance(execution.farmUID, farmActor.Aggregate)
+		return nil
+	}
+	if execution.fromSeq > execution.farmSeq {
+		if err := execution.captureSyncSnapshot(farmActor); err != nil {
+			return err
+		}
+		h.scheduleAdvance(execution.farmUID, farmActor.Aggregate)
+		return nil
+	}
+	var ok bool
+	execution.deltas, ok = farmActor.Deltas.Since(execution.fromSeq + 1)
+	if !ok || len(execution.deltas) == 0 {
+		if err := execution.captureSyncSnapshot(farmActor); err != nil {
+			return err
+		}
+	}
+	h.scheduleAdvance(execution.farmUID, farmActor.Aggregate)
+	return nil
+}
+
+func (execution *syncFarmExecution) captureSyncSnapshot(farmActor *room.FarmActor) error {
+	var err error
+	if execution.preferPrepared {
+		execution.snapshotPayload, err = farmActor.EncodedSnapshotProto()
+	} else {
+		execution.snapshotProto, err = farmActor.SnapshotProto()
+	}
+	return err
 }
 
 func (h *Handler) pet(command CommandRequest) CommandResponse {
@@ -865,8 +1040,14 @@ func (h *Handler) taskList(command CommandRequest) CommandResponse {
 	}
 	now := h.now()
 	dayKey := gameconfig.LocalDayKey(now)
-	tasks, err := h.taskMail.ListTasks(context.Background(), command.FarmUID, dayKey)
-	if err != nil {
+	var tasks []store.Task
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
+		if err := h.ensureActorTasks(commandContext(command), command.FarmUID, dayKey, farmActor); err != nil {
+			return err
+		}
+		tasks = farmActor.TaskSnapshot(dayKey)
+		return nil
+	}); err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
 	}
 	return CommandResponse{
@@ -879,8 +1060,14 @@ func (h *Handler) mailList(command CommandRequest) CommandResponse {
 	if h.taskMail == nil || command.ClientRequest == nil || command.ClientCommand != 604 {
 		return CommandResponse{Err: errcode.Internal}
 	}
-	mails, err := h.taskMail.ListMails(context.Background(), command.FarmUID)
-	if err != nil {
+	var mails []store.Mail
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
+		if err := h.refreshActorMails(commandContext(command), command.FarmUID, farmActor); err != nil {
+			return err
+		}
+		mails = farmActor.MailSnapshot()
+		return nil
+	}); err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
 	}
 	return CommandResponse{Err: errcode.OK, ClientResponse: clientwire.NewMailListCommandResponse(mails)}
@@ -897,8 +1084,17 @@ func (h *Handler) mailRead(command CommandRequest) CommandResponse {
 	if (!all && mailID == 0) || (all && mailID != 0) {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
-	affected, err := h.taskMail.MarkMailsRead(context.Background(), command.FarmUID, mailID)
-	if err != nil {
+	var affected int64
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
+		if err := h.ensureActorMails(commandContext(command), command.FarmUID, farmActor); err != nil {
+			return err
+		}
+		affected = farmActor.MarkMailsReadState(mailID, h.now())
+		if affected > 0 {
+			farmActor.RequireSideEffectFlush()
+		}
+		return nil
+	}); err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
 	}
 	return CommandResponse{Err: errcode.OK, ClientResponse: clientwire.NewMailMutationCommandResponse(affected)}
@@ -915,8 +1111,17 @@ func (h *Handler) mailDelete(command CommandRequest) CommandResponse {
 	if (!all && mailID == 0) || (all && mailID != 0) {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
-	affected, err := h.taskMail.DeleteMails(context.Background(), command.FarmUID, mailID)
-	if err != nil {
+	var affected int64
+	if err := h.runtime.Do(command.FarmUID, func(farmActor *room.FarmActor) error {
+		if err := h.ensureActorMails(commandContext(command), command.FarmUID, farmActor); err != nil {
+			return err
+		}
+		affected = farmActor.DeleteMailsState(mailID, h.now())
+		if affected > 0 {
+			farmActor.RequireSideEffectFlush()
+		}
+		return nil
+	}); err != nil {
 		return CommandResponse{Err: taskListErrorCode(err)}
 	}
 	return CommandResponse{Err: errcode.OK, ClientResponse: clientwire.NewMailMutationCommandResponse(affected)}
@@ -930,7 +1135,7 @@ func (h *Handler) taskClaim(command CommandRequest) CommandResponse {
 }
 
 func (h *Handler) claimTask(command CommandRequest, taskID uint32, dailyLoginCompatibility bool) CommandResponse {
-	if h.taskClaimer == nil {
+	if h.taskMail == nil {
 		return CommandResponse{Err: errcode.Internal}
 	}
 	var reward store.TaskReward
@@ -941,14 +1146,17 @@ func (h *Handler) claimTask(command CommandRequest, taskID uint32, dailyLoginCom
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
 		dayKey := gameconfig.LocalDayKey(h.now())
-		reward, claimErr = h.taskClaimer.ClaimTask(context.Background(), command.FarmUID, dayKey, taskID)
+		if err := h.ensureActorTasks(commandContext(command), command.FarmUID, dayKey, farmActor); err != nil {
+			return err
+		}
+		reward, claimErr = farmActor.ClaimTaskState(dayKey, taskID, h.now())
 		if claimErr != nil {
 			return nil
 		}
-		// 低频例外：ClaimTask 在 Actor 锁内先写 MySQL 再同步内存，保证「DB 已增、内存随后一致」。
-		// 移出 Actor 需独立 outbox/saga，与跨农场热路径 QPS 无关，本轮保留。
-		farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp)
-		farmActor.RequireFlush()
+		if !farmActor.Aggregate.CreditReward(reward.Coin, reward.Exp) {
+			return errors.New("farmrpc: task reward did not change aggregate")
+		}
+		farmActor.RequireEconomyFlush()
 		playerDelta = farmActor.Aggregate.PlayerDelta()
 		return nil
 	}); err != nil {
@@ -968,7 +1176,7 @@ func (h *Handler) dailyLoginClaim(command CommandRequest) CommandResponse {
 	if command.ClientRequest == nil || command.ClientCommand != 614 {
 		return CommandResponse{Err: errcode.BadRequest}
 	}
-	if h.taskClaimer != nil {
+	if h.taskMail != nil {
 		return h.claimTask(command, store.TaskDailyLoginID, true)
 	}
 	if h.dailyLoginClaimer == nil {
@@ -982,7 +1190,7 @@ func (h *Handler) dailyLoginClaim(command CommandRequest) CommandResponse {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
 		dayKey := gameconfig.LocalDayKey(h.now())
-		reward, claimErr = h.dailyLoginClaimer.ClaimDailyLogin(context.Background(), command.FarmUID, dayKey)
+		reward, claimErr = h.dailyLoginClaimer.ClaimDailyLogin(commandContext(command), command.FarmUID, dayKey)
 		if claimErr != nil {
 			return nil
 		}
@@ -1001,7 +1209,7 @@ func (h *Handler) dailyLoginClaim(command CommandRequest) CommandResponse {
 }
 
 func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
-	if h.mailClaimer == nil {
+	if h.taskMail == nil {
 		return CommandResponse{Err: errcode.Internal}
 	}
 	if command.ClientRequest == nil || command.ClientCommand != 608 || command.ClientRequest.MailId == 0 {
@@ -1015,13 +1223,17 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		mail, claimErr = h.mailClaimer.ClaimMail(context.Background(), command.FarmUID, mailID)
+		if err := h.ensureActorMails(commandContext(command), command.FarmUID, farmActor); err != nil {
+			return err
+		}
+		mail, claimErr = farmActor.ClaimMailState(mailID, h.now())
 		if claimErr != nil {
 			return nil
 		}
-		// 低频例外：ClaimMail 在 Actor 锁内先写 MySQL 再同步内存，保证附件入账一致。
-		farmActor.Aggregate.CreditMailReward(mail.AttachmentCoin)
-		farmActor.RequireFlush()
+		if !farmActor.Aggregate.CreditMailReward(mail.AttachmentCoin) {
+			return errors.New("farmrpc: mail reward did not change aggregate")
+		}
+		farmActor.RequireEconomyFlush()
 		playerDelta = farmActor.Aggregate.PlayerDelta()
 		return nil
 	}); err != nil {
@@ -1032,6 +1244,67 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 	}
 	h.publishPlayerDelta(command.FarmUID, playerDelta)
 	return CommandResponse{Err: errcode.OK, ClientResponse: clientwire.NewMailClaimCommandResponse(mail)}
+}
+
+func (h *Handler) ensureActorTasks(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	farmActor *room.FarmActor,
+) error {
+	if farmActor == nil || farmActor.Aggregate == nil || h.taskMail == nil {
+		return errors.New("farmrpc: task Actor state is unavailable")
+	}
+	if farmActor.TasksReady(dayKey) {
+		return nil
+	}
+	tasks, err := h.taskMail.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		return err
+	}
+	farmActor.LoadTasks(dayKey, tasks)
+	return nil
+}
+
+func (h *Handler) ensureActorMails(ctx context.Context, uid uint64, farmActor *room.FarmActor) error {
+	if farmActor == nil || farmActor.Aggregate == nil || h.taskMail == nil {
+		return errors.New("farmrpc: mail Actor state is unavailable")
+	}
+	if farmActor.MailsReady() {
+		return nil
+	}
+	mails, err := h.taskMail.ListMails(ctx, uid)
+	if err != nil {
+		return err
+	}
+	farmActor.LoadMails(mails)
+	return nil
+}
+
+func (h *Handler) refreshActorMails(ctx context.Context, uid uint64, farmActor *room.FarmActor) error {
+	if farmActor == nil || farmActor.Aggregate == nil || h.taskMail == nil {
+		return errors.New("farmrpc: mail Actor state is unavailable")
+	}
+	mails, err := h.taskMail.ListMails(ctx, uid)
+	if err != nil {
+		return err
+	}
+	farmActor.MergeMails(mails)
+	return nil
+}
+
+func nextDirectClaimState(aggregate *farm.Aggregate) (store.DirectClaimState, error) {
+	if aggregate == nil || aggregate.FarmSeq == ^uint64(0) {
+		return store.DirectClaimState{}, errors.New("farmrpc: invalid direct claim aggregate sequence")
+	}
+	return store.DirectClaimState{Coin: aggregate.Coin, NextFarmSeq: aggregate.FarmSeq + 1}, nil
+}
+
+func commandContext(command CommandRequest) context.Context {
+	if command.Context != nil {
+		return command.Context
+	}
+	return context.Background()
 }
 
 func taskClaimErrorCode(err error) errcode.Code {
@@ -1111,6 +1384,27 @@ func taskListErrorCode(err error) errcode.Code {
 
 func (h *Handler) advanceTask(uid uint64, taskID, amount uint32) error {
 	if h.taskProgress == nil {
+		return nil
+	}
+	if h.bundleJournalEffects {
+		dayKey := gameconfig.LocalDayKey(h.now())
+		var result store.TaskAdvanceResult
+		if err := h.runtime.Do(uid, func(farmActor *room.FarmActor) error {
+			if err := h.ensureActorTasks(context.Background(), uid, dayKey, farmActor); err != nil {
+				return err
+			}
+			result, _ = farmActor.AdvanceTaskState(dayKey, taskID, amount)
+			if result.Changed {
+				farmActor.RecordTaskAdvance(outbox.TaskAdvance{DayKey: dayKey, TaskID: taskID, Amount: amount})
+				farmActor.RequireSideEffectFlush()
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if result.Changed {
+			h.publishTaskNotify(uid, result.Task)
+		}
 		return nil
 	}
 	result, err := h.taskProgress.AdvanceTask(

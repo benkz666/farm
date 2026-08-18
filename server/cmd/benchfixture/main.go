@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -48,7 +49,11 @@ type fixture struct {
 	ItemID       int    `json:"item_id"`
 	Quantity     int    `json:"quantity"`
 	TaskID       int    `json:"task_id"`
+	TaskIDs      []int  `json:"task_ids,omitempty"`
 	MailID       string `json:"mail_id"`
+	MailReadID   string `json:"mail_read_id,omitempty"`
+	MailClaimID  string `json:"mail_claim_id,omitempty"`
+	MailDeleteID string `json:"mail_delete_id,omitempty"`
 }
 
 type fixtureFile struct {
@@ -65,13 +70,16 @@ func main() {
 	concurrency := flag.Int("concurrency", 32, "parallel account registrations")
 	mergeBase := flag.String("merge-base", "", "optional first fixture in merge-only mode")
 	mergeInput := flag.String("merge-input", "", "optional second fixture in merge-only mode")
+	normalizeMixedInput := flag.String("normalize-mixed-input", "", "copy an existing fixture and normalize mixed-pool peer relationships")
+	accountOffset := flag.Int("account-offset", 0, "skip this many accounts when copying or resetting a fixture")
+	accountLimit := flag.Int("account-limit", 0, "maximum accounts to copy or reset; zero uses all remaining accounts")
 	resetInput := flag.String("reset-input", "", "reuse accounts from an existing fixture and reset their Farm state")
 	mysqlDSN := flag.String("mysql-dsn", "", "optional direct fixture MySQL DSN; skips password hashing and HTTP registration")
 	redisAddr := flag.String("redis-addr", "", "Redis address required with mysql-dsn")
 	uidBase := flag.Uint64("uid-base", 1_000_000, "first UID in direct fixture mode")
 	wsURL := flag.String("ws-url", "ws://gateway:9002/ws", "WebSocket URL written in direct fixture mode")
 	loginCapable := flag.Bool("login-capable", false, "store one reusable bcrypt hash for direct fixtures so /api/login can authenticate them")
-	profile := flag.String("profile", "default", "direct fixture state: default, water, water-visitor, harvest, sell, hot-economy, or steal")
+	profile := flag.String("profile", "default", "direct fixture state: default, water, water-visitor, harvest, sell, hot-economy, steal, or mixed")
 	timeProfile := flag.String("time-profile", fixtureTimeProfileDefault(), "Farm time profile used to build stateful fixtures; must match farmsvr")
 	flag.Parse()
 	if *mergeBase != "" || *mergeInput != "" {
@@ -83,6 +91,22 @@ func main() {
 		}
 		return
 	}
+	if *normalizeMixedInput != "" {
+		input, err := readFixtureFile(*normalizeMixedInput)
+		if err != nil {
+			fatalf("read mixed fixture: %v", err)
+		}
+		input, err = selectFixtureAccounts(input, *accountOffset, *accountLimit)
+		if err != nil {
+			fatalf("select mixed fixture accounts: %v", err)
+		}
+		assignMixedPeers(input.Accounts)
+		if err := writeFixtures(*output, input); err != nil {
+			fatalf("write normalized mixed fixture: %v", err)
+		}
+		fmt.Printf("benchfixture: normalized %d mixed accounts into %s\n", len(input.Accounts), *output)
+		return
+	}
 	if *resetInput != "" && (*mysqlDSN == "" || *redisAddr == "") {
 		fatalf("reset-input requires mysql-dsn and redis-addr")
 	}
@@ -91,6 +115,9 @@ func main() {
 	}
 	if *count < 2 || *concurrency < 1 {
 		fatalf("count must be at least 2")
+	}
+	if *accountOffset < 0 || *accountLimit < 0 {
+		fatalf("account-offset and account-limit must not be negative")
 	}
 	if (*mysqlDSN == "") != (*redisAddr == "") {
 		fatalf("mysql-dsn and redis-addr must be set together")
@@ -107,6 +134,7 @@ func main() {
 
 	var directStorage *store.Store
 	var closeStorage func() error
+	var directDB *sql.DB
 	var directPasswordHash string
 	if *mysqlDSN != "" {
 		var err error
@@ -115,6 +143,14 @@ func main() {
 			fatalf("open direct fixture storage: %v", err)
 		}
 		defer closeStorage()
+		directDB, err = sql.Open("mysql", *mysqlDSN)
+		if err != nil {
+			fatalf("open fixture SQL: %v", err)
+		}
+		defer directDB.Close()
+		if err := directDB.PingContext(context.Background()); err != nil {
+			fatalf("ping fixture SQL: %v", err)
+		}
 		if *loginCapable {
 			hash, hashErr := bcrypt.GenerateFromPassword([]byte(*password), bcrypt.DefaultCost)
 			if hashErr != nil {
@@ -124,14 +160,29 @@ func main() {
 		}
 	}
 	if *resetInput != "" {
-		fixtures, err := readFixtures(*resetInput)
+		resetFile, err := readFixtureFile(*resetInput)
 		if err != nil {
 			fatalf("read reset fixture: %v", err)
 		}
-		if err := resetFixtures(directStorage, fixtures, *profile, *timeProfile, *concurrency); err != nil {
+		resetFile, err = selectFixtureAccounts(resetFile, *accountOffset, *accountLimit)
+		if err != nil {
+			fatalf("select reset fixture accounts: %v", err)
+		}
+		if err := resetFixtures(directStorage, directDB, resetFile.Accounts, *profile, *timeProfile, *concurrency); err != nil {
 			fatalf("reset fixtures: %v", err)
 		}
-		fmt.Printf("benchfixture: reset %d existing accounts from %s with profile %s\n", len(fixtures), *resetInput, *profile)
+		if *profile == "mixed" {
+			// Older reusable fixture files only contained a single task_id/mail_id.
+			// Reset now discovers every current-day task and the three independent
+			// mail IDs, so persist that metadata before servicebench consumes it.
+			// Without this refresh, a second TaskClaim cycle falls back to task 4
+			// and reports a false ERR_TASK_ALREADY_CLAIMED saturation signal.
+			resetFile.TimeProfile = *timeProfile
+			if err := writeFixtures(*resetInput, resetFile); err != nil {
+				fatalf("refresh mixed reset fixture metadata: %v", err)
+			}
+		}
+		fmt.Printf("benchfixture: reset %d existing accounts from %s with profile %s\n", len(resetFile.Accounts), *resetInput, *profile)
 		return
 	}
 
@@ -158,6 +209,8 @@ func main() {
 					continue
 				}
 				var auth authResponse
+				var taskIDs []int
+				var mailReadID, mailClaimID, mailDeleteID string
 				var err error
 				if directStorage != nil {
 					uid := *uidBase + uint64(index)
@@ -170,6 +223,11 @@ func main() {
 						} else {
 							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile, *timeProfile)
 						}
+						if err == nil && *profile == "mixed" {
+							taskIDs, mailReadID, mailClaimID, mailDeleteID, err = prepareMixedAuxiliary(
+								context.Background(), directStorage, directDB, uid,
+							)
+						}
 					}
 				} else {
 					auth, err = register(strings.TrimRight(*baseURL, "/"), username, *password)
@@ -181,7 +239,8 @@ func main() {
 				fixtures[index] = fixture{
 					Username: username, Password: *password, UID: auth.UID, Token: auth.Token, WSURL: auth.WSURL,
 					OwnerUID: "0", PlotIndex: 0, PlotIndexes: fixturePlotIndexes(*profile),
-					CropID: 1, ItemID: 1, Quantity: 1, TaskID: 1, MailID: "1",
+					CropID: 1, ItemID: 1, Quantity: 1, TaskID: 4, TaskIDs: taskIDs,
+					MailID: mailReadID, MailReadID: mailReadID, MailClaimID: mailClaimID, MailDeleteID: mailDeleteID,
 				}
 				if done := completed.Add(1); done%250 == 0 {
 					fmt.Printf("benchfixture: registered %d/%d\n", done, *count)
@@ -200,16 +259,20 @@ func main() {
 	for err := range errs {
 		fatalf("%v", err)
 	}
-	for index := range fixtures {
-		peer := fixtures[(index+1)%len(fixtures)]
-		fixtures[index].PeerUID = peer.UID
-		fixtures[index].PeerUsername = peer.Username
-		fixtures[index].FromUID = peer.UID
-		if *profile == "water-visitor" {
-			fixtures[index].OwnerUID = peer.UID
+	if *profile == "mixed" {
+		assignMixedPeers(fixtures)
+	} else {
+		for index := range fixtures {
+			peer := fixtures[(index+1)%len(fixtures)]
+			fixtures[index].PeerUID = peer.UID
+			fixtures[index].PeerUsername = peer.Username
+			fixtures[index].FromUID = peer.UID
+			if *profile == "water-visitor" {
+				fixtures[index].OwnerUID = peer.UID
+			}
 		}
 	}
-	if directStorage != nil && (*profile == "steal" || *profile == "water-visitor") {
+	if directStorage != nil && (*profile == "steal" || *profile == "water-visitor" || *profile == "mixed") {
 		seen := make(map[[2]uint64]struct{}, len(fixtures))
 		for _, item := range fixtures {
 			uid, err := strconv.ParseUint(item.UID, 10, 64)
@@ -234,25 +297,47 @@ func main() {
 		}
 	}
 
-	file, err := os.Create(*output)
-	if err != nil {
-		fatalf("create output: %v", err)
-	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(fixtureFile{TimeProfile: *timeProfile, Accounts: fixtures}); err != nil {
-		_ = file.Close()
-		fatalf("encode output: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		fatalf("close output: %v", err)
+	if err := writeFixtures(*output, fixtureFile{TimeProfile: *timeProfile, Accounts: fixtures}); err != nil {
+		fatalf("write output: %v", err)
 	}
 	fmt.Printf("benchfixture: generated %d accounts in %s\n", len(fixtures), *output)
 }
 
+func assignMixedPeers(fixtures []fixture) {
+	if len(fixtures) < 2 {
+		return
+	}
+	localEnd := len(fixtures) * 3 / 5
+	visitorCount := len(fixtures) - localEnd
+	for index := range fixtures {
+		peerIndex := (index + 1) % max(localEnd, 1)
+		if index >= localEnd && visitorCount > 1 {
+			peerIndex = localEnd + (index-localEnd+1)%visitorCount
+		}
+		peer := fixtures[peerIndex]
+		fixtures[index].PeerUID = peer.UID
+		fixtures[index].PeerUsername = peer.Username
+		fixtures[index].FromUID = peer.UID
+	}
+}
+
+func writeFixtures(path string, value fixtureFile) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(value); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 func validFixtureProfile(profile string) bool {
 	switch profile {
-	case "default", "water", "water-visitor", "harvest", "sell", "hot-economy", "steal":
+	case "default", "water", "water-visitor", "harvest", "sell", "hot-economy", "steal", "mixed":
 		return true
 	default:
 		return false
@@ -269,7 +354,7 @@ func fixtureTimeProfileDefault() string {
 
 func fixturePlotIndexes(profile string) []int {
 	switch profile {
-	case "water", "water-visitor", "harvest", "steal":
+	case "water", "water-visitor", "harvest", "steal", "mixed":
 		indexes := make([]int, gameconfig.MaxPlots)
 		for index := range indexes {
 			indexes[index] = index
@@ -281,21 +366,48 @@ func fixturePlotIndexes(profile string) []int {
 }
 
 func readFixtures(path string) ([]fixture, error) {
-	data, err := os.ReadFile(path)
+	decoded, err := readFixtureFile(path)
 	if err != nil {
 		return nil, err
-	}
-	var decoded fixtureFile
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return nil, err
-	}
-	if len(decoded.Accounts) < 2 {
-		return nil, errors.New("fixture requires at least two accounts")
 	}
 	return decoded.Accounts, nil
 }
 
-func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfile string, concurrency int) error {
+func readFixtureFile(path string) (fixtureFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fixtureFile{}, err
+	}
+	var decoded fixtureFile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return fixtureFile{}, err
+	}
+	if len(decoded.Accounts) < 2 {
+		return fixtureFile{}, errors.New("fixture requires at least two accounts")
+	}
+	return decoded, nil
+}
+
+func selectFixtureAccounts(input fixtureFile, offset, limit int) (fixtureFile, error) {
+	if offset < 0 || limit < 0 {
+		return fixtureFile{}, errors.New("fixture offset and limit must not be negative")
+	}
+	if offset >= len(input.Accounts) {
+		return fixtureFile{}, fmt.Errorf("fixture offset %d exceeds %d accounts", offset, len(input.Accounts))
+	}
+	end := len(input.Accounts)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	selected := append([]fixture(nil), input.Accounts[offset:end]...)
+	if len(selected) < 2 {
+		return fixtureFile{}, errors.New("selected fixture requires at least two accounts")
+	}
+	input.Accounts = selected
+	return input, nil
+}
+
+func resetFixtures(storage *store.Store, directDB *sql.DB, fixtures []fixture, profile, timeProfile string, concurrency int) error {
 	if storage == nil {
 		return errors.New("reset fixture storage is nil")
 	}
@@ -305,7 +417,7 @@ func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfil
 	concurrency = min(concurrency, len(fixtures))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	jobs := make(chan fixture)
+	jobs := make(chan int)
 	errs := make(chan error, concurrency)
 	var completed atomic.Int64
 	var workers sync.WaitGroup
@@ -313,10 +425,11 @@ func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfil
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			for item := range jobs {
+			for index := range jobs {
 				if ctx.Err() != nil {
 					return
 				}
+				item := &fixtures[index]
 				uid, err := strconv.ParseUint(item.UID, 10, 64)
 				if err != nil || uid == 0 {
 					errs <- fmt.Errorf("invalid fixture uid %q", item.UID)
@@ -341,7 +454,21 @@ func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfil
 					cancel()
 					return
 				}
-				if (profile == "steal" || profile == "water-visitor") && item.PeerUID != "" {
+				item.PlotIndexes = fixturePlotIndexes(profile)
+				item.PlotIndex = 0
+				item.CropID = 1
+				item.ItemID = 1
+				item.Quantity = 1
+				if profile == "mixed" {
+					taskIDs, mailReadID, mailClaimID, mailDeleteID, auxiliaryErr := prepareMixedAuxiliary(ctx, storage, directDB, uid)
+					if auxiliaryErr != nil {
+						errs <- auxiliaryErr
+						cancel()
+						return
+					}
+					applyMixedAuxiliaryMetadata(item, taskIDs, mailReadID, mailClaimID, mailDeleteID)
+				}
+				if (profile == "steal" || profile == "water-visitor" || profile == "mixed") && item.PeerUID != "" {
 					peerUID, parseErr := strconv.ParseUint(item.PeerUID, 10, 64)
 					if parseErr != nil || peerUID == 0 {
 						errs <- fmt.Errorf("invalid fixture peer uid %q", item.PeerUID)
@@ -362,9 +489,9 @@ func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfil
 	}
 	go func() {
 		defer close(jobs)
-		for _, item := range fixtures {
+		for index := range fixtures {
 			select {
-			case jobs <- item:
+			case jobs <- index:
 			case <-ctx.Done():
 				return
 			}
@@ -373,6 +500,27 @@ func resetFixtures(storage *store.Store, fixtures []fixture, profile, timeProfil
 	workers.Wait()
 	close(errs)
 	return <-errs
+}
+
+func applyMixedAuxiliaryMetadata(
+	item *fixture,
+	taskIDs []int,
+	mailReadID, mailClaimID, mailDeleteID string,
+) {
+	if item == nil {
+		return
+	}
+	item.TaskIDs = append(item.TaskIDs[:0], taskIDs...)
+	if len(item.TaskIDs) > 0 {
+		item.TaskID = item.TaskIDs[0]
+	}
+	item.MailReadID = mailReadID
+	item.MailClaimID = mailClaimID
+	item.MailDeleteID = mailDeleteID
+	// Keep the legacy field useful for older single-mail benchmark commands.
+	if item.MailID == "" {
+		item.MailID = mailReadID
+	}
 }
 
 func prepareDirectFixture(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {
@@ -455,10 +603,106 @@ func prepareAggregateProfile(aggregate *farm.Aggregate, profile, timeProfile str
 		// window so business rejections cannot be mistaken for saturation.
 		aggregate.Coin = 1_000_000_000
 		aggregate.AddItem(farm.FruitItem(crop.ID), 1_000_000)
+	case "mixed":
+		// One aggregate carries independent legal states for every local/cross
+		// operation in the normal-v1 mix. Growing plots can each accept Water,
+		// Weed, Pest and Fertilize once; the other state transitions use disjoint
+		// plots so their benchmark arrivals do not invalidate one another.
+		duration := gameconfig.SeasonDurationMs(crop, 0, timeProfile)
+		if duration <= 0 {
+			return fmt.Errorf("invalid fixture time profile %q", timeProfile)
+		}
+		aggregate.UnlockedPlots = uint8(gameconfig.MaxPlots)
+		aggregate.Coin = 1_000_000_000
+		aggregate.AddItem(farm.SeedItem(crop.ID), 1_000_000)
+		aggregate.AddItem(farm.FertilizerItem(1), 1_000_000)
+		aggregate.AddItem(farm.FruitItem(crop.ID), 1_000_000)
+		aggregate.AddItem(farm.DogFoodItem(), 1_000_000)
+		aggregate.Pet = farm.PetState{ActiveDog: farm.DogMutt, Owned: 0b111}
+		for index := 0; index < 6; index++ {
+			aggregate.Plots[index] = farm.Plot{
+				State: farm.StateGrowing, SeasonTotal: crop.Seasons, StageCount: stageCount,
+				CropID: crop.ID, PlantNonce: uint32(index + 1), SeasonStartAt: now,
+				SeasonDuration: duration, MatureAt: now + duration, LastSettleAt: now,
+				WeedSince: now - 1, PestSince: now - 1,
+			}
+		}
+		for index := 6; index < 11; index++ {
+			aggregate.Plots[index] = farm.Plot{
+				State: farm.StateMature, SeasonTotal: crop.Seasons, StageCount: stageCount,
+				CropID: crop.ID, FinalYield: crop.Yield, PlantNonce: uint32(index + 1),
+				HarvestRound: 1, SeasonStartAt: now - 1, SeasonDuration: 1,
+				MatureAt: now - 1, LastSettleAt: now - 1,
+			}
+		}
+		for index := 11; index < 13; index++ {
+			aggregate.Plots[index] = farm.NewWastelandPlot()
+		}
+		for index := 13; index < 15; index++ {
+			aggregate.Plots[index] = farm.Plot{State: farm.StateResidue}
+		}
+		for index := 15; index < 18; index++ {
+			aggregate.Plots[index] = farm.Plot{State: farm.StateTilled}
+		}
 	default:
 		return fmt.Errorf("unsupported stateful fixture profile %q", profile)
 	}
 	return nil
+}
+
+func prepareMixedAuxiliary(
+	ctx context.Context,
+	storage *store.Store,
+	directDB *sql.DB,
+	uid uint64,
+) (taskIDs []int, mailReadID, mailClaimID, mailDeleteID string, err error) {
+	if storage == nil || directDB == nil || uid == 0 || uid > (^uint64(0)-3)/10 {
+		return nil, "", "", "", errors.New("invalid mixed auxiliary fixture arguments")
+	}
+	dayKey := gameconfig.LocalDayKey(time.Now().UnixMilli())
+	if _, err := directDB.ExecContext(ctx, `DELETE FROM player_task WHERE uid = ? AND logic_day = ?`, uid, dayKey); err != nil {
+		return nil, "", "", "", fmt.Errorf("reset mixed tasks %d: %w", uid, err)
+	}
+	tasks, err := storage.ListTasks(ctx, uid, dayKey)
+	if err != nil {
+		return nil, "", "", "", fmt.Errorf("list mixed tasks %d: %w", uid, err)
+	}
+	taskIDs = make([]int, 0, len(tasks))
+	for _, task := range tasks {
+		if _, err := storage.AdvanceTask(ctx, uid, dayKey, task.ID, max(task.Target, 1)); err != nil {
+			return nil, "", "", "", fmt.Errorf("seed mixed task %d/%d: %w", uid, task.ID, err)
+		}
+		taskIDs = append(taskIDs, int(task.ID))
+	}
+
+	readID, claimID, deleteID := uid*10+1, uid*10+2, uid*10+3
+	if _, err := directDB.ExecContext(ctx, `DELETE FROM mail WHERE uid = ?`, uid); err != nil {
+		return nil, "", "", "", fmt.Errorf("reset mixed mails %d: %w", uid, err)
+	}
+	now := time.Now().UnixMilli()
+	if _, err := directDB.ExecContext(ctx, `
+		INSERT INTO mail (id, uid, title, attachment_coin, claimed_at, read_at, created_at)
+		VALUES (?, ?, 'mixed-read', 0, NULL, NULL, ?),
+		       (?, ?, 'mixed-claim', 100, NULL, NULL, ?),
+		       (?, ?, 'mixed-delete', 0, NULL, NULL, ?)`,
+		readID, uid, now, claimID, uid, now+1, deleteID, uid, now+2,
+	); err != nil {
+		return nil, "", "", "", fmt.Errorf("seed mixed mails %d: %w", uid, err)
+	}
+	// Marking once goes through Store's real cross-process invalidation channel.
+	// The direct UPDATE then restores unread fixture state without leaving an old
+	// MailList value in either Farm's local cache or Redis's versioned cache.
+	if _, err := storage.MarkMailsRead(ctx, uid, 0); err != nil {
+		return nil, "", "", "", fmt.Errorf("invalidate mixed mailbox %d: %w", uid, err)
+	}
+	if _, err := directDB.ExecContext(ctx, `UPDATE mail SET read_at = NULL WHERE uid = ?`, uid); err != nil {
+		return nil, "", "", "", fmt.Errorf("restore mixed mail state %d: %w", uid, err)
+	}
+	return taskIDs,
+		strconv.FormatUint(readID, 10),
+		strconv.FormatUint(claimID, 10),
+		strconv.FormatUint(deleteID, 10),
+		nil
 }
 
 func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {

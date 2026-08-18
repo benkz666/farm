@@ -1,0 +1,52 @@
+配置10k容量资源档...
+deployment.apps/k6 scaled
+deployment.apps/gateway scaled
+deployment.apps/farm scaled
+deployment.apps/social scaled
+statefulset.apps/mysql patched (no change)
+deployment "k6" successfully rolled out
+deployment "gateway" successfully rolled out
+deployment "farm" successfully rolled out
+deployment "social" successfully rolled out
+partitioned roll out complete: 1 new pods have been updated...
+partitioned roll out complete: 1 new pods have been updated...
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+gateway   1/1     1            1           3d11h
+farm      1/1     1            1           3d11h
+social    1/1     1            1           3d11h
+k6        3/3     3            3           3d11h
+NAME    READY   AGE
+mysql   1/1     3d11h
+redis   1/1     3d11h
+复用上一轮未进入C窗口的合法夹具，跳过重复重置
+deployment.apps/farm restarted
+deployment.apps/gateway restarted
+deployment.apps/social restarted
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 of 1 updated replicas are available...
+deployment "farm" successfully rolled out
+deployment "gateway" successfully rolled out
+deployment "social" successfully rolled out
+A窗口：空载15s...
+启动3个发压分片：QPS=3334/3333/3333，每分片40000连接、40000 Actor；全部就绪后统一释放C窗口
+三个分片已就绪，统一C窗口开始=1786904323509
+叠加独立账号会话流量：总QPS=102，账号偏移=40000
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+完成：/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "target_qps": 3334,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "target_qps": 3333,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:      "target_qps": 3333,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:  "target_qps": 10000,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/slo.json:  "verdict": "fail"
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/client-merged.json:  "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/module-isolation-20260817/gateway-v8/unit-10k-qps-10000/client-merged.json:  "target_qps": 10000

@@ -1,0 +1,82 @@
+{
+  "interface_slo": "pass",
+  "limitations": [
+    "The 10k interface SLO passed.",
+    "The measured Journal/Projection lag drained 47.699 seconds after load; no additional sustainability rerun is included by current scope.",
+    "Storage capacity, IOPS, registration and server push remain separate constraints."
+  ],
+  "planning_utilization": 0.7,
+  "production_scale_factor": 33.333333,
+  "selected_standard_unit": {
+    "business_qps": 10000,
+    "connections": 120000,
+    "resident_actors": 162600
+  },
+  "services": {
+    "farm": {
+      "complete_cpu_milliseconds_per_request": 0.22692343990945157,
+      "fixed_cpu_cores": 0.01333155581544307,
+      "planned_cpu_cores": 109.08148780514816,
+      "planned_memory_mib": 247909.93241704247,
+      "required_cpu_cores_before_headroom": 76.35704146360371,
+      "required_memory_mib_before_headroom": 173536.9526919297,
+      "unit_memory_baseline_mib": 21.58984375,
+      "unit_memory_peak_mib": 5227.05078125,
+      "unit_state_cpu_cores": 0.0210769210422456,
+      "unit_variable_memory_mib": 5205.4609375
+    },
+    "gateway": {
+      "complete_cpu_milliseconds_per_request": 0.18546783184339366,
+      "fixed_cpu_cores": 0.0,
+      "planned_cpu_cores": 123.44466400503572,
+      "planned_memory_mib": 385651.45075671887,
+      "required_cpu_cores_before_headroom": 86.411264803525,
+      "required_memory_mib_before_headroom": 269956.0155297032,
+      "unit_memory_baseline_mib": 9.6640625,
+      "unit_memory_peak_mib": 8108.0546875,
+      "unit_state_cpu_cores": 0.737659651595193,
+      "unit_variable_memory_mib": 8098.390625
+    },
+    "mysql": {
+      "complete_cpu_milliseconds_per_request": 0.10075667644007504,
+      "fixed_cpu_cores": 0.015339333730307419,
+      "planned_cpu_cores": 48.17894471681299,
+      "planned_memory_mib": 171112.31043229913,
+      "required_cpu_cores_before_headroom": 33.725261301769095,
+      "required_memory_mib_before_headroom": 119778.61730260939,
+      "unit_memory_baseline_mib": 1081.22265625,
+      "unit_memory_peak_mib": 4642.14453125,
+      "unit_state_cpu_cores": 0.003730904753389927,
+      "unit_variable_memory_mib": 3560.921875
+    },
+    "redis": {
+      "complete_cpu_milliseconds_per_request": 0.08689188894812014,
+      "fixed_cpu_cores": 0.014357322143740333,
+      "planned_cpu_cores": 58.979118605511424,
+      "planned_memory_mib": 9067.607800703126,
+      "required_cpu_cores_before_headroom": 41.285383023857996,
+      "required_memory_mib_before_headroom": 6347.325460492188,
+      "unit_memory_baseline_mib": 313.2109375,
+      "unit_memory_peak_mib": 494.234375,
+      "unit_state_cpu_cores": 0.36921189395153403,
+      "unit_variable_memory_mib": 181.0234375
+    },
+    "social": {
+      "complete_cpu_milliseconds_per_request": 0.04811727220966113,
+      "fixed_cpu_cores": 0.0,
+      "planned_cpu_cores": 22.928945942066346,
+      "planned_memory_mib": 3789.3210190625005,
+      "required_cpu_cores_before_headroom": 16.05026215944644,
+      "required_memory_mib_before_headroom": 2652.52471334375,
+      "unit_memory_baseline_mib": 28.56640625,
+      "unit_memory_peak_mib": 107.28515625,
+      "unit_state_cpu_cores": 0.0003351475018605986,
+      "unit_variable_memory_mib": 78.71875
+    }
+  },
+  "totals": {
+    "planned_cpu_cores": 362.61316107457463,
+    "planned_cpu_cores_rounded_per_service": 365,
+    "planned_memory_mib": 817530.6224258261
+  }
+}

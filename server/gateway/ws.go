@@ -36,6 +36,10 @@ var responseEnvelopePool = sync.Pool{New: func() any {
 	return &buffer
 }}
 
+var transportResponsePool = sync.Pool{New: func() any {
+	return new(clientwire.WireResponse)
+}}
+
 const (
 	maxWSMessageSize         = 64 << 10
 	wsReadTimeout            = 90 * time.Second
@@ -145,7 +149,7 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		responses := make([]*publicv3.WireEnvelope, 0, len(requests))
+		responses := make([]*clientwire.WireResponse, 0, len(requests))
 		postPushes := make([]*publicv3.WireEnvelope, 0, 4)
 		releaseEnter := false
 		enableAfterHandshake := false
@@ -154,7 +158,7 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 			handledAt := time.Now()
 			response, pushes, disconnect := g.dispatchWireRequest(r.Context(), &connection, request)
 			if response == nil {
-				response = wireError(request, errcode.Internal)
+				response = typedWireResponse(wireError(request, errcode.Internal))
 			}
 			if g.metrics != nil {
 				g.metrics.ObserveWSRequest(request.GetCmd(), uint32(response.GetErr()), time.Since(handledAt))
@@ -198,9 +202,9 @@ func (g *Gateway) serveWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (g *Gateway) dispatchWireRequest(ctx context.Context, connection *wsConnection, request *publicv3.WireEnvelope) (*publicv3.WireEnvelope, []*publicv3.WireEnvelope, bool) {
+func (g *Gateway) dispatchWireRequest(ctx context.Context, connection *wsConnection, request *publicv3.WireEnvelope) (*clientwire.WireResponse, []*publicv3.WireEnvelope, bool) {
 	if !validClientEnvelope(request) {
-		return wireError(request, errcode.BadRequest), nil, false
+		return typedWireResponse(wireError(request, errcode.BadRequest)), nil, false
 	}
 	if !g.disableWSRateLimit && !connection.limiter.Allow() {
 		if g.metrics != nil {
@@ -210,73 +214,97 @@ func (g *Gateway) dispatchWireRequest(ctx context.Context, connection *wsConnect
 		if disconnect {
 			connection.setDisconnectReason("rate_limit")
 		}
-		return wireError(request, errcode.RateLimited), nil, disconnect
+		return typedWireResponse(wireError(request, errcode.RateLimited)), nil, disconnect
 	}
 	if !connection.authed {
 		if request.Cmd != CommandHandshake {
-			return wireError(request, errcode.Unauthorized), nil, false
+			return typedWireResponse(wireError(request, errcode.Unauthorized)), nil, false
 		}
-		return g.handleHandshake(connection, request), nil, false
+		return typedWireResponse(g.handleHandshake(connection, request)), nil, false
 	}
 	if !g.validateAuthenticatedConnection(context.Background(), connection) {
 		connection.setDisconnectReason("session_replaced")
 		if connection.metrics != nil {
 			connection.metrics.ObserveWSSessionReplacement()
 		}
-		return wireError(request, errcode.Kicked), nil, true
+		return typedWireResponse(wireError(request, errcode.Kicked)), nil, true
 	}
 
 	switch request.Cmd {
 	case CommandHandshake:
-		return wireError(request, errcode.BadRequest), nil, false
+		return typedWireResponse(wireError(request, errcode.BadRequest)), nil, false
 	case CommandPing:
 		payload := request.GetCommandRequest()
-		return wireCommandResponse(request, errcode.OK, &publicv3.CommandResponse{
+		return typedWireResponse(wireCommandResponse(request, errcode.OK, &publicv3.CommandResponse{
 			ClientTime: payload.ClientTime, ServerTime: g.Now(),
-		}), nil, false
+		})), nil, false
 	case CommandLeaveFarm:
 		g.leaveFarm(connection)
-		return wireCommandResponse(request, errcode.OK, &publicv3.CommandResponse{}), nil, false
+		return typedWireResponse(wireCommandResponse(request, errcode.OK, &publicv3.CommandResponse{})), nil, false
 	case CommandSetTimeProfile:
-		return g.handleDebugWire(ctx, request), nil, false
+		return typedWireResponse(g.handleDebugWire(ctx, request)), nil, false
 	}
 
-	callCtx, cancel := context.WithTimeout(ctx, downstreamTimeout)
-	defer cancel()
 	if isSocialCommand(request.Cmd) {
+		callCtx, cancel := context.WithTimeout(ctx, downstreamTimeout)
+		defer cancel()
 		rpcResponse, err := g.executeSocialRPC(callCtx, g.clientCommandRequest(connection, request, connection.uid))
 		if err != nil {
-			return wireError(request, errcode.Internal), nil, false
+			return typedWireResponse(wireError(request, errcode.Internal)), nil, false
 		}
-		return rpcResponse.Envelope, rpcResponse.Pushes, false
+		return downstreamWireResponse(rpcResponse), rpcResponse.Pushes, false
 	}
 	if !isFarmCommand(request.Cmd) {
-		return wireError(request, errcode.BadRequest), nil, false
+		return typedWireResponse(wireError(request, errcode.BadRequest)), nil, false
 	}
 
 	routeUID, enterOwner, code := farmRoute(connection, request)
 	if code != errcode.OK {
-		return wireError(request, code), nil, false
+		return typedWireResponse(wireError(request, code)), nil, false
+	}
+	if request.Cmd == CommandSyncFarm {
+		if local, ok := g.localCaughtUpSelfSync(connection, request, routeUID, time.Now()); ok {
+			return downstreamWireResponse(local), nil, false
+		}
 	}
 	preSubscribed := false
 	if request.Cmd == CommandEnterFarm {
 		if err := g.enterRoom(connection, enterOwner); err != nil {
-			return wireError(request, errcode.Internal), nil, false
+			return typedWireResponse(wireError(request, errcode.Internal)), nil, false
 		}
 		preSubscribed = true
 	}
+	callCtx, cancel := context.WithTimeout(ctx, downstreamTimeout)
+	defer cancel()
 	rpcResponse, err := g.executeFarmRPC(callCtx, routeUID, g.clientCommandRequest(connection, request, routeUID))
 	if err != nil {
 		if preSubscribed {
 			g.leaveFarm(connection)
 		}
-		return wireError(request, errcode.Internal), nil, false
+		return typedWireResponse(wireError(request, errcode.Internal)), nil, false
 	}
 	if preSubscribed && rpcResponse.Envelope.Err != int32(errcode.OK) {
 		g.leaveFarm(connection)
 	}
 	g.applyRoomDirective(connection, rpcResponse)
-	return rpcResponse.Envelope, rpcResponse.Pushes, false
+	return downstreamWireResponse(rpcResponse), rpcResponse.Pushes, false
+}
+
+func typedWireResponse(envelope *publicv3.WireEnvelope) *clientwire.WireResponse {
+	response := transportResponsePool.Get().(*clientwire.WireResponse)
+	response.Envelope = envelope
+	return response
+}
+
+func downstreamWireResponse(response *farmv1.ClientCommandResponse) *clientwire.WireResponse {
+	if response == nil {
+		return nil
+	}
+	transport := transportResponsePool.Get().(*clientwire.WireResponse)
+	transport.Envelope = response.Envelope
+	transport.PreparedPayload = response.PreparedPayload
+	transport.PreparedField = response.PreparedField
+	return transport
 }
 
 func (g *Gateway) handleHandshake(connection *wsConnection, request *publicv3.WireEnvelope) *publicv3.WireEnvelope {
@@ -369,6 +397,41 @@ func farmRoute(connection *wsConnection, request *publicv3.WireEnvelope) (routeU
 	}
 }
 
+// localCaughtUpSelfSync restores the transport-level fast path that was lost
+// when Gateway business behavior moved into Farm. It never reads an aggregate,
+// Redis or MySQL and is restricted to the authenticated player's own room. A
+// short freshness lease forces periodic authoritative Farm Syncs, where lazy
+// time advancement and delta recovery still happen.
+func (g *Gateway) localCaughtUpSelfSync(
+	connection *wsConnection,
+	request *publicv3.WireEnvelope,
+	ownerUID uint64,
+	observedAt time.Time,
+) (*farmv1.ClientCommandResponse, bool) {
+	if g == nil || connection == nil || request == nil || ownerUID == 0 ||
+		connection.uid != ownerUID {
+		return nil, false
+	}
+	payload := request.GetSyncFarmRequest()
+	if payload == nil || payload.OwnerUid != 0 && payload.OwnerUid != ownerUID {
+		return nil, false
+	}
+	farmSeq, ok := connection.matchesFreshRoomWatermark(ownerUID, payload.FromSeq, observedAt)
+	if !ok {
+		return nil, false
+	}
+	prepared := clientwire.MarshalSyncFarmCaughtUpPayload(
+		farmSeq, g.Now(), g.TimeProfile(), false,
+	)
+	return &farmv1.ClientCommandResponse{
+		Envelope: &publicv3.WireEnvelope{
+			Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: int32(errcode.OK),
+		},
+		RoomUid: ownerUID, RoomSeq: farmSeq,
+		PreparedPayload: prepared, PreparedField: clientwire.PreparedSyncFarmResponse,
+	}, true
+}
+
 func (g *Gateway) applyRoomDirective(connection *wsConnection, response *farmv1.ClientCommandResponse) {
 	if response == nil {
 		return
@@ -408,13 +471,14 @@ func wireCommandResponse(request *publicv3.WireEnvelope, code errcode.Code, resp
 }
 
 func (connection *wsConnection) respondWire(envelope *publicv3.WireEnvelope) error {
-	return connection.respondWireBatch([]*publicv3.WireEnvelope{envelope})
+	return connection.respondWireBatch([]*clientwire.WireResponse{typedWireResponse(envelope)})
 }
 
-func (connection *wsConnection) respondWireBatch(envelopes []*publicv3.WireEnvelope) error {
+func (connection *wsConnection) respondWireBatch(responses []*clientwire.WireResponse) error {
+	defer releaseTransportResponses(responses)
 	pooled := responseEnvelopePool.Get().(*[]byte)
 	buffer := (*pooled)[:0]
-	data, err := clientwire.AppendWireBatch(buffer, envelopes)
+	data, err := clientwire.AppendWireResponses(buffer, responses)
 	if err != nil {
 		releaseResponseEnvelope(pooled, buffer)
 		return err
@@ -422,6 +486,18 @@ func (connection *wsConnection) respondWireBatch(envelopes []*publicv3.WireEnvel
 	err = connection.writeResponse(data)
 	releaseResponseEnvelope(pooled, data)
 	return err
+}
+
+func releaseTransportResponses(responses []*clientwire.WireResponse) {
+	for _, response := range responses {
+		if response == nil {
+			continue
+		}
+		response.Envelope = nil
+		response.PreparedPayload = nil
+		response.PreparedField = 0
+		transportResponsePool.Put(response)
+	}
 }
 
 func releaseResponseEnvelope(pooled *[]byte, buffer []byte) {

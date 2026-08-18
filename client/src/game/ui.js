@@ -63,6 +63,9 @@ export class UI {
     this.activePanel = null;
     this.readOnly = false;
     this.lastHUDSignature = null;
+    this.lastClockIcon = null;
+    this.lastTooltipHTML = null;
+    this.tooltipSize = { width: 0, height: 0 };
     this.toastWrap = $('#toast-wrap');
     this.tooltip = $('#tooltip');
 
@@ -111,7 +114,11 @@ export class UI {
     $('#btn-expand').classList.toggle('hidden', !canExpandLand(state, this.readOnly));
   }
 
-  setClock(icon) { $('#clock-chip').textContent = icon; }
+  setClock(icon) {
+    if (icon === this.lastClockIcon) return;
+    this.lastClockIcon = icon;
+    $('#clock-chip').textContent = icon;
+  }
 
   // ---------------- 工具栏 ----------------
   renderToolbar(tools, active) {
@@ -216,13 +223,26 @@ export class UI {
   showTooltip(html, x, y) {
     const t = this.tooltip;
     if (!html) { t.classList.add('hidden'); return; }
-    t.innerHTML = html;
+    const contentChanged = html !== this.lastTooltipHTML;
+    if (contentChanged) {
+      this.lastTooltipHTML = html;
+      t.innerHTML = html;
+    }
     t.classList.remove('hidden');
-    const w = t.offsetWidth, h = t.offsetHeight;
+    if (contentChanged || !this.tooltipSize.width || !this.tooltipSize.height) {
+      this.tooltipSize = { width: t.offsetWidth, height: t.offsetHeight };
+    }
+    this.moveTooltip(x, y);
+  }
+
+  moveTooltip(x, y) {
+    const t = this.tooltip;
+    if (t.classList.contains('hidden')) return;
+    const { width: w, height: h } = this.tooltipSize;
     let px = x + 18, py = y + 14;
     if (px + w > innerWidth - 12) px = x - w - 14;
     if (py + h > innerHeight - 12) py = y - h - 12;
-    t.style.left = px + 'px'; t.style.top = py + 'px';
+    t.style.transform = `translate3d(${Math.round(px)}px, ${Math.round(py)}px, 0)`;
   }
 
   // ---------------- 模态 ----------------

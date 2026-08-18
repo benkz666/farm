@@ -1,0 +1,1505 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Client drain time is diagnostic only; making it a pass/fail gate would add an undeclared maximum-latency SLO on top of P90/P99.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "screening",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 7,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.025712449110777802,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 410.075769,
+          "p99_ms": 667.554949,
+          "pass": false,
+          "sent": 960,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.025712449110777802,
+          "error_rate": 0.003125,
+          "expected_weight": 0.024,
+          "p90_ms": 445.298692,
+          "p99_ms": 670.407757,
+          "pass": false,
+          "sent": 960,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.025664380625803687,
+          "error_rate": 0.0041753653444676405,
+          "expected_weight": 0.024,
+          "p90_ms": 450.721508,
+          "p99_ms": 669.776794,
+          "pass": false,
+          "sent": 958,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2878,
+      "succeeded": 2871,
+      "technical_error_rate": 0.002432244614315497,
+      "worst_p90_ms": 450.721508,
+      "worst_p99_ms": 670.407757
+    },
+    "clear": {
+      "failed": 7,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.027105206770944933,
+          "error_rate": 0.0009881422924901185,
+          "expected_weight": 0.026,
+          "p90_ms": 311.623547,
+          "p99_ms": 530.45041,
+          "pass": false,
+          "sent": 1012,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.027105206770944933,
+          "error_rate": 0.0009881422924901185,
+          "expected_weight": 0.026,
+          "p90_ms": 358.766771,
+          "p99_ms": 555.45769,
+          "pass": false,
+          "sent": 1012,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.027111015859408488,
+          "error_rate": 0.004940711462450593,
+          "expected_weight": 0.026,
+          "p90_ms": 352.614686,
+          "p99_ms": 549.942,
+          "pass": false,
+          "sent": 1012,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 3036,
+      "succeeded": 3029,
+      "technical_error_rate": 0.00230566534914361,
+      "worst_p90_ms": 358.766771,
+      "worst_p99_ms": 555.45769
+    },
+    "codex-list": {
+      "failed": 4,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02126633811870581,
+          "error_rate": 0.0025188916876574307,
+          "expected_weight": 0.022,
+          "p90_ms": 360.264632,
+          "p99_ms": 509.419979,
+          "pass": false,
+          "sent": 794,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.02126633811870581,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 426.457467,
+          "p99_ms": 545.378385,
+          "pass": false,
+          "sent": 794,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.02127089584226318,
+          "error_rate": 0.0025188916876574307,
+          "expected_weight": 0.022,
+          "p90_ms": 382.833576,
+          "p99_ms": 528.193917,
+          "pass": false,
+          "sent": 794,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2382,
+      "succeeded": 2378,
+      "technical_error_rate": 0.0016792611251049538,
+      "worst_p90_ms": 426.457467,
+      "worst_p99_ms": 545.378385
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.0516927362331262,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 164.601268,
+          "p99_ms": 624.698518,
+          "pass": false,
+          "sent": 1930,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.0516927362331262,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 177.307637,
+          "p99_ms": 608.188654,
+          "pass": false,
+          "sent": 1930,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.05167702528932705,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 170.06255,
+          "p99_ms": 611.50675,
+          "pass": false,
+          "sent": 1929,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 5789,
+      "succeeded": 5789,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 177.307637,
+      "worst_p99_ms": 624.698518
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.010338547246625241,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 329.172075,
+          "p99_ms": 546.518956,
+          "pass": false,
+          "sent": 386,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.010338547246625241,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 382.337488,
+          "p99_ms": 619.0716,
+          "pass": false,
+          "sent": 386,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.01034076296613802,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 355.356807,
+          "p99_ms": 551.158558,
+          "pass": false,
+          "sent": 386,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 1158,
+      "succeeded": 1158,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 382.337488,
+      "worst_p99_ms": 619.0716
+    },
+    "fertilize": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.031256695950289265,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 347.922744,
+          "p99_ms": 456.94966,
+          "pass": false,
+          "sent": 1167,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.031256695950289265,
+          "error_rate": 0.000856898029134533,
+          "expected_weight": 0.031,
+          "p90_ms": 412.934197,
+          "p99_ms": 535.516043,
+          "pass": false,
+          "sent": 1167,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.031263394770681525,
+          "error_rate": 0.000856898029134533,
+          "expected_weight": 0.031,
+          "p90_ms": 377.964898,
+          "p99_ms": 525.117485,
+          "pass": false,
+          "sent": 1167,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 3501,
+      "succeeded": 3499,
+      "technical_error_rate": 0.0005712653527563553,
+      "worst_p90_ms": 412.934197,
+      "worst_p99_ms": 535.516043
+    },
+    "friend-list": {
+      "failed": 15,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.05520141418470109,
+          "error_rate": 0.002911208151382824,
+          "expected_weight": 0.056,
+          "p90_ms": 178.964116,
+          "p99_ms": 438.611782,
+          "pass": false,
+          "sent": 2061,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.05520141418470109,
+          "error_rate": 0.0024260067928190197,
+          "expected_weight": 0.056,
+          "p90_ms": 224.455621,
+          "p99_ms": 518.854732,
+          "pass": false,
+          "sent": 2061,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.05518645520788684,
+          "error_rate": 0.001941747572815534,
+          "expected_weight": 0.056,
+          "p90_ms": 207.875528,
+          "p99_ms": 485.946919,
+          "pass": false,
+          "sent": 2060,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 6182,
+      "succeeded": 6167,
+      "technical_error_rate": 0.0024263992235522484,
+      "worst_p90_ms": 224.455621,
+      "worst_p99_ms": 518.854732
+    },
+    "gen-share": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.012534818941504178,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 163.474926,
+          "p99_ms": 401.941725,
+          "pass": true,
+          "sent": 468,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.012534818941504178,
+          "error_rate": 0.002136752136752137,
+          "expected_weight": 0.013,
+          "p90_ms": 196.65978,
+          "p99_ms": 469.431745,
+          "pass": false,
+          "sent": 468,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.012537505357908273,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 170.002782,
+          "p99_ms": 476.537797,
+          "pass": true,
+          "sent": 468,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 2,
+      "sent": 1404,
+      "succeeded": 1403,
+      "technical_error_rate": 0.0007122507122507123,
+      "worst_p90_ms": 196.65978,
+      "worst_p99_ms": 476.537797
+    },
+    "harvest": {
+      "failed": 48,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.05153203342618384,
+          "error_rate": 0.0031185031185031187,
+          "expected_weight": 0.05,
+          "p90_ms": 325.733512,
+          "p99_ms": 505.977986,
+          "pass": false,
+          "sent": 1924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.05153203342618384,
+          "error_rate": 0.009875259875259876,
+          "expected_weight": 0.05,
+          "p90_ms": 388.692797,
+          "p99_ms": 559.048141,
+          "pass": false,
+          "sent": 1924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.05154307758251179,
+          "error_rate": 0.011954261954261955,
+          "expected_weight": 0.05,
+          "p90_ms": 357.089414,
+          "p99_ms": 532.45071,
+          "pass": false,
+          "sent": 1924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 5772,
+      "succeeded": 5724,
+      "technical_error_rate": 0.008316008316008316,
+      "worst_p90_ms": 388.692797,
+      "worst_p99_ms": 559.048141
+    },
+    "list-friend-requests": {
+      "failed": 10,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.045639597171630596,
+          "error_rate": 0.0005868544600938967,
+          "expected_weight": 0.047,
+          "p90_ms": 156.017163,
+          "p99_ms": 427.819782,
+          "pass": true,
+          "sent": 1704,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.045639597171630596,
+          "error_rate": 0.004107981220657277,
+          "expected_weight": 0.047,
+          "p90_ms": 190.706711,
+          "p99_ms": 461.902046,
+          "pass": false,
+          "sent": 1704,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.045595799399914275,
+          "error_rate": 0.0011750881316098707,
+          "expected_weight": 0.047,
+          "p90_ms": 188.177865,
+          "p99_ms": 454.54763,
+          "pass": false,
+          "sent": 1702,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5110,
+      "succeeded": 5100,
+      "technical_error_rate": 0.0019569471624266144,
+      "worst_p90_ms": 190.706711,
+      "worst_p99_ms": 461.902046
+    },
+    "mail-claim": {
+      "failed": 4,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.013231197771587743,
+          "error_rate": 0.004048582995951417,
+          "expected_weight": 0.012,
+          "p90_ms": 335.455418,
+          "p99_ms": 552.098345,
+          "pass": false,
+          "sent": 494,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.013231197771587743,
+          "error_rate": 0.0020242914979757085,
+          "expected_weight": 0.012,
+          "p90_ms": 386.064275,
+          "p99_ms": 611.785733,
+          "pass": false,
+          "sent": 494,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.013234033433347621,
+          "error_rate": 0.0020242914979757085,
+          "expected_weight": 0.012,
+          "p90_ms": 375.057541,
+          "p99_ms": 582.828071,
+          "pass": false,
+          "sent": 494,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 1482,
+      "succeeded": 1478,
+      "technical_error_rate": 0.002699055330634278,
+      "worst_p90_ms": 386.064275,
+      "worst_p99_ms": 611.785733
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.0019016498821512748,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 325.218504,
+          "p99_ms": 418.081678,
+          "pass": false,
+          "sent": 71,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.0019016498821512748,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 378.992722,
+          "p99_ms": 561.957147,
+          "pass": false,
+          "sent": 71,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.0019020574367766823,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 356.520108,
+          "p99_ms": 464.53203,
+          "pass": false,
+          "sent": 71,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 213,
+      "succeeded": 213,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 378.992722,
+      "worst_p99_ms": 561.957147
+    },
+    "mail-list": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04456824512534819,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 373.084611,
+          "p99_ms": 602.517286,
+          "pass": false,
+          "sent": 1664,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.04456824512534819,
+          "error_rate": 0.0006009615384615385,
+          "expected_weight": 0.045,
+          "p90_ms": 401.053977,
+          "p99_ms": 637.146466,
+          "pass": false,
+          "sent": 1664,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.044577796828118306,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 386.830636,
+          "p99_ms": 619.903388,
+          "pass": false,
+          "sent": 1664,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 4992,
+      "succeeded": 4991,
+      "technical_error_rate": 0.00020032051282051281,
+      "worst_p90_ms": 401.053977,
+      "worst_p99_ms": 637.146466
+    },
+    "mail-read": {
+      "failed": 5,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02035568887936576,
+          "error_rate": 0.002631578947368421,
+          "expected_weight": 0.021,
+          "p90_ms": 348.401502,
+          "p99_ms": 612.051757,
+          "pass": false,
+          "sent": 760,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.02035568887936576,
+          "error_rate": 0.0013157894736842105,
+          "expected_weight": 0.021,
+          "p90_ms": 415.363936,
+          "p99_ms": 643.7233,
+          "pass": false,
+          "sent": 760,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.020360051435919416,
+          "error_rate": 0.002631578947368421,
+          "expected_weight": 0.021,
+          "p90_ms": 410.028971,
+          "p99_ms": 613.765894,
+          "pass": false,
+          "sent": 760,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2280,
+      "succeeded": 2275,
+      "technical_error_rate": 0.0021929824561403508,
+      "worst_p90_ms": 415.363936,
+      "worst_p99_ms": 643.7233
+    },
+    "pest-cross": {
+      "failed": 3,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.016900578530104994,
+          "error_rate": 0.001584786053882726,
+          "expected_weight": 0.017,
+          "p90_ms": 223.511685,
+          "p99_ms": 556.246282,
+          "pass": false,
+          "sent": 631,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.016900578530104994,
+          "error_rate": 0.001584786053882726,
+          "expected_weight": 0.017,
+          "p90_ms": 223.952293,
+          "p99_ms": 556.495565,
+          "pass": false,
+          "sent": 631,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.016904200600085725,
+          "error_rate": 0.001584786053882726,
+          "expected_weight": 0.017,
+          "p90_ms": 222.513891,
+          "p99_ms": 556.740298,
+          "pass": false,
+          "sent": 631,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 1893,
+      "succeeded": 1890,
+      "technical_error_rate": 0.001584786053882726,
+      "worst_p90_ms": 223.952293,
+      "worst_p99_ms": 556.740298
+    },
+    "pest-local": {
+      "failed": 30,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.026167773730447826,
+          "error_rate": 0.0030706243602865915,
+          "expected_weight": 0.026,
+          "p90_ms": 362.864788,
+          "p99_ms": 470.83056,
+          "pass": false,
+          "sent": 977,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.026167773730447826,
+          "error_rate": 0.01842374616171955,
+          "expected_weight": 0.026,
+          "p90_ms": 425.609969,
+          "p99_ms": 528.374333,
+          "pass": false,
+          "sent": 977,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.02617338191170167,
+          "error_rate": 0.009211873080859774,
+          "expected_weight": 0.026,
+          "p90_ms": 399.780088,
+          "p99_ms": 515.867137,
+          "pass": false,
+          "sent": 977,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2931,
+      "succeeded": 2901,
+      "technical_error_rate": 0.01023541453428864,
+      "worst_p90_ms": 425.609969,
+      "worst_p99_ms": 528.374333
+    },
+    "pet-activate": {
+      "failed": 4,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.001928433683308335,
+          "error_rate": 0.013888888888888888,
+          "expected_weight": 0.002,
+          "p90_ms": 340.297335,
+          "p99_ms": 515.31854,
+          "pass": false,
+          "sent": 72,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.001928433683308335,
+          "error_rate": 0.013888888888888888,
+          "expected_weight": 0.002,
+          "p90_ms": 397.966984,
+          "p99_ms": 548.629092,
+          "pass": false,
+          "sent": 72,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.0019288469781397343,
+          "error_rate": 0.027777777777777776,
+          "expected_weight": 0.002,
+          "p90_ms": 355.002816,
+          "p99_ms": 600.154736,
+          "pass": false,
+          "sent": 72,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 216,
+      "succeeded": 212,
+      "technical_error_rate": 0.018518518518518517,
+      "worst_p90_ms": 397.966984,
+      "worst_p99_ms": 600.154736
+    },
+    "pet-feed": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.018132633383329762,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 320.995652,
+          "p99_ms": 507.314251,
+          "pass": false,
+          "sent": 677,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.018132633383329762,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 350.836891,
+          "p99_ms": 494.746078,
+          "pass": false,
+          "sent": 677,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.01813651950278611,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 335.692623,
+          "p99_ms": 504.087793,
+          "pass": false,
+          "sent": 677,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2031,
+      "succeeded": 2031,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 350.836891,
+      "worst_p99_ms": 507.314251
+    },
+    "pet-status": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.022578744375401756,
+          "error_rate": 0.0011862396204033216,
+          "expected_weight": 0.024,
+          "p90_ms": 323.4517,
+          "p99_ms": 550.042177,
+          "pass": false,
+          "sent": 843,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.022578744375401756,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 384.2081,
+          "p99_ms": 638.521269,
+          "pass": false,
+          "sent": 843,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.022583583369052723,
+          "error_rate": 0.0011862396204033216,
+          "expected_weight": 0.024,
+          "p90_ms": 370.809697,
+          "p99_ms": 616.238031,
+          "pass": false,
+          "sent": 843,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2529,
+      "succeeded": 2527,
+      "technical_error_rate": 0.0007908264136022143,
+      "worst_p90_ms": 384.2081,
+      "worst_p99_ms": 638.521269
+    },
+    "plant": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04304156845939576,
+          "error_rate": 0.0006222775357809583,
+          "expected_weight": 0.043,
+          "p90_ms": 287.305459,
+          "p99_ms": 470.715073,
+          "pass": true,
+          "sent": 1607,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.04304156845939576,
+          "error_rate": 0.0006222775357809583,
+          "expected_weight": 0.043,
+          "p90_ms": 314.065936,
+          "p99_ms": 531.731128,
+          "pass": false,
+          "sent": 1607,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.04302400342906129,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 283.155964,
+          "p99_ms": 514.681687,
+          "pass": false,
+          "sent": 1606,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4820,
+      "succeeded": 4818,
+      "technical_error_rate": 0.0004149377593360996,
+      "worst_p90_ms": 314.065936,
+      "worst_p99_ms": 531.731128
+    },
+    "search-user": {
+      "failed": 9,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.027212341975573172,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 211.78212,
+          "p99_ms": 478.269584,
+          "pass": true,
+          "sent": 1016,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.027212341975573172,
+          "error_rate": 0.007874015748031496,
+          "expected_weight": 0.027,
+          "p90_ms": 225.780439,
+          "p99_ms": 501.233396,
+          "pass": false,
+          "sent": 1016,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.027218174024860695,
+          "error_rate": 0.000984251968503937,
+          "expected_weight": 0.027,
+          "p90_ms": 235.693708,
+          "p99_ms": 483.179471,
+          "pass": true,
+          "sent": 1016,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 2,
+      "sent": 3048,
+      "succeeded": 3039,
+      "technical_error_rate": 0.002952755905511811,
+      "worst_p90_ms": 235.693708,
+      "worst_p99_ms": 501.233396
+    },
+    "sell": {
+      "failed": 31,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.01933790443539747,
+          "error_rate": 0.009695290858725761,
+          "expected_weight": 0.019,
+          "p90_ms": 287.019507,
+          "p99_ms": 479.827974,
+          "pass": false,
+          "sent": 722,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.01933790443539747,
+          "error_rate": 0.012465373961218837,
+          "expected_weight": 0.019,
+          "p90_ms": 377.751353,
+          "p99_ms": 614.574293,
+          "pass": false,
+          "sent": 722,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.019342048864123447,
+          "error_rate": 0.02077562326869806,
+          "expected_weight": 0.019,
+          "p90_ms": 336.310016,
+          "p99_ms": 546.38934,
+          "pass": false,
+          "sent": 722,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2166,
+      "succeeded": 2135,
+      "technical_error_rate": 0.014312096029547553,
+      "worst_p90_ms": 377.751353,
+      "worst_p99_ms": 614.574293
+    },
+    "steal": {
+      "failed": 12,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04151489179344332,
+          "error_rate": 0.0025806451612903226,
+          "expected_weight": 0.042,
+          "p90_ms": 203.252365,
+          "p99_ms": 528.819521,
+          "pass": false,
+          "sent": 1550,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.04151489179344332,
+          "error_rate": 0.0025806451612903226,
+          "expected_weight": 0.042,
+          "p90_ms": 220.882261,
+          "p99_ms": 511.459489,
+          "pass": false,
+          "sent": 1550,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.04152378911273039,
+          "error_rate": 0.0025806451612903226,
+          "expected_weight": 0.042,
+          "p90_ms": 207.343071,
+          "p99_ms": 518.498081,
+          "pass": false,
+          "sent": 1550,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 4650,
+      "succeeded": 4638,
+      "technical_error_rate": 0.0025806451612903226,
+      "worst_p90_ms": 220.882261,
+      "worst_p99_ms": 528.819521
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.03883651167773731,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 349.439175,
+          "p99_ms": 517.125245,
+          "pass": false,
+          "sent": 1450,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.03883651167773731,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 398.247377,
+          "p99_ms": 592.842491,
+          "pass": false,
+          "sent": 1450,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.038844834976425206,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 390.926263,
+          "p99_ms": 552.585383,
+          "pass": false,
+          "sent": 1450,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 4350,
+      "succeeded": 4350,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 398.247377,
+      "worst_p99_ms": 592.842491
+    },
+    "task-claim": {
+      "failed": 36,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.024748232269123635,
+          "error_rate": 0.008658008658008658,
+          "expected_weight": 0.024,
+          "p90_ms": 290.247115,
+          "p99_ms": 613.632297,
+          "pass": false,
+          "sent": 924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.024748232269123635,
+          "error_rate": 0.01406926406926407,
+          "expected_weight": 0.024,
+          "p90_ms": 362.906617,
+          "p99_ms": 618.588162,
+          "pass": false,
+          "sent": 924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.024753536219459922,
+          "error_rate": 0.016233766233766232,
+          "expected_weight": 0.024,
+          "p90_ms": 347.415647,
+          "p99_ms": 593.716247,
+          "pass": false,
+          "sent": 924,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2772,
+      "succeeded": 2736,
+      "technical_error_rate": 0.012987012987012988,
+      "worst_p90_ms": 362.906617,
+      "worst_p99_ms": 618.588162
+    },
+    "task-list": {
+      "failed": 31,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.09540389972144847,
+          "error_rate": 0.0022459292532285235,
+          "expected_weight": 0.096,
+          "p90_ms": 277.835768,
+          "p99_ms": 548.599133,
+          "pass": false,
+          "sent": 3562,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.09540389972144847,
+          "error_rate": 0.003368893879842785,
+          "expected_weight": 0.096,
+          "p90_ms": 333.480237,
+          "p99_ms": 570.650427,
+          "pass": false,
+          "sent": 3562,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.09539755679382769,
+          "error_rate": 0.003089019938219601,
+          "expected_weight": 0.096,
+          "p90_ms": 324.246618,
+          "p99_ms": 578.485392,
+          "pass": false,
+          "sent": 3561,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 10685,
+      "succeeded": 10654,
+      "technical_error_rate": 0.002901263453439401,
+      "worst_p90_ms": 333.480237,
+      "worst_p99_ms": 578.485392
+    },
+    "till": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02664988215127491,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 348.843181,
+          "p99_ms": 453.547685,
+          "pass": false,
+          "sent": 995,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.02664988215127491,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 392.493552,
+          "p99_ms": 522.663366,
+          "pass": false,
+          "sent": 995,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.026655593656236605,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 376.853946,
+          "p99_ms": 484.645333,
+          "pass": false,
+          "sent": 995,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2985,
+      "succeeded": 2985,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 392.493552,
+      "worst_p99_ms": 522.663366
+    },
+    "water-cross": {
+      "failed": 12,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04234518962931219,
+          "error_rate": 0.002530044275774826,
+          "expected_weight": 0.042,
+          "p90_ms": 220.640997,
+          "p99_ms": 677.264025,
+          "pass": false,
+          "sent": 1581,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.04234518962931219,
+          "error_rate": 0.002530044275774826,
+          "expected_weight": 0.042,
+          "p90_ms": 233.932032,
+          "p99_ms": 674.555843,
+          "pass": false,
+          "sent": 1581,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.042354264894985,
+          "error_rate": 0.002530044275774826,
+          "expected_weight": 0.042,
+          "p90_ms": 221.044696,
+          "p99_ms": 672.832828,
+          "pass": false,
+          "sent": 1581,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 4743,
+      "succeeded": 4731,
+      "technical_error_rate": 0.002530044275774826,
+      "worst_p90_ms": 233.932032,
+      "worst_p99_ms": 677.264025
+    },
+    "water-local": {
+      "failed": 29,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.08544032569102207,
+          "error_rate": 0.0009404388714733542,
+          "expected_weight": 0.085,
+          "p90_ms": 312.583843,
+          "p99_ms": 481.220599,
+          "pass": false,
+          "sent": 3190,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.08544032569102207,
+          "error_rate": 0.005015673981191223,
+          "expected_weight": 0.085,
+          "p90_ms": 361.515991,
+          "p99_ms": 575.302901,
+          "pass": false,
+          "sent": 3190,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.08545863694813545,
+          "error_rate": 0.003134796238244514,
+          "expected_weight": 0.085,
+          "p90_ms": 351.662969,
+          "p99_ms": 542.545735,
+          "pass": false,
+          "sent": 3190,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 9570,
+      "succeeded": 9541,
+      "technical_error_rate": 0.0030303030303030303,
+      "worst_p90_ms": 361.515991,
+      "worst_p99_ms": 575.302901
+    },
+    "weed-cross": {
+      "failed": 6,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02520355688879366,
+          "error_rate": 0.0021253985122210413,
+          "expected_weight": 0.026,
+          "p90_ms": 209.276574,
+          "p99_ms": 578.697196,
+          "pass": false,
+          "sent": 941,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.02520355688879366,
+          "error_rate": 0.0021253985122210413,
+          "expected_weight": 0.026,
+          "p90_ms": 214.788774,
+          "p99_ms": 643.994463,
+          "pass": false,
+          "sent": 941,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.025208958422631805,
+          "error_rate": 0.0021253985122210413,
+          "expected_weight": 0.026,
+          "p90_ms": 212.478763,
+          "p99_ms": 585.876445,
+          "pass": false,
+          "sent": 941,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 2823,
+      "succeeded": 2817,
+      "technical_error_rate": 0.0021253985122210413,
+      "worst_p90_ms": 214.788774,
+      "worst_p99_ms": 643.994463
+    },
+    "weed-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.03222091279194343,
+          "error_rate": 0.0,
+          "expected_weight": 0.033,
+          "p90_ms": 360.632205,
+          "p99_ms": 600.035658,
+          "pass": false,
+          "sent": 1203,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json"
+        },
+        {
+          "actual_weight": 0.03222091279194343,
+          "error_rate": 0.0,
+          "expected_weight": 0.033,
+          "p90_ms": 400.668267,
+          "p99_ms": 617.130219,
+          "pass": false,
+          "sent": 1203,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json"
+        },
+        {
+          "actual_weight": 0.03222781825975139,
+          "error_rate": 0.0,
+          "expected_weight": 0.033,
+          "p90_ms": 379.075519,
+          "p99_ms": 596.41886,
+          "pass": false,
+          "sent": 1203,
+          "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 3609,
+      "succeeded": 3609,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 400.668267,
+      "worst_p99_ms": 617.130219
+    }
+  },
+  "per_shard_target_qps": [
+    4667,
+    4667,
+    4666
+  ],
+  "rounds": [
+    {
+      "client_drain_milliseconds": 643,
+      "client_drain_within_diagnostic_limit": true,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.9983126205271052,
+      "failed_operations": [
+        "enter-self",
+        "enter-friend",
+        "sync",
+        "till",
+        "clear",
+        "water-local",
+        "weed-local",
+        "pest-local",
+        "fertilize",
+        "harvest",
+        "water-cross",
+        "weed-cross",
+        "pest-cross",
+        "steal",
+        "friend-list",
+        "task-list",
+        "task-claim",
+        "mail-list",
+        "mail-read",
+        "mail-claim",
+        "mail-delete",
+        "buy",
+        "sell",
+        "pet-status",
+        "pet-activate",
+        "pet-feed",
+        "codex-list"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-0.json",
+      "target_qps": 4667,
+      "technical_error_rate": 0.0016873794728947931,
+      "unexpected_operations": []
+    },
+    {
+      "client_drain_milliseconds": 616,
+      "client_drain_within_diagnostic_limit": true,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.9965448896507393,
+      "failed_operations": [
+        "enter-self",
+        "enter-friend",
+        "sync",
+        "till",
+        "clear",
+        "plant",
+        "water-local",
+        "weed-local",
+        "pest-local",
+        "fertilize",
+        "harvest",
+        "water-cross",
+        "weed-cross",
+        "pest-cross",
+        "steal",
+        "friend-list",
+        "gen-share",
+        "search-user",
+        "list-friend-requests",
+        "task-list",
+        "task-claim",
+        "mail-list",
+        "mail-read",
+        "mail-claim",
+        "mail-delete",
+        "buy",
+        "sell",
+        "pet-status",
+        "pet-activate",
+        "pet-feed",
+        "codex-list"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-1.json",
+      "target_qps": 4667,
+      "technical_error_rate": 0.003455110349260767,
+      "unexpected_operations": []
+    },
+    {
+      "client_drain_milliseconds": 635,
+      "client_drain_within_diagnostic_limit": true,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.9968120445777968,
+      "failed_operations": [
+        "enter-self",
+        "enter-friend",
+        "sync",
+        "till",
+        "clear",
+        "plant",
+        "water-local",
+        "weed-local",
+        "pest-local",
+        "fertilize",
+        "harvest",
+        "water-cross",
+        "weed-cross",
+        "pest-cross",
+        "steal",
+        "friend-list",
+        "list-friend-requests",
+        "task-list",
+        "task-claim",
+        "mail-list",
+        "mail-read",
+        "mail-claim",
+        "mail-delete",
+        "buy",
+        "sell",
+        "pet-status",
+        "pet-activate",
+        "pet-feed",
+        "codex-list"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/quick-mixed-20260816/qps-14000/shard-2.json",
+      "target_qps": 4666,
+      "technical_error_rate": 0.003187955422203172,
+      "unexpected_operations": []
+    }
+  ],
+  "shards": 3,
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 500,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 14000,
+  "verdict": "fail"
+}

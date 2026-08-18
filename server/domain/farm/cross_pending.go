@@ -40,6 +40,7 @@ func (a *Aggregate) ReserveCross(reservation CrossReservation, now int64) (Cross
 		return reservation, errcode.BadRequest
 	}
 
+	sequenceBefore := a.FarmSeq
 	a.ExpireCrossPending(now)
 	if _, exists := a.CrossPending[reservation.ReqID]; exists {
 		return reservation, errcode.DuplicateOK
@@ -63,6 +64,9 @@ func (a *Aggregate) ReserveCross(reservation CrossReservation, now int64) (Cross
 		a.CrossPending = make(map[uint64]CrossReservation, 1)
 	}
 	a.CrossPending[reservation.ReqID] = reservation
+	if a.FarmSeq == sequenceBefore {
+		a.FarmSeq++
+	}
 	return reservation, errcode.OK
 }
 
@@ -107,6 +111,7 @@ func (a *Aggregate) ExpireCrossPending(now int64) bool {
 		return false
 	}
 
+	sequenceBefore := a.FarmSeq
 	changed := false
 	for reqID, reservation := range a.CrossPending {
 		if now-reservation.ReservedAt < CrossPendingTimeout {
@@ -118,6 +123,9 @@ func (a *Aggregate) ExpireCrossPending(now int64) bool {
 	}
 	if len(a.CrossPending) == 0 {
 		a.CrossPending = nil
+	}
+	if changed && a.FarmSeq == sequenceBefore {
+		a.FarmSeq++
 	}
 	return changed
 }

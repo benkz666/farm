@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"farm/server/domain/farm"
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
@@ -62,7 +61,7 @@ func (handler *ClientHandler) ExecuteClient(ctx context.Context, request *farmv1
 	if handler == nil || handler.commands == nil || request == nil || request.Envelope == nil || request.Uid == 0 {
 		return errorClientResponse(request, errcode.BadRequest)
 	}
-	if isDurableWriteCommand(request.Envelope.Cmd) && handler.admission != nil {
+	if isJournalProducingWriteCommand(request.Envelope.Cmd) && handler.admission != nil {
 		if !handler.admission.Acquire() {
 			return errorClientResponse(request, errcode.RateLimited)
 		}
@@ -86,15 +85,20 @@ func (handler *ClientHandler) ExecuteClient(ctx context.Context, request *farmv1
 			return handler.cross.ExecuteClient(ctx, request)
 		}
 	}
-	return handler.selfCommand(request)
+	return handler.selfCommand(ctx, request)
 }
 
-func isDurableWriteCommand(command uint32) bool {
+// isJournalProducingWriteCommand limits only operations that append to Farm's
+// Redis recovery journal. TaskClaim/MailClaim persist through fenced MySQL
+// transactions and MailDelete is a direct mail-row mutation; rejecting those
+// because an unrelated journal shard is behind neither protects the log nor
+// sheds its producers.
+func isJournalProducingWriteCommand(command uint32) bool {
 	switch command {
 	case 206, 208, 210, 212, 214, 216, 218, 220, 222,
 		302, 304,
 		502, 504,
-		602, 608, 610, 614:
+		614:
 		return true
 	default:
 		return false
@@ -115,9 +119,17 @@ func (handler *ClientHandler) enterFarm(ctx context.Context, request *farmv1.Cli
 		return errorClientResponse(request, code)
 	}
 	result := handler.commands.Execute(CommandRequest{
+		Context:   ctx,
 		Operation: OperationEnterFarm, FarmUID: ownerUID,
-		Originator: connRefFromProto(request.Originator),
+		Originator:     connRefFromProto(request.Originator),
+		PreferPrepared: request.PreferPrepared && relation == "SELF",
 	})
+	if len(result.PreparedPayload) != 0 {
+		return preparedClientResponse(
+			request.Envelope, result,
+			farmv1.RoomAction_ROOM_ACTION_SUBSCRIBE, ownerUID,
+		)
+	}
 	wire := resultEnvelope(request.Envelope, result)
 	if wire.Err != int32(errcode.OK) {
 		return &farmv1.ClientCommandResponse{Envelope: wire}
@@ -129,8 +141,7 @@ func (handler *ClientHandler) enterFarm(ctx context.Context, request *farmv1.Cli
 	response.Relation = relation
 	response.TimeProfileMutable = false
 	if relation == "FRIEND" {
-		snapshot := clientwire.FarmSnapshotFromProto(response.Snapshot)
-		response.Snapshot = clientwire.FarmSnapshotToProto(farm.VisitorSafeFarmSnapshot(snapshot))
+		response.Snapshot = clientwire.VisitorSafeFarmSnapshotProto(response.Snapshot)
 		var advanceErr error
 		if handler.owns(request.Uid) {
 			advanceErr = handler.commands.advanceTask(request.Uid, store.TaskVisitID, 1)
@@ -171,21 +182,48 @@ func (handler *ClientHandler) syncFarm(ctx context.Context, request *farmv1.Clie
 	if ownerUID != request.ActiveFarmUid {
 		return errorClientResponse(request, errcode.NotOwner)
 	}
-	if _, code := handler.relation(ctx, request.Uid, ownerUID); code != errcode.OK {
+	relation, code := handler.relation(ctx, request.Uid, ownerUID)
+	if code != errcode.OK {
 		return errorClientResponse(request, code)
 	}
 	result := handler.commands.Execute(CommandRequest{
+		Context:   ctx,
 		Operation: OperationSyncFarm, FarmUID: ownerUID,
 		Originator: connRefFromProto(request.Originator), SyncRequest: payload,
+		PreferPrepared: request.PreferPrepared && relation == "SELF",
 	})
+	if len(result.PreparedPayload) != 0 {
+		return preparedClientResponse(
+			request.Envelope, result,
+			farmv1.RoomAction_ROOM_ACTION_UNSPECIFIED, ownerUID,
+		)
+	}
 	wire := resultEnvelope(request.Envelope, result)
 	if response := wire.GetSyncFarmResponse(); response != nil {
 		response.TimeProfileMutable = false
+		if relation == "FRIEND" && response.Snapshot != nil {
+			response.Snapshot = clientwire.VisitorSafeFarmSnapshotProto(response.Snapshot)
+		}
 	}
 	return &farmv1.ClientCommandResponse{Envelope: wire, RoomUid: ownerUID, RoomSeq: result.FarmSeq}
 }
 
-func (handler *ClientHandler) selfCommand(request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+// ExecutePreparedSelfSync serves the flat trusted-stream representation used
+// by Gateway for the overwhelmingly common self SyncFarm. Cross-farm and all
+// non-Sync commands continue through ExecuteClient's complete typed contract.
+func (handler *ClientHandler) ExecutePreparedSelfSync(
+	ctx context.Context,
+	uid uint64,
+	originator presence.ConnRef,
+	fromSeq uint64,
+) CommandResponse {
+	if handler == nil || handler.commands == nil || uid == 0 {
+		return CommandResponse{Err: errcode.BadRequest}
+	}
+	return handler.commands.syncFarmPreparedSelf(ctx, uid, originator, fromSeq)
+}
+
+func (handler *ClientHandler) selfCommand(ctx context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
 	command := request.Envelope.Cmd
 	clientRequest := request.Envelope.GetCommandRequest()
 	if clientRequest == nil {
@@ -199,11 +237,42 @@ func (handler *ClientHandler) selfCommand(request *farmv1.ClientCommandRequest) 
 		return errorClientResponse(request, errcode.NotOwner)
 	}
 	result := handler.commands.Execute(CommandRequest{
+		Context:   ctx,
 		Operation: operation, FarmUID: request.Uid,
 		Originator:    connRefFromProto(request.Originator),
 		ClientCommand: command, ClientRequest: clientRequest,
 	})
+	if request.PreferPrepared && result.Err == errcode.OK && result.ClientResponse != nil {
+		prepared, err := clientwire.MarshalCommandResponsePayload(result.ClientResponse)
+		if err == nil {
+			result.PreparedPayload = prepared
+			result.PreparedField = clientwire.PreparedCommandResponse
+			return preparedClientResponse(
+				request.Envelope, result,
+				farmv1.RoomAction_ROOM_ACTION_UNSPECIFIED, 0,
+			)
+		}
+	}
 	return &farmv1.ClientCommandResponse{Envelope: resultEnvelope(request.Envelope, result), RoomSeq: result.FarmSeq}
+}
+
+func preparedClientResponse(
+	request *publicv3.WireEnvelope,
+	result CommandResponse,
+	roomAction farmv1.RoomAction,
+	roomUID uint64,
+) *farmv1.ClientCommandResponse {
+	if request == nil || result.Err != errcode.OK || len(result.PreparedPayload) == 0 ||
+		!clientwire.IsPreparedResponseFieldForCommand(result.PreparedField, request.Cmd) {
+		return &farmv1.ClientCommandResponse{Envelope: resultEnvelope(request, result)}
+	}
+	return &farmv1.ClientCommandResponse{
+		Envelope: &publicv3.WireEnvelope{
+			Cmd: request.Cmd, ClientSeq: request.ClientSeq, Err: int32(errcode.OK),
+		},
+		RoomAction: roomAction, RoomUid: roomUID, RoomSeq: result.FarmSeq,
+		PreparedPayload: result.PreparedPayload, PreparedField: result.PreparedField,
+	}
 }
 
 func (handler *ClientHandler) relation(ctx context.Context, viewerUID, ownerUID uint64) (string, errcode.Code) {

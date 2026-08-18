@@ -7,6 +7,7 @@ import (
 	"farm/server/domain/farm"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
+	"farm/server/shared/store"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -116,6 +117,44 @@ func TestSideEffectsAreStampedAndAcknowledgedByGeneration(t *testing.T) {
 	actor.ackSideEffects(7)
 	if len(actor.pendingTaskAdvances()) != 0 || len(actor.pendingCodexRewards()) != 0 {
 		t.Fatal("committed side effects were not removed")
+	}
+}
+
+func TestTaskAndMailTransitionsRideSamePendingMutation(t *testing.T) {
+	actor := &FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
+	actor.LoadTasks(20260816, []store.Task{{
+		ID: 4, DayKey: 20260816, Progress: 1, Target: 1, RewardCoin: 100,
+	}})
+	actor.LoadMails([]store.Mail{{ID: 7, AttachmentCoin: 30}})
+	if _, err := actor.ClaimTaskState(20260816, 4, 123); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := actor.ClaimMailState(7, 124); err != nil {
+		t.Fatal(err)
+	}
+	actor.Aggregate.CreditReward(100, 0)
+	actor.Aggregate.CreditMailReward(30)
+	actor.RequireEconomyFlush()
+	actor.stampSideEffectGeneration(1)
+	actor.stampPersistGeneration(1)
+
+	mutation, err := actor.pendingWriteMutation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mutation.TaskClaims) != 1 || mutation.TaskClaims[0].TaskId != 4 {
+		t.Fatalf("task claims = %#v", mutation.TaskClaims)
+	}
+	if len(mutation.MailMutations) != 1 || mutation.MailMutations[0].MailId != 7 {
+		t.Fatalf("mail mutations = %#v", mutation.MailMutations)
+	}
+	if mutation.PlayerMask&outbox.PlayerEconomy == 0 || mutation.Coin != actor.Aggregate.Coin {
+		t.Fatalf("claim economy = %#v", mutation)
+	}
+
+	actor.ackSideEffects(1)
+	if len(actor.pendingTaskClaims()) != 0 || len(actor.pendingMailMutations()) != 0 {
+		t.Fatal("durably acknowledged task/mail transitions were retained")
 	}
 }
 

@@ -152,6 +152,35 @@ async function openClient(opts = {}) {
   return { ...ctx, ws: FakeWebSocket.latest() }
 }
 
+test('connectionState 反映真实 WebSocket 生命周期，ping 需收到服务端响应', async () => {
+  const { client } = createClient()
+  assert.equal(client.connectionState, 'offline')
+
+  const connecting = client.connect()
+  assert.equal(client.connectionState, 'connecting')
+  const ws = FakeWebSocket.latest()
+  ws.open()
+  await connecting
+  assert.equal(client.connectionState, 'connected')
+
+  const pendingPing = client.ping(123456)
+  assert.equal(ws.sent.length, 1)
+  assert.equal(ws.sent[0].cmd, CMD_PING)
+  assert.deepEqual(ws.sent[0].payload, { client_time: 123456 })
+  ws.respond({
+    cmd: CMD_PING,
+    client_seq: ws.sent[0].client_seq,
+    err: 0,
+    payload: { client_time: 123456, server_time: 123460 },
+  })
+  assert.deepEqual((await pendingPing).payload, { client_time: 123456, server_time: 123460 })
+
+  ws.close()
+  assert.equal(client.connectionState, 'reconnecting')
+  client.close()
+  assert.equal(client.connectionState, 'offline')
+})
+
 test('request 超时后从 pending 删除并 reject 明确错误', async () => {
   const { client, clock, ws } = await openClient({ requestTimeoutMs: 1_000 })
   const pending = client.request(CMD_PING, {})
@@ -169,6 +198,20 @@ test('request 超时后从 pending 删除并 reject 明确错误', async () => {
   assert.equal(client._pending.size, 0)
   assert.equal(clock.pendingCount(), 0)
   assert.equal(ws.sent.length, 1)
+})
+
+test('Ping 可使用独立短超时且不改变普通请求超时', async () => {
+  const { client, clock } = await openClient({ requestTimeoutMs: 5_000 })
+  const pending = client.ping(123, 1_500)
+  const rejected = assert.rejects(pending, /timeout/i)
+
+  clock.advance(1_499)
+  assert.equal(client._pending.size, 1)
+  clock.advance(1)
+  await rejected
+
+  assert.equal(client._pending.size, 0)
+  assert.equal(client.requestTimeoutMs, 5_000)
 })
 
 test('正常响应清除 request timer，无泄漏', async () => {
@@ -595,7 +638,9 @@ test('致命 Handshake 失败进入终止态：关 socket、清 pending/timer、
   await Promise.resolve()
 
   const hs = newWs.sent.find((e) => e.cmd === CMD_HANDSHAKE)
+  const enter = newWs.sent.find((e) => e.cmd === CMD_ENTER_FARM)
   assert.ok(hs)
+  assert.ok(enter)
   // 再挂一个在途请求，致命终止应清掉
   const duringRestore = client.request(CMD_PING, {})
   let duringRejected = false
@@ -605,6 +650,7 @@ test('致命 Handshake 失败进入终止态：关 socket、清 pending/timer、
   assert.equal(client._pending.size >= 1, true)
 
   newWs.respond({ cmd: CMD_HANDSHAKE, client_seq: hs.client_seq, err: 1102, payload: {} })
+  newWs.respond({ cmd: CMD_ENTER_FARM, client_seq: enter.client_seq, err: 1101, payload: {} })
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()

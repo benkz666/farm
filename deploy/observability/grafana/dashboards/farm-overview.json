@@ -645,11 +645,86 @@
     },
     {
       "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36},
+      "id": 26,
+      "panels": [],
+      "title": "领取屏障与 gRPC 流隔离",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 37},
+      "id": 27,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, reason) (rate(farm_write_journal_barrier_wait_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "总等待 P95 {{reason}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, reason) (rate(farm_write_journal_targeted_projection_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "定向投影 P95 {{reason}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "领取总等待与 UID 定向投影 P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 37},
+      "id": 28,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum by (reason) (farm_write_journal_barrier_waiters)", "legendFormat": "等待 {{reason}}", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum by (reason) (rate(farm_write_journal_barrier_timeouts_total[$__rate_interval]))", "legendFormat": "超时/s {{reason}}", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum by (reason) (rate(farm_write_journal_barrier_fast_path_total[$__rate_interval]))", "legendFormat": "无积压直通/s {{reason}}", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "sum by (reason) (rate(farm_write_journal_targeted_projection_errors_total[$__rate_interval]))", "legendFormat": "定向失败/s {{reason}}", "range": true, "refId": "D"}
+      ],
+      "title": "领取屏障直通、等待与失败",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 37},
+      "id": 29,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum by (lane) (farm_grpc_stream_queue_depth)", "legendFormat": "排队 {{lane}}", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum by (lane) (farm_grpc_stream_in_flight)", "legendFormat": "执行中 {{lane}}", "range": true, "refId": "B"}
+      ],
+      "title": "gRPC 隔离通道深度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 37},
+      "id": 30,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "sum(farm_write_journal_projection_active)", "legendFormat": "active projectors", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "sum(farm_write_journal_projection_limit)", "legendFormat": "projector limit", "range": true, "refId": "B"},
+        {"editorMode": "code", "expr": "sum(farm_write_journal_lag)", "legendFormat": "journal lag", "range": true, "refId": "C"}
+      ],
+      "title": "投影并发与 Journal Lag",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 45
       },
       "id": 13,
       "panels": [],
@@ -674,7 +749,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 37
+        "y": 46
       },
       "id": 14,
       "options": {
@@ -726,7 +801,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 37
+        "y": 46
       },
       "id": 15,
       "options": {
@@ -771,7 +846,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 37
+        "y": 46
       },
       "id": 16,
       "options": {
@@ -807,7 +882,7 @@
     },
     {
       "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 45},
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54},
       "id": 21,
       "panels": [],
       "title": "MySQL / Redis 负载",
@@ -816,7 +891,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "reqps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 55},
       "id": 22,
       "options": {
         "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
@@ -837,7 +912,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 55},
       "id": 23,
       "options": {
         "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
@@ -872,7 +947,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "reqps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 55},
       "id": 24,
       "options": {
         "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
@@ -907,7 +982,7 @@
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 55},
       "id": 25,
       "options": {
         "legend": {"calcs": ["lastNotNull", "min", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},

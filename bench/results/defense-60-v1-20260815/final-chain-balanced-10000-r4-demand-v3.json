@@ -1,0 +1,83 @@
+{
+  "alloc_bytes_per_request": {
+    "farm": 13147.978719148767,
+    "gateway": 3751.252823446271,
+    "social": 479.9700254676854
+  },
+  "cpu_ms_per_request": {
+    "farm": 0.0952704774857661,
+    "gateway": 0.1246049841993687,
+    "mysql": 0.06569824126298292,
+    "redis": 0.051923970292143344,
+    "social": 0.029334506713601726,
+    "total": 0.3668321799538628
+  },
+  "method": "Prometheus counter delta over the exact measurement window minus scaled idle baseline",
+  "mysql_operations_per_request": 0.33374001626731736,
+  "raw_window_counters": {
+    "farm_alloc_bytes": {
+      "business_increase": 3944235840.0,
+      "idle_increase": 16819136.0,
+      "idle_scaled": 16819136.0,
+      "load_increase": 3961054976.0
+    },
+    "farm_cpu_seconds": {
+      "business_increase": 28.58,
+      "idle_increase": 0.6800000000000006,
+      "idle_scaled": 0.6800000000000006,
+      "load_increase": 29.259999999999998
+    },
+    "gateway_alloc_bytes": {
+      "business_increase": 1125330832.0,
+      "idle_increase": 9038800.0,
+      "idle_scaled": 9038800.0,
+      "load_increase": 1134369632.0
+    },
+    "gateway_cpu_seconds": {
+      "business_increase": 37.38000000000022,
+      "idle_increase": 0.2199999999999136,
+      "idle_scaled": 0.2199999999999136,
+      "load_increase": 37.600000000000136
+    },
+    "mysql_cpu_seconds": {
+      "business_increase": 19.70868399999972,
+      "idle_increase": 1.3113060000000587,
+      "idle_scaled": 1.3113060000000587,
+      "load_increase": 21.01998999999978
+    },
+    "mysql_operations": {
+      "business_increase": 100118.0,
+      "idle_increase": 556.0,
+      "idle_scaled": 556.0,
+      "load_increase": 100674.0
+    },
+    "redis_cpu_seconds": {
+      "business_increase": 15.576567999999497,
+      "idle_increase": 0.40707600000041566,
+      "idle_scaled": 0.40707600000041566,
+      "load_increase": 15.983643999999913
+    },
+    "redis_operations": {
+      "business_increase": 1263524.0,
+      "idle_increase": 14339.999999999998,
+      "idle_scaled": 14339.999999999998,
+      "load_increase": 1277864.0
+    },
+    "social_alloc_bytes": {
+      "business_increase": 143985248.0,
+      "idle_increase": 713376.0,
+      "idle_scaled": 713376.0,
+      "load_increase": 144698624.0
+    },
+    "social_cpu_seconds": {
+      "business_increase": 8.799999999999955,
+      "idle_increase": 0.01999999999998181,
+      "idle_scaled": 0.01999999999998181,
+      "load_increase": 8.819999999999936
+    }
+  },
+  "redis_operations_per_request": 4.211915143272398,
+  "source_idle_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/idle-1qps-30s.json",
+  "source_load_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/final-chain-balanced-10000-r4.json",
+  "success_requests": 299988
+}

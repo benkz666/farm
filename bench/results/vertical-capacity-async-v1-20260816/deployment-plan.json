@@ -1,0 +1,164 @@
+{
+  "basic": {
+    "farm": {
+      "constraints": {
+        "cpu": 28,
+        "density": 37,
+        "memory": 31
+      },
+      "cpu_per_instance": 4,
+      "instances": 37,
+      "memory_gib_per_instance": 8,
+      "total_cpu": 148,
+      "total_memory_gib": 296
+    },
+    "gateway": {
+      "constraints": {
+        "cpu": 31,
+        "density": 40,
+        "memory": 32
+      },
+      "cpu_per_instance": 4,
+      "instances": 40,
+      "memory_gib_per_instance": 12,
+      "total_cpu": 160,
+      "total_memory_gib": 480
+    },
+    "mysql": {
+      "constraints": {
+        "cpu": 1,
+        "density": 0,
+        "memory": 1
+      },
+      "cpu_per_instance": 64,
+      "instances": 1,
+      "memory_gib_per_instance": 192,
+      "total_cpu": 64,
+      "total_memory_gib": 192
+    },
+    "redis": {
+      "constraints": {
+        "cpu": 30,
+        "density": 0,
+        "memory": 5
+      },
+      "cpu_per_instance": 2,
+      "instances": 30,
+      "memory_gib_per_instance": 2,
+      "total_cpu": 60,
+      "total_memory_gib": 60
+    },
+    "social": {
+      "constraints": {
+        "cpu": 12,
+        "density": 0,
+        "memory": 4
+      },
+      "cpu_per_instance": 2,
+      "instances": 12,
+      "memory_gib_per_instance": 1,
+      "total_cpu": 24,
+      "total_memory_gib": 12
+    }
+  },
+  "basic_totals": {
+    "cpu": 456,
+    "instances": 120,
+    "memory_gib": 1040
+  },
+  "ha": {
+    "farm": {
+      "az_distribution": [
+        19,
+        19,
+        18
+      ],
+      "constraints": {
+        "cpu": 28,
+        "density": 37,
+        "memory": 31
+      },
+      "cpu_per_instance": 4,
+      "instances": 56,
+      "memory_gib_per_instance": 8,
+      "total_cpu": 224,
+      "total_memory_gib": 448
+    },
+    "gateway": {
+      "az_distribution": [
+        20,
+        20,
+        20
+      ],
+      "constraints": {
+        "cpu": 31,
+        "density": 40,
+        "memory": 32
+      },
+      "cpu_per_instance": 4,
+      "instances": 60,
+      "memory_gib_per_instance": 12,
+      "total_cpu": 240,
+      "total_memory_gib": 720
+    },
+    "mysql": {
+      "az_distribution": [
+        1,
+        1,
+        1
+      ],
+      "constraints": {
+        "cpu": 1,
+        "density": 0,
+        "memory": 1
+      },
+      "cpu_per_instance": 64,
+      "instances": 3,
+      "memory_gib_per_instance": 192,
+      "roles": "1 primary + 2 replicas, one node per AZ",
+      "total_cpu": 192,
+      "total_memory_gib": 576
+    },
+    "redis": {
+      "az_distribution": [
+        20,
+        20,
+        20
+      ],
+      "constraints": {
+        "cpu": 30,
+        "density": 0,
+        "memory": 5
+      },
+      "cpu_per_instance": 2,
+      "instances": 60,
+      "memory_gib_per_instance": 2,
+      "roles": "30 masters + 30 cross-AZ replicas",
+      "total_cpu": 120,
+      "total_memory_gib": 120
+    },
+    "social": {
+      "az_distribution": [
+        6,
+        6,
+        6
+      ],
+      "constraints": {
+        "cpu": 12,
+        "density": 0,
+        "memory": 4
+      },
+      "cpu_per_instance": 2,
+      "instances": 18,
+      "memory_gib_per_instance": 1,
+      "total_cpu": 36,
+      "total_memory_gib": 18
+    }
+  },
+  "ha_policy": "three AZ; stateless N*1.5; MySQL 1+2; Redis one cross-AZ replica per master",
+  "ha_totals": {
+    "cpu": 812,
+    "instances": 197,
+    "memory_gib": 1882
+  }
+}

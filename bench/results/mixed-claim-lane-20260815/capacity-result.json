@@ -1,0 +1,43 @@
+{
+  "model": "normal-v1",
+  "reference_load": {
+    "dau": 30000000,
+    "pcu": 3000000,
+    "business_qps": 69894.92,
+    "farm_frontend_qps": 59294.39,
+    "social_calls_qps_including_cross_auth": 24500.53,
+    "mysql_statement_qps": 255898.11,
+    "redis_command_qps_including_sessions": 1033481.95,
+    "estimated_resident_farm_actors": 3643500
+  },
+  "replicas": {
+    "gateway": {
+      "by_connections": 308,
+      "by_cpu": 74,
+      "base": 308,
+      "recommended": 312
+    },
+    "farm": {
+      "by_resident_actors": 261,
+      "by_current_full_mix_slo": 50,
+      "by_cpu": 72,
+      "base": 261,
+      "recommended": 264
+    },
+    "social": {
+      "base": 2,
+      "recommended": 3
+    },
+    "mysql": {
+      "read_equivalent_primary_shards": 19,
+      "recommended_primary_shards": 28,
+      "recommended_replica_shards": 28
+    },
+    "redis": {
+      "mixed_benchmark_qps": 363438.11,
+      "recommended_primary_shards": 5,
+      "recommended_replica_shards": 5
+    }
+  },
+  "gateway_to_farm_ratio": 1.1818
+}

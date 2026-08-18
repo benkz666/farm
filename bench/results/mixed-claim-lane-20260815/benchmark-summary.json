@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "date": "2026-08-15",
+    "topology": {
+      "gateway": {"replicas": 3, "cpu_per_replica": 1, "memory_gib_per_replica": 1},
+      "farm": {"replicas": 1, "cpu_per_replica": 1, "memory_gib_per_replica": 1},
+      "social": {"replicas": 1, "cpu_per_replica": 1, "memory_gib_per_replica": 1},
+      "mysql": {"replicas": 1, "cpu_per_replica": 2, "memory_gib_per_replica": 4},
+      "redis": {"replicas": 1, "cpu_per_replica": 1, "memory_gib_per_replica": 1}
+    },
+    "fixture_accounts": 15000,
+    "test_time_profile": "authentic",
+    "farm_actor_max_resident": 20000,
+    "farm_actor_ttl_seconds": 120,
+    "farm_stream_normal_concurrency_per_gateway": 64,
+    "farm_stream_barrier_concurrency_per_gateway": 32,
+    "farm_write_journal_projectors": 8
+  },
+  "slo": {
+    "aggregate_p95_ms": 50,
+    "aggregate_p99_ms": 250,
+    "claim_p95_ms": 500,
+    "error_rate_max": 0.001,
+    "drain_ms_max": 1000
+  },
+  "mixed_full": [
+    {
+      "target_qps": 500,
+      "duration_seconds": 30,
+      "sent": 15000,
+      "succeeded": 15000,
+      "failed": 0,
+      "p95_ms": 3.614701,
+      "p99_ms": 9.406489,
+      "drain_ms": 36,
+      "task_claim_p95_ms": 17.073041,
+      "mail_claim_p95_ms": 14.761768,
+      "verdict": "pass"
+    },
+    {
+      "target_qps": 1000,
+      "duration_seconds": 30,
+      "sent": 30000,
+      "succeeded": 30000,
+      "failed": 0,
+      "p95_ms": 3.877615,
+      "p99_ms": 22.117498,
+      "drain_ms": 214,
+      "task_claim_p95_ms": 65.774208,
+      "mail_claim_p95_ms": 69.920227,
+      "verdict": "pass"
+    },
+    {
+      "target_qps": 2000,
+      "duration_seconds": 30,
+      "sent": 60000,
+      "succeeded": 60000,
+      "failed": 0,
+      "p95_ms": 8.034003,
+      "p99_ms": 31.00107,
+      "drain_ms": 192,
+      "task_claim_p95_ms": 102.308402,
+      "mail_claim_p95_ms": 85.186893,
+      "verdict": "pass"
+    },
+    {
+      "target_qps": 5000,
+      "duration_seconds": 30,
+      "sent": 150000,
+      "succeeded": 129647,
+      "failed": 20353,
+      "p95_ms": 2084.576343,
+      "p99_ms": 5000.31665,
+      "drain_ms": 5001,
+      "task_claim_p95_ms": 5001.006153,
+      "mail_claim_p95_ms": 5000.095756,
+      "verdict": "fail"
+    }
+  ],
+  "projector_count_control": {
+    "target_qps": 2000,
+    "duration_seconds": 30,
+    "projectors_4": {
+      "sent": 60000,
+      "succeeded": 60000,
+      "failed": 0,
+      "p95_ms": 6.326325,
+      "p99_ms": 135.476529,
+      "task_claim_p95_ms": 543.902212,
+      "mail_claim_p95_ms": 448.698046,
+      "verdict": "fail_claim_slo"
+    },
+    "projectors_8": {
+      "sent": 60000,
+      "succeeded": 60000,
+      "failed": 0,
+      "p95_ms": 8.034003,
+      "p99_ms": 31.00107,
+      "task_claim_p95_ms": 102.308402,
+      "mail_claim_p95_ms": 85.186893,
+      "verdict": "pass"
+    }
+  },
+  "service_demand_at_full_500_qps": {
+    "gateway_cpu_ms_per_business_request": 0.7380515254637456,
+    "farm_cpu_ms_per_business_request": 0.716,
+    "social_cpu_ms_per_business_request": 0.062,
+    "mysql_statements_per_business_request": 3.589647322226,
+    "redis_commands_per_business_request": 10.494066666666667,
+    "note": "沿用 2026-08-13 同拓扑 500 QPS 资源快照；本轮主要验证领取隔离与混合 SLO。"
+  },
+  "gateway_connection_test": {
+    "connections_to_one_replica": 15000,
+    "ping_qps": 500,
+    "sent": 15000,
+    "succeeded": 15000,
+    "failed": 0,
+    "p95_ms": 0.131338,
+    "p99_ms": 0.172225
+  },
+  "social_read_test": {
+    "capacity_qps_pass": 20000,
+    "sent": 399960,
+    "succeeded": 399960,
+    "failed": 0,
+    "p95_ms": 3.648168,
+    "p99_ms": 204.622108
+  },
+  "mysql_index_read_test": {
+    "capacity_qps_pass": 20000,
+    "pass_p95_ms": 0.434498,
+    "pass_p99_ms": 33.725061,
+    "overload_target_qps": 40000,
+    "overload_actual_qps": 22894.297192952377,
+    "overload_failed": 4203,
+    "overload_p95_ms": 189.322792
+  },
+  "redis_test": {
+    "set_qps": 304599.44,
+    "set_p50_ms": 2.967,
+    "get_qps": 450450.44,
+    "get_p50_ms": 1.655,
+    "read_fraction": 0.5,
+    "write_fraction": 0.5
+  },
+  "bottleneck_evidence": {
+    "fixed": "TaskClaim/MailClaim 不再占用通用 RouteUID%64 worker；每个 UID 严格串行，normal/barrier 使用独立并发额度。",
+    "tested_safe_qps": 2000,
+    "tested_overload_qps": 5000,
+    "overload_cause": "5000 QPS 下领取到达率约 140/s，barrier lane 和投影能力饱和；同 UID 后续请求按正确顺序等待，未再形成跨 UID 的全局工作槽雪崩。"
+  },
+  "capacity_policy": {
+    "compute_utilization": 0.7,
+    "gateway_connection_utilization": 0.65,
+    "farm_actor_utilization": 0.7,
+    "offline_friend_actor_share": 0.5,
+    "mysql_auth_statements_per_session_start": 2,
+    "mysql_write_complexity_factor": 1.5,
+    "failure_domain_spares": 3
+  }
+}

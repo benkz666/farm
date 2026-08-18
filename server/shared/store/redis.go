@@ -35,6 +35,35 @@ redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[5])
 return previous or ""
 `)
 
+// getSessionScript validates both token -> uid and uid -> active token in one
+// Redis round trip. It also atomically claims the active index for sessions
+// created before that reverse index existed.
+var getSessionScript = redis.NewScript(`
+local uid = redis.call("GET", KEYS[1])
+if not uid then
+	return {0}
+end
+
+local activeKey = ARGV[1] .. uid
+local active = redis.call("GET", activeKey)
+if not active then
+	local ttl = redis.call("PTTL", KEYS[1])
+	if ttl <= 0 then
+		ttl = tonumber(ARGV[2])
+	end
+	if redis.call("SET", activeKey, ARGV[3], "PX", ttl, "NX") then
+		active = ARGV[3]
+	else
+		active = redis.call("GET", activeKey)
+	end
+end
+
+if active ~= ARGV[3] then
+	return {2}
+end
+return {1, uid}
+`)
+
 // Put 原子轮换 uid 的当前 token。旧 token 短暂保留映射，使已在线连接能明确
 // 区分“被新登录替换”(1105) 与自然过期(1102)，但不再具备鉴权能力。
 func (s *Store) Put(ctx context.Context, token string, uid uint64, ttl time.Duration) error {
@@ -59,42 +88,54 @@ func (s *Store) Put(ctx context.Context, token string, uid uint64, ttl time.Dura
 // Get 读取 session:{token} 对应的 uid；不存在或已过期返回 ErrSessionNotFound
 // （供 Auth 映射 1101/1102，勿与账号不存在的 ErrAccountNotFound 混用）。
 func (s *Store) Get(ctx context.Context, token string) (uint64, error) {
-	val, err := s.rdb.Get(ctx, sessionKey(token)).Result()
-	if errors.Is(err, redis.Nil) {
+	result, err := getSessionScript.Run(
+		ctx,
+		s.rdb,
+		[]string{sessionKey(token)},
+		"session:active:",
+		time.Minute.Milliseconds(),
+		token,
+	).Slice()
+	if err != nil {
+		return 0, fmt.Errorf("store: validate session: %w", err)
+	}
+	if len(result) == 0 {
+		return 0, errors.New("store: empty session validation result")
+	}
+	status, err := sessionValidationStatus(result[0])
+	if err != nil {
+		return 0, err
+	}
+	switch status {
+	case 0:
 		return 0, ErrSessionNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("store: get session: %w", err)
-	}
-	uid, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("store: parse session uid: %w", err)
-	}
-	active, err := s.rdb.Get(ctx, activeSessionKey(uid)).Result()
-	if errors.Is(err, redis.Nil) {
-		ttl, ttlErr := s.rdb.PTTL(ctx, sessionKey(token)).Result()
-		if ttlErr != nil {
-			return 0, fmt.Errorf("store: get session ttl: %w", ttlErr)
-		}
-		if ttl <= 0 {
-			ttl = time.Minute
-		}
-		claimed, claimErr := s.rdb.SetNX(ctx, activeSessionKey(uid), token, ttl).Result()
-		if claimErr != nil {
-			return 0, fmt.Errorf("store: claim legacy session: %w", claimErr)
-		}
-		if claimed {
-			return uid, nil
-		}
-		active, err = s.rdb.Get(ctx, activeSessionKey(uid)).Result()
-	}
-	if err != nil {
-		return 0, fmt.Errorf("store: get active session: %w", err)
-	}
-	if active != token {
+	case 2:
 		return 0, ErrSessionReplaced
+	case 1:
+		if len(result) != 2 {
+			return 0, errors.New("store: missing session uid")
+		}
+	default:
+		return 0, fmt.Errorf("store: unknown session validation status %d", status)
+	}
+	uid, err := strconv.ParseUint(fmt.Sprint(result[1]), 10, 64)
+	if err != nil || uid == 0 {
+		return 0, fmt.Errorf("store: parse session uid %q", fmt.Sprint(result[1]))
 	}
 	return uid, nil
+}
+
+func sessionValidationStatus(value any) (int64, error) {
+	switch status := value.(type) {
+	case int64:
+		return status, nil
+	case string:
+		parsed, err := strconv.ParseInt(status, 10, 64)
+		if err == nil {
+			return parsed, nil
+		}
+	}
+	return 0, fmt.Errorf("store: invalid session validation status %q", fmt.Sprint(value))
 }
 
 var deleteSessionScript = redis.NewScript(`

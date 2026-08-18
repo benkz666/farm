@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: benchstub
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: benchstub
+  ports:
+    - {name: farm-grpc, port: 9210, targetPort: 9210}
+    - {name: social-grpc, port: 9204, targetPort: 9204}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benchstub
+  namespace: benkz
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: benchstub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: benchstub
+        app.kubernetes.io/part-of: farm-bench
+    spec:
+      containers:
+        - name: benchstub
+          image: benkz/benchstub:module-v1
+          imagePullPolicy: Never
+          args:
+            - -farm-addr=:9210
+            - -social-addr=:9204
+            - -enter-bytes=4800
+            - -farm-delay=2ms
+            - -social-delay=1ms
+          env:
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
+          ports:
+            - {name: farm-grpc, containerPort: 9210}
+            - {name: social-grpc, containerPort: 9204}
+          resources:
+            requests: {cpu: "2", memory: 512Mi}
+            limits: {cpu: "2", memory: 512Mi}

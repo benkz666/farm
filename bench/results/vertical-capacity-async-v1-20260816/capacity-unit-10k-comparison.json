@@ -1,0 +1,54 @@
+{
+  "decision": "retain the larger per-service result",
+  "planning_utilization": 0.7,
+  "production_scale_factor": 33.333333,
+  "services": {
+    "farm": {
+      "baseline_production_cpu_cores": 149.87185180335877,
+      "conservative_selected_cpu_cores": 149.87185180335877,
+      "relative_difference": -0.2748992652470294,
+      "ten_thousand_cpu_cores_per_1000_qps": 0.22817160632321762,
+      "ten_thousand_production_cpu_cores": 108.67218986140377,
+      "ten_thousand_unit_variable_cpu_cores": 2.2817160632321762
+    },
+    "gateway": {
+      "baseline_production_cpu_cores": 147.57464839911157,
+      "conservative_selected_cpu_cores": 147.57464839911157,
+      "relative_difference": -0.2331334133390928,
+      "ten_thousand_cpu_cores_per_1000_qps": 0.23765714285714284,
+      "ten_thousand_production_cpu_cores": 113.1700668955102,
+      "ten_thousand_unit_variable_cpu_cores": 2.3765714285714283
+    },
+    "mysql": {
+      "baseline_production_cpu_cores": 52.096265518855645,
+      "conservative_selected_cpu_cores": 52.096265518855645,
+      "relative_difference": -0.15714283856667144,
+      "ten_thousand_cpu_cores_per_1000_qps": 0.0921643749211021,
+      "ten_thousand_production_cpu_cores": 43.90971047649966,
+      "ten_thousand_unit_variable_cpu_cores": 0.921643749211021
+    },
+    "redis": {
+      "baseline_production_cpu_cores": 70.28968215261119,
+      "conservative_selected_cpu_cores": 70.28968215261119,
+      "relative_difference": -0.284895089845367,
+      "ten_thousand_cpu_cores_per_1000_qps": 0.10551237245382805,
+      "ten_thousand_production_cpu_cores": 50.26449684054074,
+      "ten_thousand_unit_variable_cpu_cores": 1.0551237245382805
+    },
+    "social": {
+      "baseline_production_cpu_cores": 27.960135927456207,
+      "conservative_selected_cpu_cores": 27.960135927456207,
+      "relative_difference": -0.22468172634740136,
+      "ten_thousand_cpu_cores_per_1000_qps": 0.045523809523809515,
+      "ten_thousand_production_cpu_cores": 21.678004318367346,
+      "ten_thousand_unit_variable_cpu_cores": 0.45523809523809516
+    }
+  },
+  "ten_thousand_slo": "pass",
+  "totals": {
+    "baseline_production_cpu_cores": 447.79258380139345,
+    "conservative_selected_cpu_cores": 447.79258380139345,
+    "relative_difference": -0.24586855475458888,
+    "ten_thousand_production_cpu_cores": 337.6944683923217
+  }
+}

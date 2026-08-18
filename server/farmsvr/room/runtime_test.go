@@ -381,6 +381,20 @@ func TestRuntimeBusyActorShedsCallWithoutRunningCallback(t *testing.T) {
 	}
 }
 
+func TestCallTimerPoolDrainsExpiredTimerBeforeReuse(t *testing.T) {
+	timer := acquireCallTimer(time.Millisecond)
+	<-timer.C
+	releaseCallTimer(timer)
+
+	reused := acquireCallTimer(20 * time.Millisecond)
+	defer releaseCallTimer(reused)
+	select {
+	case <-reused.C:
+	case <-time.After(time.Second):
+		t.Fatal("reused call timer did not fire")
+	}
+}
+
 func TestResultCacheEvictsOldestBeyondCapacity(t *testing.T) {
 	var actor FarmActor
 	for reqID := uint64(1); reqID <= resultCacheCapacity+1; reqID++ {

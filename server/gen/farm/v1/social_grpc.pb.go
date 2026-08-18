@@ -20,6 +20,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SocialService_ExecuteClientCommand_FullMethodName       = "/farm.internal.v1.SocialService/ExecuteClientCommand"
+	SocialService_ExecuteBatchStream_FullMethodName         = "/farm.internal.v1.SocialService/ExecuteBatchStream"
 	SocialService_AreFriends_FullMethodName                 = "/farm.internal.v1.SocialService/AreFriends"
 	SocialService_AddFriends_FullMethodName                 = "/farm.internal.v1.SocialService/AddFriends"
 	SocialService_RemoveFriends_FullMethodName              = "/farm.internal.v1.SocialService/RemoveFriends"
@@ -43,6 +44,9 @@ type SocialServiceClient interface {
 	// social command. Lower-level typed methods remain available to Farm for
 	// authorization and cross-farm orchestration.
 	ExecuteClientCommand(ctx context.Context, in *ClientCommandRequest, opts ...grpc.CallOption) (*ClientCommandResponse, error)
+	// ExecuteBatchStream amortizes per-command HTTP/2 metadata on the same hot
+	// Gateway path while retaining unary compatibility for rolling upgrades.
+	ExecuteBatchStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse], error)
 	AreFriends(ctx context.Context, in *AreFriendsRequest, opts ...grpc.CallOption) (*AreFriendsResponse, error)
 	AddFriends(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
 	RemoveFriends(ctx context.Context, in *PairRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -73,6 +77,19 @@ func (c *socialServiceClient) ExecuteClientCommand(ctx context.Context, in *Clie
 	}
 	return out, nil
 }
+
+func (c *socialServiceClient) ExecuteBatchStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SocialService_ServiceDesc.Streams[0], SocialService_ExecuteBatchStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamExecuteBatchRequest, StreamExecuteBatchResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SocialService_ExecuteBatchStreamClient = grpc.BidiStreamingClient[StreamExecuteBatchRequest, StreamExecuteBatchResponse]
 
 func (c *socialServiceClient) AreFriends(ctx context.Context, in *AreFriendsRequest, opts ...grpc.CallOption) (*AreFriendsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -176,7 +193,7 @@ func (c *socialServiceClient) RejectFriendRequest(ctx context.Context, in *PairR
 
 func (c *socialServiceClient) WatchFriendInvalidations(ctx context.Context, in *UidRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[FriendInvalidation], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &SocialService_ServiceDesc.Streams[0], SocialService_WatchFriendInvalidations_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &SocialService_ServiceDesc.Streams[1], SocialService_WatchFriendInvalidations_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +220,9 @@ type SocialServiceServer interface {
 	// social command. Lower-level typed methods remain available to Farm for
 	// authorization and cross-farm orchestration.
 	ExecuteClientCommand(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error)
+	// ExecuteBatchStream amortizes per-command HTTP/2 metadata on the same hot
+	// Gateway path while retaining unary compatibility for rolling upgrades.
+	ExecuteBatchStream(grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]) error
 	AreFriends(context.Context, *AreFriendsRequest) (*AreFriendsResponse, error)
 	AddFriends(context.Context, *PairRequest) (*Empty, error)
 	RemoveFriends(context.Context, *PairRequest) (*Empty, error)
@@ -226,6 +246,9 @@ type UnimplementedSocialServiceServer struct{}
 
 func (UnimplementedSocialServiceServer) ExecuteClientCommand(context.Context, *ClientCommandRequest) (*ClientCommandResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExecuteClientCommand not implemented")
+}
+func (UnimplementedSocialServiceServer) ExecuteBatchStream(grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ExecuteBatchStream not implemented")
 }
 func (UnimplementedSocialServiceServer) AreFriends(context.Context, *AreFriendsRequest) (*AreFriendsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AreFriends not implemented")
@@ -298,6 +321,13 @@ func _SocialService_ExecuteClientCommand_Handler(srv interface{}, ctx context.Co
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _SocialService_ExecuteBatchStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SocialServiceServer).ExecuteBatchStream(&grpc.GenericServerStream[StreamExecuteBatchRequest, StreamExecuteBatchResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SocialService_ExecuteBatchStreamServer = grpc.BidiStreamingServer[StreamExecuteBatchRequest, StreamExecuteBatchResponse]
 
 func _SocialService_AreFriends_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AreFriendsRequest)
@@ -543,6 +573,12 @@ var SocialService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "ExecuteBatchStream",
+			Handler:       _SocialService_ExecuteBatchStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "WatchFriendInvalidations",
 			Handler:       _SocialService_WatchFriendInvalidations_Handler,

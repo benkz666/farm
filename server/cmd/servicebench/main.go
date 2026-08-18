@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,31 +27,45 @@ import (
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 )
 
 type result struct {
-	Mode               string                `json:"mode"`
-	WarmupMode         string                `json:"warmup_mode,omitempty"`
-	RequestsPerAccount int                   `json:"requests_per_account,omitempty"`
-	TargetQPS          int                   `json:"target_qps"`
-	Sent               uint64                `json:"sent"`
-	Succeeded          uint64                `json:"succeeded"`
-	Failed             uint64                `json:"failed"`
-	ActualQPS          float64               `json:"actual_qps"`
-	AverageMS          float64               `json:"average_ms"`
-	P50MS              float64               `json:"p50_ms"`
-	P90MS              float64               `json:"p90_ms"`
-	P95MS              float64               `json:"p95_ms"`
-	P99MS              float64               `json:"p99_ms"`
-	MaxMS              float64               `json:"max_ms"`
-	WallMillis         int64                 `json:"wall_millis"`
-	StartedMS          int64                 `json:"measurement_start_unix_ms"`
-	EndedMS            int64                 `json:"measurement_end_unix_ms"`
-	FirstError         int32                 `json:"first_error_code,omitempty"`
-	TimedOut           bool                  `json:"timed_out,omitempty"`
-	Steps              map[string]stepResult `json:"steps,omitempty"`
+	Mode                       string                `json:"mode"`
+	WarmupMode                 string                `json:"warmup_mode,omitempty"`
+	StateReadyMS               int64                 `json:"state_ready_unix_ms,omitempty"`
+	StateWindowMillis          int64                 `json:"state_window_millis,omitempty"`
+	RequestsPerAccount         int                   `json:"requests_per_account,omitempty"`
+	TargetQPS                  int                   `json:"target_qps"`
+	Sent                       uint64                `json:"sent"`
+	Succeeded                  uint64                `json:"succeeded"`
+	Failed                     uint64                `json:"failed"`
+	ActualQPS                  float64               `json:"actual_qps"`
+	CompletionQPS              float64               `json:"completion_qps,omitempty"`
+	AverageMS                  float64               `json:"average_ms"`
+	P50MS                      float64               `json:"p50_ms"`
+	P90MS                      float64               `json:"p90_ms"`
+	P95MS                      float64               `json:"p95_ms"`
+	P99MS                      float64               `json:"p99_ms"`
+	MaxMS                      float64               `json:"max_ms"`
+	WallMillis                 int64                 `json:"wall_millis"`
+	StartedMS                  int64                 `json:"measurement_start_unix_ms"`
+	EndedMS                    int64                 `json:"measurement_end_unix_ms"`
+	FirstError                 int32                 `json:"first_error_code,omitempty"`
+	FirstErrorMessage          string                `json:"first_error_message,omitempty"`
+	TimedOut                   bool                  `json:"timed_out,omitempty"`
+	MeasurementMillis          int64                 `json:"measurement_millis,omitempty"`
+	DrainMillis                int64                 `json:"drain_millis,omitempty"`
+	ExcludedOperations         []string              `json:"excluded_operations,omitempty"`
+	ErrorCodes                 map[int32]uint64      `json:"error_codes,omitempty"`
+	Steps                      map[string]stepResult `json:"steps,omitempty"`
+	ResidentActorsTarget       int                   `json:"resident_actors_target,omitempty"`
+	ResidentActorRefreshes     uint64                `json:"resident_actor_refreshes,omitempty"`
+	ResidentActorRefreshFailed uint64                `json:"resident_actor_refresh_failures,omitempty"`
+	ConnectionKeepalives       uint64                `json:"connection_keepalives,omitempty"`
+	ConnectionKeepaliveFailed  uint64                `json:"connection_keepalive_failures,omitempty"`
 }
 
 const (
@@ -59,21 +74,27 @@ const (
 )
 
 type stepResult struct {
-	Succeeded uint64  `json:"succeeded"`
-	Failed    uint64  `json:"failed"`
-	AverageMS float64 `json:"average_ms"`
-	P90MS     float64 `json:"p90_ms"`
-	P95MS     float64 `json:"p95_ms"`
-	P99MS     float64 `json:"p99_ms"`
-	MaxMS     float64 `json:"max_ms"`
+	TargetQPS  float64          `json:"target_qps,omitempty"`
+	Sent       uint64           `json:"sent"`
+	Succeeded  uint64           `json:"succeeded"`
+	Failed     uint64           `json:"failed"`
+	ActualQPS  float64          `json:"actual_qps"`
+	AverageMS  float64          `json:"average_ms"`
+	P90MS      float64          `json:"p90_ms"`
+	P95MS      float64          `json:"p95_ms"`
+	P99MS      float64          `json:"p99_ms"`
+	MaxMS      float64          `json:"max_ms"`
+	ErrorCodes map[int32]uint64 `json:"error_codes,omitempty"`
 }
 
 type recorder struct {
-	mu        sync.Mutex
-	latencies []time.Duration
-	succeeded atomic.Uint64
-	failed    atomic.Uint64
-	firstErr  atomic.Int32
+	mu         sync.Mutex
+	latencies  []time.Duration
+	succeeded  atomic.Uint64
+	failed     atomic.Uint64
+	firstErr   atomic.Int32
+	firstMsg   atomic.Pointer[string]
+	errorCodes map[int32]uint64
 }
 
 func (recorder *recorder) add(latency time.Duration, ok bool, code int32) {
@@ -84,41 +105,73 @@ func (recorder *recorder) add(latency time.Duration, ok bool, code int32) {
 		recorder.firstErr.CompareAndSwap(0, code)
 	}
 	recorder.mu.Lock()
-	recorder.latencies = append(recorder.latencies, latency)
+	// Latency SLO is evaluated on successful business responses. Keeping fast
+	// rejects and local queue drops in the percentile sample would make an
+	// overloaded system appear faster; failures remain visible in ErrorCodes.
+	if ok {
+		recorder.latencies = append(recorder.latencies, latency)
+	}
+	if !ok {
+		if recorder.errorCodes == nil {
+			recorder.errorCodes = make(map[int32]uint64)
+		}
+		recorder.errorCodes[code]++
+	}
 	recorder.mu.Unlock()
 }
 
+func (recorder *recorder) recordErrorMessage(err error) {
+	if recorder == nil || err == nil || recorder.firstMsg.Load() != nil {
+		return
+	}
+	message := err.Error()
+	recorder.firstMsg.CompareAndSwap(nil, &message)
+}
+
 func main() {
-	mode := flag.String("mode", "farm-stream", "farm-stream, gateway-ws, gateway-handshake, gateway-startup or social-are-friends")
+	mode := flag.String("mode", "farm-stream", "farm-stream, gateway-ws, gateway-mixed, gateway-handshake, gateway-startup, social-mixed, social-are-friends or mysql-are-friends")
 	target := flag.String("target", "farm:9210", "gRPC target")
-	token := flag.String("token", "perf-internal-token", "internal bearer token")
+	token := flag.String("token", os.Getenv("FARM_INTERNAL_TOKEN"), "internal bearer token")
 	qps := flag.Int("qps", 20000, "open-loop target QPS")
 	duration := flag.Duration("duration", 20*time.Second, "measurement duration")
 	concurrency := flag.Int("concurrency", 512, "maximum in-flight requests")
 	warmupConcurrency := flag.Int("warmup-concurrency", 512, "maximum concurrent WebSocket setup/warmup operations before measurement")
 	warmupSettle := flag.Duration("warmup-settle", 2*time.Second, "idle time after WebSocket/Actor warmup and before measurement")
 	fixedConnections := flag.Int("fixed-connections", 0, "exact WebSocket count for comparable gateway scenarios; zero derives it from target QPS")
+	residentActors := flag.Int("resident-actors", 0, "target resident Farm Actor working set for gateway-mixed; zero equals fixed connections")
+	residentActorRefresh := flag.Duration("resident-actor-refresh", 110*time.Second, "maximum refresh cycle for extra resident Actors")
+	measurementStartUnixMS := flag.Int64("measurement-start-unix-ms", 0, "optional absolute start barrier shared by sharded generators")
+	measurementReadyFile := flag.String("measurement-ready-file", "", "optional file written after this shard finishes state warmup")
+	measurementStartFile := flag.String("measurement-start-file", "", "optional shared release file containing the logical start Unix milliseconds")
+	fixtureAccountOffset := flag.Int("fixture-account-offset", 0, "skip this many fixture accounts before selecting gateway-ws connections")
 	warmupMode := flag.String("warmup-mode", gatewayWarmupFull, "gateway warmup mode: full or session-only")
 	requestsPerAccount := flag.Int("requests-per-account", 0, "maximum measured requests per account/UID; zero is unlimited")
+	socialHotUsers := flag.Int("social-hot-users", 2600, "hot UID set used by social-mixed; four of every five arrivals reuse it")
 	uidBase := flag.Uint64("uid-base", 1470, "first fixture UID")
 	uidCount := flag.Uint64("uid-count", 2600, "number of fixture UIDs")
 	operation := flag.String("operation", "sync", "operation: enter, sync, sync-snapshot, ping, water, harvest, steal, water-visitor, buy, sell, friend-list, search-user, task-list or mail-list")
 	accounts := flag.String("accounts", "", "gateway-ws account fixture JSON")
+	behaviorModel := flag.String("behavior-model", "", "gateway-mixed behavior model JSON")
+	excludeOperations := flag.String("exclude-operations", "", "comma-separated gateway-mixed operations to exclude for bottleneck isolation")
+	mysqlDSN := flag.String("mysql-dsn", "", "MySQL DSN used by mysql-are-friends")
 	gatewayURLs := flag.String("gateway-urls", "", "optional comma-separated WebSocket URLs distributed round-robin across fixture accounts")
 	perConnectionQPS := flag.Int("per-connection-qps", 8, "gateway-ws maximum commands per connection per second")
 	output := flag.String("output", "", "optional JSON result path")
 	flag.Parse()
-	if *qps <= 0 || *duration <= 0 || *concurrency <= 0 || *warmupConcurrency <= 0 || *warmupSettle < 0 || *fixedConnections < 0 || *requestsPerAccount < 0 || *uidCount == 0 {
-		panic("qps, duration, concurrency, warmup-concurrency and uid-count must be positive; warmup-settle, fixed-connections and requests-per-account must not be negative")
+	if *qps <= 0 || *duration <= 0 || *concurrency <= 0 || *warmupConcurrency <= 0 || *warmupSettle < 0 || *fixedConnections < 0 || *residentActors < 0 || *residentActorRefresh < 0 || *fixtureAccountOffset < 0 || *requestsPerAccount < 0 || *uidCount == 0 {
+		panic("qps, duration, concurrency, warmup-concurrency and uid-count must be positive; warmup-settle, fixed-connections, resident-actor-refresh, fixture-account-offset and requests-per-account must not be negative")
 	}
 	if !validGatewayWarmupMode(*warmupMode) {
 		panic(fmt.Sprintf("unsupported warmup mode %q", *warmupMode))
+	}
+	if *measurementStartUnixMS > 0 && *measurementStartFile != "" {
+		panic("measurement-start-unix-ms and measurement-start-file are mutually exclusive")
 	}
 
 	// Large formal fixtures can prewarm tens of thousands of Actor/WebSocket
 	// sessions. That work remains outside the measured window but needs its own
 	// generous deadline so a valid run is not mistaken for a measurement timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), *duration+2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *duration+10*time.Minute)
 	defer cancel()
 
 	var measured result
@@ -133,9 +186,11 @@ func main() {
 		}
 		measured, err = runFarmStream(ctx, conn, *qps, *duration, *concurrency, *uidBase, *uidCount, *operation)
 	case "gateway-ws":
-		measured, err = runGatewayWS(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *perConnectionQPS, *fixedConnections, *operation, *warmupMode, *requestsPerAccount)
+		measured, err = runGatewayWS(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *perConnectionQPS, *fixedConnections, *fixtureAccountOffset, *operation, *warmupMode, *requestsPerAccount)
+	case "gateway-mixed":
+		measured, err = runGatewayMixed(ctx, *accounts, *behaviorModel, *gatewayURLs, *excludeOperations, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *fixedConnections, *residentActors, *residentActorRefresh, *measurementStartUnixMS, *measurementReadyFile, *measurementStartFile)
 	case "gateway-handshake":
-		measured, err = runGatewayHandshake(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency)
+		measured, err = runGatewayHandshake(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *fixtureAccountOffset, *measurementStartUnixMS)
 	case "gateway-startup":
 		measured, err = runGatewayStartup(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency)
 	case "social-are-friends":
@@ -146,6 +201,16 @@ func main() {
 			panic(connErr)
 		}
 		measured, err = runSocial(ctx, conn, *qps, *duration, *concurrency, *uidBase, *uidCount, *requestsPerAccount)
+	case "social-mixed":
+		pool := grpcx.NewPool(*token)
+		defer pool.Close()
+		conn, connErr := pool.Conn(ctx, *target)
+		if connErr != nil {
+			panic(connErr)
+		}
+		measured, err = runSocialMixed(ctx, conn, *accounts, *behaviorModel, *qps, *duration, *concurrency, *socialHotUsers, *measurementStartUnixMS)
+	case "mysql-are-friends":
+		measured, err = runMySQLAreFriends(ctx, *mysqlDSN, *qps, *duration, *concurrency, *uidBase, *uidCount)
 	default:
 		err = fmt.Errorf("unsupported mode %q", *mode)
 	}
@@ -161,10 +226,86 @@ func main() {
 	}
 }
 
+func runMySQLAreFriends(
+	ctx context.Context,
+	dsn string,
+	qps int,
+	duration time.Duration,
+	concurrency int,
+	uidBase, uidCount uint64,
+) (result, error) {
+	if strings.TrimSpace(dsn) == "" {
+		return result{}, fmt.Errorf("mysql-are-friends requires -mysql-dsn")
+	}
+	database, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return result{}, err
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(concurrency)
+	database.SetMaxIdleConns(concurrency)
+	if err := database.PingContext(ctx); err != nil {
+		return result{}, err
+	}
+	statement, err := database.PrepareContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM friendship WHERE uid_lo = ? AND uid_hi = ?)`,
+	)
+	if err != nil {
+		return result{}, err
+	}
+	defer statement.Close()
+
+	type job struct {
+		id      uint64
+		started time.Time
+	}
+	jobs := make(chan job, concurrency)
+	recorded := &recorder{}
+	var workers sync.WaitGroup
+	for range concurrency {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for request := range jobs {
+				left := uidBase + request.id%uidCount
+				right := uidBase + (request.id+1)%uidCount
+				var exists bool
+				queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				err := statement.QueryRowContext(queryCtx, left, right).Scan(&exists)
+				cancel()
+				recorded.add(time.Since(request.started), err == nil, -1)
+			}
+		}()
+	}
+	started := time.Now()
+	deadline := started.Add(duration)
+	var sent uint64
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+sendLoop:
+	for now := range ticker.C {
+		if !now.Before(deadline) {
+			break
+		}
+		expected := uint64(now.Sub(started).Seconds() * float64(qps))
+		for sent < expected {
+			sent++
+			select {
+			case jobs <- job{id: sent, started: time.Now()}:
+			case <-ctx.Done():
+				break sendLoop
+			}
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	return summarize("mysql-are-friends", qps, sent, time.Since(started), recorded, ctx.Err() != nil), nil
+}
+
 // runGatewayHandshake measures only WebSocket dial + protocol Handshake using
 // pre-issued fixture tokens. It deliberately never calls /api/login, so bcrypt
 // capacity cannot contaminate the connection benchmark.
-func runGatewayHandshake(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, concurrency int) (result, error) {
+func runGatewayHandshake(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, concurrency, accountOffset int, measurementStartUnixMS int64) (result, error) {
 	if fixturePath == "" {
 		return result{}, fmt.Errorf("gateway-handshake requires -accounts")
 	}
@@ -182,6 +323,10 @@ func runGatewayHandshake(ctx context.Context, fixturePath, gatewayURLs string, q
 	if len(fixture.Accounts) == 0 {
 		return result{}, fmt.Errorf("gateway account fixture is empty")
 	}
+	if accountOffset < 0 || accountOffset >= len(fixture.Accounts) {
+		return result{}, fmt.Errorf("gateway handshake account offset %d is outside fixture size %d", accountOffset, len(fixture.Accounts))
+	}
+	fixture.Accounts = fixture.Accounts[accountOffset:]
 	if gatewayURLs != "" {
 		urls, err := parseGatewayURLs(gatewayURLs)
 		if err != nil {
@@ -216,7 +361,17 @@ func runGatewayHandshake(ctx context.Context, fixturePath, gatewayURLs string, q
 		}()
 	}
 
+	if measurementStartUnixMS > 0 {
+		if err := waitUntil(ctx, time.UnixMilli(measurementStartUnixMS)); err != nil {
+			close(jobs)
+			workers.Wait()
+			return result{}, err
+		}
+	}
 	started := time.Now()
+	if measurementStartUnixMS > 0 {
+		started = time.UnixMilli(measurementStartUnixMS)
+	}
 	for index := 0; index < total; index++ {
 		if err := waitUntil(ctx, started.Add(oneShotStartOffset(index, qps))); err != nil {
 			break
@@ -246,6 +401,12 @@ type gatewayAccount struct {
 	CropID       int    `json:"crop_id"`
 	ItemID       int    `json:"item_id"`
 	Quantity     int    `json:"quantity"`
+	TaskID       int    `json:"task_id"`
+	TaskIDs      []int  `json:"task_ids,omitempty"`
+	MailID       string `json:"mail_id"`
+	MailReadID   string `json:"mail_read_id,omitempty"`
+	MailClaimID  string `json:"mail_claim_id,omitempty"`
+	MailDeleteID string `json:"mail_delete_id,omitempty"`
 }
 
 type gatewayBenchConnection struct {
@@ -468,7 +629,7 @@ func parseGatewayURLs(raw string) ([]string, error) {
 	return urls, nil
 }
 
-func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, maxConnections, warmupConcurrency int, warmupSettle time.Duration, perConnectionQPS, fixedConnections int, operation, warmupMode string, requestsPerAccount int) (result, error) {
+func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int, duration time.Duration, maxConnections, warmupConcurrency int, warmupSettle time.Duration, perConnectionQPS, fixedConnections, fixtureAccountOffset int, operation, warmupMode string, requestsPerAccount int) (result, error) {
 	if !gatewayOperationSupported(operation) {
 		return result{}, fmt.Errorf("unsupported gateway operation %q", operation)
 	}
@@ -498,6 +659,14 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 	if fixture.TimeProfile != "" && !gameconfig.ValidTimeProfile(fixture.TimeProfile) {
 		return result{}, fmt.Errorf("gateway account fixture has invalid time_profile %q", fixture.TimeProfile)
 	}
+	if fixtureAccountOffset < 0 || fixtureAccountOffset >= len(fixture.Accounts) {
+		return result{}, fmt.Errorf(
+			"fixture-account-offset %d is outside fixture account range [0,%d)",
+			fixtureAccountOffset,
+			len(fixture.Accounts),
+		)
+	}
+	fixture.Accounts = fixture.Accounts[fixtureAccountOffset:]
 	if err := validateGatewayFixturePlots(fixture.Accounts, operation); err != nil {
 		return result{}, err
 	}
@@ -647,11 +816,11 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 			<-start
 			for round := 0; ; round++ {
 				if requestsPerAccount > 0 && round >= requestsPerAccount {
-					return
+					break
 				}
 				globalIndex := round*connections + index
 				if globalIndex >= plannedOperations {
-					return
+					break
 				}
 				// Interleave accounts in each round. This keeps the global stream
 				// evenly paced and gives one account connections/qps seconds between
@@ -672,8 +841,18 @@ func runGatewayWS(ctx context.Context, fixturePath, gatewayURLs string, qps int,
 				code := int32(-1)
 				if exchangeErr == nil {
 					code = int32(response.Err)
+				} else {
+					recorded.recordErrorMessage(exchangeErr)
 				}
 				recorded.add(time.Since(requestStarted), exchangeErr == nil && response.Err == 0, code)
+			}
+			// A fixed connection pool is also used to measure resident connection
+			// cost. Keep every successfully opened socket alive for the complete
+			// measurement window; otherwise workers with an early final request
+			// close first and silently turn the last connections/qps seconds into
+			// a connection ramp-down instead of a steady-state measurement.
+			if fixedConnections > 0 {
+				_ = waitUntil(ctx, measurementStarted.Add(duration))
 			}
 		}(index, client)
 	}
@@ -778,6 +957,15 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 	if err != nil {
 		return nil, err
 	}
+	setupDeadline := time.Now().Add(30 * time.Second)
+	if err := conn.SetReadDeadline(setupDeadline); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := conn.SetWriteDeadline(setupDeadline); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	searchUsername := account.PeerUsername
 	if searchUsername == "" {
 		searchUsername = account.Username
@@ -823,6 +1011,14 @@ func openGatewayBenchConnection(ctx context.Context, account gatewayAccount, ope
 			_ = conn.Close()
 			return nil, fmt.Errorf("gateway %s warm request: err=%v code=%d", operation, err, response.Err)
 		}
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return nil, err
 	}
 	return client, nil
 }
@@ -1251,6 +1447,10 @@ func summarize(mode string, targetQPS int, sent uint64, wall time.Duration, reco
 		EndedMS:    endedAt.UnixMilli(),
 		FirstError: recorder.firstErr.Load(),
 		TimedOut:   timedOut,
+		ErrorCodes: recorderErrorCodes(recorder),
+	}
+	if firstMessage := recorder.firstMsg.Load(); firstMessage != nil {
+		measured.FirstErrorMessage = *firstMessage
 	}
 	if wall > 0 {
 		measured.ActualQPS = float64(measured.Succeeded) / wall.Seconds()
@@ -1272,13 +1472,23 @@ func summarize(mode string, targetQPS int, sent uint64, wall time.Duration, reco
 }
 
 func summarizeStep(recorder *recorder) stepResult {
+	return summarizeWeightedStep(recorder, 0, 0)
+}
+
+func summarizeWeightedStep(recorder *recorder, targetQPS float64, wall time.Duration) stepResult {
 	recorder.mu.Lock()
 	latencies := append([]time.Duration(nil), recorder.latencies...)
 	recorder.mu.Unlock()
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 	measured := stepResult{
-		Succeeded: recorder.succeeded.Load(),
-		Failed:    recorder.failed.Load(),
+		TargetQPS:  targetQPS,
+		Sent:       recorder.succeeded.Load() + recorder.failed.Load(),
+		Succeeded:  recorder.succeeded.Load(),
+		Failed:     recorder.failed.Load(),
+		ErrorCodes: recorderErrorCodes(recorder),
+	}
+	if wall > 0 {
+		measured.ActualQPS = float64(measured.Succeeded) / wall.Seconds()
 	}
 	if len(latencies) == 0 {
 		return measured
@@ -1293,6 +1503,19 @@ func summarizeStep(recorder *recorder) stepResult {
 	measured.P99MS = millis(percentile(latencies, 0.99))
 	measured.MaxMS = millis(latencies[len(latencies)-1])
 	return measured
+}
+
+func recorderErrorCodes(recorder *recorder) map[int32]uint64 {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.errorCodes) == 0 {
+		return nil
+	}
+	copied := make(map[int32]uint64, len(recorder.errorCodes))
+	for code, count := range recorder.errorCodes {
+		copied[code] = count
+	}
+	return copied
 }
 
 func percentile(sorted []time.Duration, fraction float64) time.Duration {

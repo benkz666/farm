@@ -1,0 +1,757 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "screening",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023993333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 3.17944,
+          "p99_ms": 6.918807,
+          "pass": true,
+          "sent": 3599,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3599,
+      "succeeded": 3599,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.17944,
+      "worst_p99_ms": 6.918807
+    },
+    "clear": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02632,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.287498,
+          "p99_ms": 7.370345,
+          "pass": true,
+          "sent": 3948,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3948,
+      "succeeded": 3948,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.287498,
+      "worst_p99_ms": 7.370345
+    },
+    "codex-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.022053333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 1.58427,
+          "p99_ms": 2.047909,
+          "pass": true,
+          "sent": 3308,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3308,
+      "succeeded": 3308,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.58427,
+      "worst_p99_ms": 2.047909
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.050686666666666665,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 2.467498,
+          "p99_ms": 6.072647,
+          "pass": true,
+          "sent": 7603,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7603,
+      "succeeded": 7603,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.467498,
+      "worst_p99_ms": 6.072647
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.010133333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 1.726676,
+          "p99_ms": 2.219455,
+          "pass": true,
+          "sent": 1520,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 1520,
+      "succeeded": 1520,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.726676,
+      "worst_p99_ms": 2.219455
+    },
+    "fertilize": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03132666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 3.303316,
+          "p99_ms": 7.112891,
+          "pass": true,
+          "sent": 4699,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4699,
+      "succeeded": 4699,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.303316,
+      "worst_p99_ms": 7.112891
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.055426666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 2.833558,
+          "p99_ms": 6.806838,
+          "pass": true,
+          "sent": 8314,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 8314,
+      "succeeded": 8314,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.833558,
+      "worst_p99_ms": 6.806838
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0129,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.748326,
+          "p99_ms": 2.562296,
+          "pass": true,
+          "sent": 1935,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 1935,
+      "succeeded": 1935,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.748326,
+      "worst_p99_ms": 2.562296
+    },
+    "harvest": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05106,
+          "error_rate": 0.0,
+          "expected_weight": 0.05,
+          "p90_ms": 3.277558,
+          "p99_ms": 7.17074,
+          "pass": true,
+          "sent": 7659,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7659,
+      "succeeded": 7659,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.277558,
+      "worst_p99_ms": 7.17074
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04563333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.542596,
+          "p99_ms": 3.204869,
+          "pass": true,
+          "sent": 6845,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6845,
+      "succeeded": 6845,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.542596,
+      "worst_p99_ms": 3.204869
+    },
+    "mail-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.012146666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 6.574615,
+          "p99_ms": 21.060781,
+          "pass": true,
+          "sent": 1822,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 1822,
+      "succeeded": 1822,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 6.574615,
+      "worst_p99_ms": 21.060781
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.00192,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 5.865323,
+          "p99_ms": 10.970194,
+          "pass": true,
+          "sent": 288,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 288,
+      "succeeded": 288,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 5.865323,
+      "worst_p99_ms": 10.970194
+    },
+    "mail-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04529333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 2.867389,
+          "p99_ms": 8.827398,
+          "pass": true,
+          "sent": 6794,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6794,
+      "succeeded": 6794,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.867389,
+      "worst_p99_ms": 8.827398
+    },
+    "mail-read": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02078,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 6.382169,
+          "p99_ms": 20.007776,
+          "pass": true,
+          "sent": 3117,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3117,
+      "succeeded": 3117,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 6.382169,
+      "worst_p99_ms": 20.007776
+    },
+    "pest-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01666,
+          "error_rate": 0.0,
+          "expected_weight": 0.017,
+          "p90_ms": 3.247428,
+          "p99_ms": 7.720816,
+          "pass": true,
+          "sent": 2499,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 2499,
+      "succeeded": 2499,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.247428,
+      "worst_p99_ms": 7.720816
+    },
+    "pest-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.026973333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.240639,
+          "p99_ms": 6.908976,
+          "pass": true,
+          "sent": 4046,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4046,
+      "succeeded": 4046,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.240639,
+      "worst_p99_ms": 6.908976
+    },
+    "pet-activate": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.00196,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 3.224508,
+          "p99_ms": 10.37071,
+          "pass": true,
+          "sent": 294,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 294,
+      "succeeded": 294,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.224508,
+      "worst_p99_ms": 10.37071
+    },
+    "pet-feed": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01954,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 3.525612,
+          "p99_ms": 8.515346,
+          "pass": true,
+          "sent": 2931,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 2931,
+      "succeeded": 2931,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.525612,
+      "worst_p99_ms": 8.515346
+    },
+    "pet-status": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.024046666666666668,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 1.59123,
+          "p99_ms": 1.962301,
+          "pass": true,
+          "sent": 3607,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3607,
+      "succeeded": 3607,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.59123,
+      "worst_p99_ms": 1.962301
+    },
+    "plant": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04303333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 3.248048,
+          "p99_ms": 6.623324,
+          "pass": true,
+          "sent": 6455,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6455,
+      "succeeded": 6455,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.248048,
+      "worst_p99_ms": 6.623324
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.026886666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.524736,
+          "p99_ms": 3.017264,
+          "pass": true,
+          "sent": 4033,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4033,
+      "succeeded": 4033,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.524736,
+      "worst_p99_ms": 3.017264
+    },
+    "sell": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.018833333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 3.418864,
+          "p99_ms": 7.924942,
+          "pass": true,
+          "sent": 2825,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 2825,
+      "succeeded": 2825,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.418864,
+      "worst_p99_ms": 7.924942
+    },
+    "steal": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.042146666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 3.222739,
+          "p99_ms": 7.899341,
+          "pass": true,
+          "sent": 6322,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6322,
+      "succeeded": 6322,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.222739,
+      "worst_p99_ms": 7.899341
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0386,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 1.725236,
+          "p99_ms": 3.180851,
+          "pass": true,
+          "sent": 5790,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5790,
+      "succeeded": 5790,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.725236,
+      "worst_p99_ms": 3.180851
+    },
+    "task-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023893333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 6.329441,
+          "p99_ms": 22.914565,
+          "pass": true,
+          "sent": 3584,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3584,
+      "succeeded": 3584,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 6.329441,
+      "worst_p99_ms": 22.914565
+    },
+    "task-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0958,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 2.008369,
+          "p99_ms": 2.990953,
+          "pass": true,
+          "sent": 14370,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 14370,
+      "succeeded": 14370,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.008369,
+      "worst_p99_ms": 2.990953
+    },
+    "till": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.025993333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.302056,
+          "p99_ms": 6.924816,
+          "pass": true,
+          "sent": 3899,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3899,
+      "succeeded": 3899,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.302056,
+      "worst_p99_ms": 6.924816
+    },
+    "water-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04254,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 3.129833,
+          "p99_ms": 7.435183,
+          "pass": true,
+          "sent": 6381,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6381,
+      "succeeded": 6381,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.129833,
+      "worst_p99_ms": 7.435183
+    },
+    "water-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.08541333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.085,
+          "p90_ms": 3.223838,
+          "p99_ms": 7.046093,
+          "pass": true,
+          "sent": 12812,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12812,
+      "succeeded": 12812,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.223838,
+      "worst_p99_ms": 7.046093
+    },
+    "weed-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02542,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.074373,
+          "p99_ms": 7.443585,
+          "pass": true,
+          "sent": 3813,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3813,
+      "succeeded": 3813,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.074373,
+      "worst_p99_ms": 7.443585
+    },
+    "weed-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03258666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.033,
+          "p90_ms": 3.354177,
+          "p99_ms": 7.637948,
+          "pass": true,
+          "sent": 4888,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4888,
+      "succeeded": 4888,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.354177,
+      "worst_p99_ms": 7.637948
+    }
+  },
+  "rounds": [
+    {
+      "client_drain_milliseconds": 35,
+      "delivery_ratio": 1.0,
+      "failed_operations": [],
+      "missing_operations": [],
+      "pass": true,
+      "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1/client.json",
+      "target_qps": 5000,
+      "technical_error_rate": 0.0,
+      "unexpected_operations": []
+    }
+  ],
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 500,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 5000,
+  "verdict": "pass"
+}

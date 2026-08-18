@@ -33,6 +33,8 @@ message FarmWriteMutation {
   repeated FarmWriteOutbox outbox = 30;
   repeated FarmWriteTaskAdvance task_advances = 31;
   repeated FarmWriteCodexReward codex_rewards = 32;
+  repeated FarmWriteTaskClaim task_claims = 33;
+  repeated FarmWriteMailMutation mail_mutations = 34;
 }
 
 message FarmWritePlot {
@@ -87,4 +89,28 @@ message FarmWriteTaskAdvance {
 message FarmWriteCodexReward {
   uint32 crop_id = 1;
   uint32 harvest_count = 2;
+}
+
+// FarmWriteTaskClaim is an Actor-authoritative, monotonic task transition.
+// Economy is already carried as an absolute FarmWriteMutation player value;
+// the projector only materializes the claimed marker.
+message FarmWriteTaskClaim {
+  int64 day_key = 1;
+  uint32 task_id = 2;
+  int64 claimed_at = 3;
+}
+
+enum FarmWriteMailMutationKind {
+  FARM_WRITE_MAIL_MUTATION_KIND_UNSPECIFIED = 0;
+  FARM_WRITE_MAIL_MUTATION_KIND_READ = 1;
+  FARM_WRITE_MAIL_MUTATION_KIND_CLAIM = 2;
+  FARM_WRITE_MAIL_MUTATION_KIND_DELETE = 3;
+}
+
+// Mail transitions are monotonic (unread -> read, unclaimed -> claimed,
+// existing -> deleted), which makes projector replay naturally idempotent.
+message FarmWriteMailMutation {
+  uint64 mail_id = 1;
+  FarmWriteMailMutationKind kind = 2;
+  int64 occurred_at = 3;
 }

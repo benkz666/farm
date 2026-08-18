@@ -10,6 +10,7 @@ import (
 	"farm/server/farmsvr/room"
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
@@ -17,6 +18,7 @@ import (
 	"farm/server/shared/store"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestHandlerExecutesEnterFarmForAuthorizedAssignedFarm(t *testing.T) {
@@ -268,14 +270,68 @@ func TestHandlerSyncFarmAdvancesMatureStateAndPublishesDelta(t *testing.T) {
 	}
 }
 
+func TestHandlerPreparedCaughtUpSyncSkipsTypedResponse(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.FarmSeq = 7
+	handler := NewHandler(
+		runtimeStub{actor: &room.FarmActor{Aggregate: aggregate}},
+		nil,
+		func(uint64) bool { return true },
+		func() int64 { return 123 },
+	)
+
+	response := handler.Execute(CommandRequest{
+		Operation:      OperationSyncFarm,
+		FarmUID:        42,
+		PreferPrepared: true,
+		SyncRequest:    &publicv3.SyncFarmRequest{FromSeq: 7},
+	})
+	if response.Err != errcode.OK || response.SyncFarmResponse != nil ||
+		response.PreparedField != clientwire.PreparedSyncFarmResponse || len(response.PreparedPayload) == 0 {
+		t.Fatalf("prepared SyncFarm response = %#v", response)
+	}
+	var decoded publicv3.SyncFarmResponse
+	if err := proto.Unmarshal(response.PreparedPayload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.FarmSeq != 7 || decoded.ServerTime != 123 || decoded.TimeProfile == "" ||
+		decoded.Snapshot != nil || len(decoded.Deltas) != 0 {
+		t.Fatalf("decoded prepared SyncFarm response = %#v", &decoded)
+	}
+}
+
+func TestHandlerFlatCaughtUpSyncDefersPayloadToGateway(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.FarmSeq = 7
+	handler := NewHandler(
+		runtimeStub{actor: &room.FarmActor{Aggregate: aggregate}},
+		nil,
+		func(uint64) bool { return true },
+		func() int64 { return 123 },
+	)
+
+	response := handler.syncFarmPreparedSelf(t.Context(), 42, presence.ConnRef{
+		ConnID: 8, GatewayID: "gateway-1",
+	}, 7)
+	if response.Err != errcode.OK || response.FarmSeq != 7 || !response.SyncCaughtUp ||
+		response.SyncServerTime != 123 || response.SyncTimeProfile == "" ||
+		response.PreparedField != clientwire.PreparedSyncFarmResponse ||
+		len(response.PreparedPayload) != 0 || response.SyncFarmResponse != nil {
+		t.Fatalf("flat prepared SyncFarm response = %#v", response)
+	}
+}
+
 func TestHandlerTaskClaimCreditsDirectReward(t *testing.T) {
 	aggregate := farm.NewAggregate(42, "alice")
+	taskMail := &taskMailStub{tasks: []store.Task{{
+		ID: 1, Progress: 1, Target: 1, RewardCoin: 20,
+	}}}
 	handler := NewHandler(
 		runtimeStub{actor: &room.FarmActor{Aggregate: aggregate}},
 		[]byte("internal-token"),
 		func(uid uint64) bool { return uid == 42 },
 		func() int64 { return 123 },
-		WithTaskClaimer(taskClaimerStub{reward: store.TaskReward{Coin: 20}}),
+		WithTaskMailStore(taskMail),
 	)
 
 	response := handler.Execute(CommandRequest{
@@ -291,6 +347,68 @@ func TestHandlerTaskClaimCreditsDirectReward(t *testing.T) {
 	reward := response.ClientResponse.GetTaskReward()
 	if reward.GetCoin() != 20 || aggregate.Coin != 1020 {
 		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
+	}
+}
+
+func TestHandlerTaskClaimUsesActorAuthoritativeState(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.FarmSeq = 17
+	actor := &room.FarmActor{Aggregate: aggregate}
+	taskMail := &taskMailStub{tasks: []store.Task{{
+		ID: 1, Progress: 1, Target: 1, RewardCoin: 20,
+	}}}
+	handler := NewHandler(
+		runtimeStub{actor: actor},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTaskMailStore(taskMail),
+	)
+
+	response := handler.Execute(CommandRequest{
+		Operation:     OperationTaskClaim,
+		FarmUID:       42,
+		ClientCommand: 602,
+		ClientRequest: &publicv3.CommandRequest{TaskId: 1},
+	})
+	if response.Err != errcode.OK {
+		t.Fatalf("TaskClaim response = %#v", response)
+	}
+	if aggregate.Coin != 1020 || aggregate.FarmSeq != 18 {
+		t.Fatalf("aggregate coin=%d seq=%d, want 1020/18", aggregate.Coin, aggregate.FarmSeq)
+	}
+	if tasks := actor.TaskSnapshot(gameconfig.LocalDayKey(123)); len(tasks) != 1 || !tasks[0].Claimed {
+		t.Fatalf("Actor task state = %#v, want claimed", tasks)
+	}
+}
+
+func TestHandlerMailClaimUsesActorAuthoritativeState(t *testing.T) {
+	aggregate := farm.NewAggregate(42, "alice")
+	aggregate.FarmSeq = 23
+	actor := &room.FarmActor{Aggregate: aggregate}
+	taskMail := &taskMailStub{mails: map[uint64]store.Mail{7: {ID: 7, AttachmentCoin: 30}}}
+	handler := NewHandler(
+		runtimeStub{actor: actor},
+		[]byte("internal-token"),
+		func(uid uint64) bool { return uid == 42 },
+		func() int64 { return 123 },
+		WithTaskMailStore(taskMail),
+	)
+
+	response := handler.Execute(CommandRequest{
+		Operation:     OperationMailClaim,
+		FarmUID:       42,
+		ClientCommand: 608,
+		ClientRequest: &publicv3.CommandRequest{MailId: 7},
+	})
+	if response.Err != errcode.OK {
+		t.Fatalf("MailClaim response = %#v", response)
+	}
+	if aggregate.Coin != 1030 || aggregate.FarmSeq != 24 {
+		t.Fatalf("aggregate coin=%d seq=%d, want 1030/24", aggregate.Coin, aggregate.FarmSeq)
+	}
+	if mails := actor.MailSnapshot(); len(mails) != 1 || !mails[0].Claimed || !mails[0].Read {
+		t.Fatalf("Actor mail state = %#v, want claimed/read", mails)
 	}
 }
 
@@ -335,8 +453,9 @@ func TestHandlerMailReadAndDeleteMutateScopedMail(t *testing.T) {
 			2: {ID: 2, Title: "reward", AttachmentCoin: 50},
 		},
 	}
+	actor := &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}
 	handler := NewHandler(
-		runtimeStub{actor: &room.FarmActor{Aggregate: farm.NewAggregate(42, "alice")}},
+		runtimeStub{actor: actor},
 		[]byte("internal-token"),
 		func(uid uint64) bool { return uid == 42 },
 		func() int64 { return 123 },
@@ -352,8 +471,8 @@ func TestHandlerMailReadAndDeleteMutateScopedMail(t *testing.T) {
 	if read.Err != errcode.OK {
 		t.Fatalf("MailRead response = %#v", read)
 	}
-	if read.ClientResponse.GetAffected() != 2 || !taskMail.mails[1].Read || !taskMail.mails[2].Read {
-		t.Fatalf("mails after read = %#v, affected = %d", taskMail.mails, read.ClientResponse.GetAffected())
+	if mails := actor.MailSnapshot(); read.ClientResponse.GetAffected() != 2 || len(mails) != 2 || !mails[0].Read || !mails[1].Read {
+		t.Fatalf("Actor mails after read = %#v, affected = %d", mails, read.ClientResponse.GetAffected())
 	}
 
 	delete := handler.Execute(CommandRequest{
@@ -365,24 +484,23 @@ func TestHandlerMailReadAndDeleteMutateScopedMail(t *testing.T) {
 	if delete.Err != errcode.OK {
 		t.Fatalf("MailDelete response = %#v", delete)
 	}
-	if delete.ClientResponse.GetAffected() != 1 || len(taskMail.mails) != 1 || taskMail.mails[2].ID != 2 {
-		t.Fatalf("mails after delete = %#v, affected = %d", taskMail.mails, delete.ClientResponse.GetAffected())
-	}
-	if taskMail.lastMailUID != 42 {
-		t.Fatalf("mail mutation uid = %d, want 42", taskMail.lastMailUID)
+	if mails := actor.MailSnapshot(); delete.ClientResponse.GetAffected() != 1 || len(mails) != 1 || mails[0].ID != 2 {
+		t.Fatalf("Actor mails after delete = %#v, affected = %d", mails, delete.ClientResponse.GetAffected())
 	}
 }
 
 func TestHandlerDailyLoginCreditsDirectReward(t *testing.T) {
 	aggregate := farm.NewAggregate(42, "alice")
 	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.Local).UnixMilli()
-	claimer := &recordingTaskClaimer{reward: store.TaskReward{Coin: 100}}
+	taskMail := &taskMailStub{tasks: []store.Task{{
+		ID: store.TaskDailyLoginID, Progress: 1, Target: 1, RewardCoin: 100,
+	}}}
 	handler := NewHandler(
 		runtimeStub{actor: &room.FarmActor{Aggregate: aggregate}},
 		[]byte("internal-token"),
 		func(uid uint64) bool { return uid == 42 },
 		func() int64 { return now },
-		WithTaskClaimer(claimer),
+		WithTaskMailStore(taskMail),
 	)
 
 	response := handler.Execute(CommandRequest{
@@ -398,10 +516,6 @@ func TestHandlerDailyLoginCreditsDirectReward(t *testing.T) {
 	reward := response.ClientResponse.GetTaskReward()
 	if reward.GetCoin() != 100 || aggregate.Coin != 1100 {
 		t.Fatalf("reward = %#v, aggregate coin = %d", reward, aggregate.Coin)
-	}
-	if claimer.taskID != store.TaskDailyLoginID || claimer.dayKey != gameconfig.LocalDayKey(now) {
-		t.Fatalf("legacy daily login claimed task=%d day=%d, want task=%d day=%d",
-			claimer.taskID, claimer.dayKey, store.TaskDailyLoginID, gameconfig.LocalDayKey(now))
 	}
 }
 
@@ -508,6 +622,49 @@ type runtimeStub struct {
 
 type taskClaimerStub struct {
 	reward store.TaskReward
+}
+
+type stateTaskClaimerStub struct {
+	reward       store.TaskReward
+	state        store.DirectClaimState
+	legacyCalled bool
+}
+
+func (s *stateTaskClaimerStub) ClaimTask(context.Context, uint64, int64, uint32) (store.TaskReward, error) {
+	s.legacyCalled = true
+	return s.reward, nil
+}
+
+func (s *stateTaskClaimerStub) ClaimTaskAtState(
+	_ context.Context,
+	_ uint64,
+	_ int64,
+	_ uint32,
+	state store.DirectClaimState,
+) (store.TaskReward, error) {
+	s.state = state
+	return s.reward, nil
+}
+
+type stateMailClaimerStub struct {
+	mail         store.Mail
+	state        store.DirectClaimState
+	legacyCalled bool
+}
+
+func (s *stateMailClaimerStub) ClaimMail(context.Context, uint64, uint64) (store.Mail, error) {
+	s.legacyCalled = true
+	return s.mail, nil
+}
+
+func (s *stateMailClaimerStub) ClaimMailAtState(
+	_ context.Context,
+	_ uint64,
+	_ uint64,
+	state store.DirectClaimState,
+) (store.Mail, error) {
+	s.state = state
+	return s.mail, nil
 }
 
 func (s taskClaimerStub) ClaimTask(context.Context, uint64, int64, uint32) (store.TaskReward, error) {

@@ -12,6 +12,9 @@ service SocialService {
   // social command. Lower-level typed methods remain available to Farm for
   // authorization and cross-farm orchestration.
   rpc ExecuteClientCommand(ClientCommandRequest) returns (ClientCommandResponse);
+  // ExecuteBatchStream amortizes per-command HTTP/2 metadata on the same hot
+  // Gateway path while retaining unary compatibility for rolling upgrades.
+  rpc ExecuteBatchStream(stream StreamExecuteBatchRequest) returns (stream StreamExecuteBatchResponse);
   rpc AreFriends(AreFriendsRequest) returns (AreFriendsResponse);
   rpc AddFriends(PairRequest) returns (Empty);
   rpc RemoveFriends(PairRequest) returns (Empty);

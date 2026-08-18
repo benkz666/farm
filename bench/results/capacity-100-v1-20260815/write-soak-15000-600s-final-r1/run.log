@@ -1,0 +1,100 @@
+实验 write-soak-15000-600s-final-r1：目标=15000 QPS，C窗口=600s，连接=15000
+重置15,000账号的mixed合法状态（并发=16）...
+benchfixture: reset 250/15000
+benchfixture: reset 500/15000
+benchfixture: reset 750/15000
+benchfixture: reset 1000/15000
+benchfixture: reset 1250/15000
+benchfixture: reset 1500/15000
+benchfixture: reset 1750/15000
+benchfixture: reset 2000/15000
+benchfixture: reset 2250/15000
+benchfixture: reset 2500/15000
+benchfixture: reset 2750/15000
+benchfixture: reset 3000/15000
+benchfixture: reset 3250/15000
+benchfixture: reset 3500/15000
+benchfixture: reset 3750/15000
+benchfixture: reset 4000/15000
+benchfixture: reset 4250/15000
+benchfixture: reset 4500/15000
+benchfixture: reset 4750/15000
+benchfixture: reset 5000/15000
+benchfixture: reset 5250/15000
+benchfixture: reset 5500/15000
+benchfixture: reset 5750/15000
+benchfixture: reset 6000/15000
+benchfixture: reset 6250/15000
+benchfixture: reset 6500/15000
+benchfixture: reset 6750/15000
+benchfixture: reset 7000/15000
+benchfixture: reset 7250/15000
+benchfixture: reset 7500/15000
+benchfixture: reset 7750/15000
+benchfixture: reset 8000/15000
+benchfixture: reset 8250/15000
+benchfixture: reset 8500/15000
+benchfixture: reset 8750/15000
+benchfixture: reset 9000/15000
+benchfixture: reset 9250/15000
+benchfixture: reset 9500/15000
+benchfixture: reset 9750/15000
+benchfixture: reset 10000/15000
+benchfixture: reset 10250/15000
+benchfixture: reset 10500/15000
+benchfixture: reset 10750/15000
+benchfixture: reset 11000/15000
+benchfixture: reset 11250/15000
+benchfixture: reset 11500/15000
+benchfixture: reset 11750/15000
+benchfixture: reset 12000/15000
+benchfixture: reset 12250/15000
+benchfixture: reset 12500/15000
+benchfixture: reset 12750/15000
+benchfixture: reset 13000/15000
+benchfixture: reset 13250/15000
+benchfixture: reset 13500/15000
+benchfixture: reset 13750/15000
+benchfixture: reset 14000/15000
+benchfixture: reset 14250/15000
+benchfixture: reset 14500/15000
+benchfixture: reset 14750/15000
+benchfixture: reset 15000/15000
+benchfixture: reset 15000 existing accounts from /fixtures/capacity-100-v1-15000x18.json with profile mixed
+mixed夹具元数据校验通过：task_ids/mail_claim_id均为15000条
+deployment.apps/farm restarted
+deployment.apps/gateway restarted
+deployment.apps/social restarted
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 of 1 updated replicas are available...
+deployment "farm" successfully rolled out
+Waiting for deployment "gateway" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "gateway" rollout to finish: 2 of 3 updated replicas are available...
+Waiting for deployment "gateway" rollout to finish: 2 of 3 updated replicas are available...
+deployment "gateway" successfully rolled out
+deployment "social" successfully rolled out
+服务启动后稳定等待30s...
+窗口A：空闲基线60s...
+窗口B：15,000连接/Actor预热后静置45s；随后窗口C发压...
+tar: removing leading '/' from member names
+完成：/data/workspace/farm/bench/results/capacity-100-v1-20260815/write-soak-15000-600s-final-r1
+      "p90_ms": 7.050702,
+      "p99_ms": 17.098341,
+      "target_qps": 1500,
+      "succeeded": 900334,
+      "failed": 99,
+      "p90_ms": 1.865854,
+      "p99_ms": 7.445703,
+      "target_qps": 750,
+      "succeeded": 449444,
+      "failed": 49,
+      "p90_ms": 2.014608,
+      "p99_ms": 5.635558,

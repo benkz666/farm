@@ -69,6 +69,27 @@ type taskAdvancingExecutor struct {
 	amount uint32
 }
 
+type preparedSyncExecutorStub struct {
+	commandExecutorFunc
+	uid        uint64
+	originator presence.ConnRef
+	fromSeq    uint64
+}
+
+func (executor *preparedSyncExecutorStub) ExecutePreparedSelfSync(
+	_ context.Context,
+	uid uint64,
+	originator presence.ConnRef,
+	fromSeq uint64,
+) CommandResponse {
+	executor.uid, executor.originator, executor.fromSeq = uid, originator, fromSeq
+	return CommandResponse{
+		Err: errcode.OK, FarmSeq: fromSeq,
+		PreparedField: clientwire.PreparedSyncFarmResponse,
+		SyncCaughtUp:  true, SyncServerTime: 123, SyncTimeProfile: "demo",
+	}
+}
+
 func (executor *taskAdvancingExecutor) AdvanceTask(_ context.Context, uid uint64, taskID, amount uint32) errcode.Code {
 	executor.uid, executor.taskID, executor.amount = uid, taskID, amount
 	return errcode.OK
@@ -126,6 +147,30 @@ func TestCommandServerRoutesTypedTaskAdvancement(t *testing.T) {
 	}
 }
 
+func TestCommandServerExecutesFlatPreparedSelfSync(t *testing.T) {
+	executor := &preparedSyncExecutorStub{commandExecutorFunc: func(
+		_ context.Context,
+		request *farmv1.ClientCommandRequest,
+	) *farmv1.ClientCommandResponse {
+		return typedResponse(request, errcode.OK)
+	}}
+	server := NewCommandServer(executor, func(uid uint64) bool { return uid == 42 })
+	response := server.executeBatchRequest(t.Context(), &farmv1.StreamExecuteRequest{
+		RequestId: 99, FastSyncUid: 42, FastSyncClientSeq: 7,
+		FastSyncFromSeq: 11, FastSyncConnId: 8, FastSyncGatewayId: "gateway-1",
+	})
+	if response.Response != nil || response.FastSyncClientSeq != 7 ||
+		response.FastSyncUid != 42 || response.FastSyncFarmSeq != 11 ||
+		!response.FastSyncCaughtUp || response.FastSyncServerTime != 123 ||
+		response.FastSyncTimeProfile != "demo" {
+		t.Fatalf("flat response=%#v", response)
+	}
+	if executor.uid != 42 || executor.fromSeq != 11 || executor.originator.ConnID != 8 ||
+		executor.originator.GatewayID != "gateway-1" {
+		t.Fatalf("execution=(%d,%d,%#v)", executor.uid, executor.fromSeq, executor.originator)
+	}
+}
+
 func TestBatchStreamReturnsFastFarmBeforeBlockedFarm(t *testing.T) {
 	slowStarted := make(chan struct{})
 	releaseSlow := make(chan struct{})
@@ -148,8 +193,10 @@ func TestBatchStreamReturnsFastFarmBeforeBlockedFarm(t *testing.T) {
 		t.Fatalf("open stream: %v", err)
 	}
 	if err := stream.Send(&farmv1.StreamExecuteBatchRequest{Requests: []*farmv1.StreamExecuteRequest{
-		{RequestId: 1, Request: typedRequest(1, 204, 1)},
-		{RequestId: 2, Request: typedRequest(2, 204, 2)},
+		{RequestId: 1, Request: typedRequest(1, 602, 1)},
+		// UID 65 collided with UID 1 in the old routeUID%64 worker. A blocking
+		// claim must no longer hold this unrelated normal command behind it.
+		{RequestId: 2, Request: typedRequest(65, 204, 2)},
 	}}); err != nil {
 		t.Fatalf("send batch: %v", err)
 	}
@@ -168,6 +215,66 @@ func TestBatchStreamReturnsFastFarmBeforeBlockedFarm(t *testing.T) {
 		t.Fatalf("second response=%v err=%v", second, err)
 	}
 	_ = stream.CloseSend()
+}
+
+func TestBatchStreamPreservesOrderWithinUIDAcrossLanes(t *testing.T) {
+	claimStarted := make(chan struct{})
+	releaseClaim := make(chan struct{})
+	normalStarted := make(chan struct{})
+	executor := commandExecutorFunc(func(_ context.Context, request *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse {
+		switch request.Envelope.ClientSeq {
+		case 1:
+			close(claimStarted)
+			<-releaseClaim
+		case 2:
+			close(normalStarted)
+		}
+		return typedResponse(request, errcode.OK)
+	})
+	pair := grpcx.NewBufconnPair(t, "internal-token", func(server *grpc.Server) {
+		RegisterCommandService(server, executor, func(uint64) bool { return true })
+	})
+	conn, err := pair.Pool.Conn(t.Context(), "bufconn")
+	if err != nil {
+		t.Fatalf("pool conn: %v", err)
+	}
+	stream, err := farmv1.NewFarmCommandServiceClient(conn).ExecuteBatchStream(t.Context())
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+	if err := stream.Send(&farmv1.StreamExecuteBatchRequest{Requests: []*farmv1.StreamExecuteRequest{
+		{RequestId: 1, Request: typedRequest(42, 602, 1)},
+		{RequestId: 2, Request: typedRequest(42, 204, 2)},
+	}}); err != nil {
+		t.Fatalf("send batch: %v", err)
+	}
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("claim did not start")
+	}
+	select {
+	case <-normalStarted:
+		t.Fatal("same-UID normal command overtook the blocking claim")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(releaseClaim)
+	select {
+	case <-normalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("same-UID normal command did not resume after claim")
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("close send: %v", err)
+	}
+	responses := 0
+	for responses < 2 {
+		batch, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("recv responses: %v", err)
+		}
+		responses += len(batch.Responses)
+	}
 }
 
 func TestBatchStreamReturnsAfterSenderFailure(t *testing.T) {

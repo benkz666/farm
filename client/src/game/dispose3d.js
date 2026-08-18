@@ -2,7 +2,13 @@
 // Three.js 独占资源释放：跳过 mat() 共享材质
 // ============================================================
 
-const TEX_SLOTS = ['map', 'lightMap', 'bumpMap', 'normalMap', 'specularMap', 'envMap', 'alphaMap', 'emissiveMap', 'metalnessMap', 'roughnessMap', 'aoMap'];
+const TEX_SLOTS = [
+  'map', 'lightMap', 'bumpMap', 'normalMap', 'specularMap', 'envMap', 'alphaMap',
+  'emissiveMap', 'metalnessMap', 'roughnessMap', 'aoMap', 'clearcoatMap',
+  'clearcoatNormalMap', 'clearcoatRoughnessMap', 'sheenColorMap', 'sheenRoughnessMap',
+  'iridescenceMap', 'iridescenceThicknessMap', 'transmissionMap', 'thicknessMap',
+  'specularIntensityMap', 'specularColorMap', 'anisotropyMap',
+];
 
 function disposeTextureSlot(mat, slot, seenTex) {
   const tex = mat[slot];
@@ -10,6 +16,18 @@ function disposeTextureSlot(mat, slot, seenTex) {
   if (seenTex.has(tex)) return;
   seenTex.add(tex);
   tex.dispose();
+}
+
+function disposeUniformTexture(value, seenTex) {
+  if (value?.isTexture && typeof value.dispose === 'function') {
+    if (seenTex.has(value)) return;
+    seenTex.add(value);
+    value.dispose();
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) disposeUniformTexture(item, seenTex);
+  }
 }
 
 /**
@@ -23,6 +41,9 @@ export function disposeExclusiveMaterial(material, opts = {}) {
   if (isShared(material)) return;
   const seenTex = opts._seenTex || new Set();
   for (const slot of TEX_SLOTS) disposeTextureSlot(material, slot, seenTex);
+  for (const uniform of Object.values(material.uniforms || {})) {
+    disposeUniformTexture(uniform?.value, seenTex);
+  }
   if (typeof material.dispose === 'function') material.dispose();
 }
 

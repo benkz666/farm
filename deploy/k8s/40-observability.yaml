@@ -183,6 +183,8 @@ spec:
         - name: exporter
           image: prom/mysqld-exporter:v0.14.0
           imagePullPolicy: IfNotPresent
+          args:
+            - --no-collect.slave_status
           env:
             - {name: DATA_SOURCE_NAME, value: "farm:farm@tcp(mysql:3306)/"}
           ports:

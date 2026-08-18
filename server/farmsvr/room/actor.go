@@ -3,12 +3,16 @@ package room
 
 import (
 	"errors"
+	"sort"
 
 	"farm/server/domain/farm"
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientwire"
 	"farm/server/shared/outbox"
+	"farm/server/shared/store"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // FarmActor 持有单个玩家在内存中的农场聚合。
@@ -39,8 +43,24 @@ type FarmActor struct {
 	dirtyItems   map[farm.ItemKey]stampedItemCount
 	dirtyCodex   map[uint16]uint64
 
+	// Task/mail state is owned by the same UID Actor as the farm aggregate.
+	// MySQL supplies only the cold baseline; after that, commands and reads use
+	// these in-memory values while transitions are projected asynchronously.
+	taskDay     int64
+	tasks       map[uint32]store.Task
+	tasksReady  bool
+	mails       map[uint64]store.Mail
+	mailsReady  bool
+	mailDeleted map[uint64]struct{}
+
+	taskClaims       []stampedTaskClaim
+	taskClaimTail    int
+	mailMutations    []stampedMailMutation
+	mailMutationTail int
+
 	snapshotProtoSeq uint64
 	snapshotMessage  *publicv3.FarmSnapshot
+	snapshotProto    []byte
 }
 
 // MarkDirty 标记当前回调已真实改动聚合；纯读路径不得调用。
@@ -61,6 +81,7 @@ func (a *FarmActor) InvalidateSnapshot() {
 		return
 	}
 	a.snapshotMessage = nil
+	a.snapshotProto = nil
 }
 
 // SnapshotProto returns the immutable typed snapshot for the current
@@ -77,6 +98,28 @@ func (a *FarmActor) SnapshotProto() (*publicv3.FarmSnapshot, error) {
 	a.snapshotProtoSeq = a.Aggregate.FarmSeq
 	a.snapshotMessage = clientwire.FarmSnapshotToProto(a.Aggregate.Snapshot())
 	return a.snapshotMessage, nil
+}
+
+// EncodedSnapshotProto returns the immutable serialized snapshot for the
+// current aggregate version. Enter/Sync can embed these bytes directly in the
+// public response instead of making gRPC and Gateway traverse the full farm.
+func (a *FarmActor) EncodedSnapshotProto() ([]byte, error) {
+	if a == nil || a.Aggregate == nil {
+		return nil, errors.New("room: actor aggregate is nil")
+	}
+	if len(a.snapshotProto) != 0 && a.snapshotProtoSeq == a.Aggregate.FarmSeq {
+		return a.snapshotProto, nil
+	}
+	message, err := a.SnapshotProto()
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := proto.Marshal(message)
+	if err != nil {
+		return nil, err
+	}
+	a.snapshotProto = encoded
+	return a.snapshotProto, nil
 }
 
 func (a *FarmActor) consumeDirty() bool {
@@ -102,6 +145,17 @@ func (a *FarmActor) RequireFlush() {
 // rewrites player economy and inventory rows.
 func (a *FarmActor) RequireEconomyFlush() {
 	a.requirePlannedFlush(outbox.PersistPlan{Mode: outbox.PersistEconomy})
+}
+
+// RequireSideEffectFlush durably appends a task/mail-only transition without
+// pretending that the farm aggregate itself changed.
+func (a *FarmActor) RequireSideEffectFlush() {
+	if a == nil {
+		return
+	}
+	a.syncFlush = true
+	a.dirty = true
+	a.mergePersistPlan(outbox.PersistPlan{Mode: outbox.PersistSideEffects})
 }
 
 // MarkPlotDirty records the smallest ordered write-behind plan for a local
@@ -358,6 +412,7 @@ func (a *FarmActor) pendingWriteMutation() (*farmv1.FarmWriteMutation, error) {
 	return outbox.NewFarmWriteMutation(
 		a.Aggregate, a.pendingPersistPlan(), plots, items, codex,
 		a.pendingOutboxEvents(), a.pendingTaskAdvances(), a.pendingCodexRewards(),
+		a.pendingTaskClaims(), a.pendingMailMutations(),
 	)
 }
 
@@ -374,6 +429,187 @@ type stampedTaskAdvance struct {
 type stampedCodexReward struct {
 	generation uint64
 	reward     outbox.CodexReward
+}
+
+type stampedTaskClaim struct {
+	generation uint64
+	claim      outbox.TaskClaim
+}
+
+type stampedMailMutation struct {
+	generation uint64
+	mutation   outbox.MailMutation
+}
+
+func (a *FarmActor) TasksReady(dayKey int64) bool {
+	return a != nil && a.tasksReady && a.taskDay == dayKey
+}
+
+func (a *FarmActor) LoadTasks(dayKey int64, tasks []store.Task) {
+	if a == nil {
+		return
+	}
+	a.taskDay, a.tasksReady = dayKey, true
+	a.tasks = make(map[uint32]store.Task, len(tasks))
+	for _, task := range tasks {
+		a.tasks[task.ID] = task
+	}
+}
+
+func (a *FarmActor) TaskSnapshot(dayKey int64) []store.Task {
+	if !a.TasksReady(dayKey) {
+		return nil
+	}
+	tasks := make([]store.Task, 0, len(a.tasks))
+	for _, task := range a.tasks {
+		tasks = append(tasks, task)
+	}
+	sort.Slice(tasks, func(i, j int) bool { return tasks[i].ID < tasks[j].ID })
+	return tasks
+}
+
+func (a *FarmActor) AdvanceTaskState(dayKey int64, taskID, amount uint32) (store.TaskAdvanceResult, bool) {
+	if !a.TasksReady(dayKey) || amount == 0 {
+		return store.TaskAdvanceResult{}, false
+	}
+	task, ok := a.tasks[taskID]
+	if !ok || task.Claimed || task.Progress >= task.Target {
+		return store.TaskAdvanceResult{}, true
+	}
+	previous := task.Progress
+	task.Progress = uint32(min(uint64(task.Target), uint64(task.Progress)+uint64(amount)))
+	a.tasks[taskID] = task
+	return store.TaskAdvanceResult{
+		Task: task, Changed: task.Progress != previous,
+		JustCompleted: previous < task.Target && task.Progress == task.Target,
+	}, true
+}
+
+func (a *FarmActor) ClaimTaskState(dayKey int64, taskID uint32, claimedAt int64) (store.TaskReward, error) {
+	if !a.TasksReady(dayKey) {
+		return store.TaskReward{}, errors.New("room: task state is not loaded")
+	}
+	task, ok := a.tasks[taskID]
+	if !ok || task.Progress < task.Target {
+		return store.TaskReward{}, store.ErrTaskNotComplete
+	}
+	if task.Claimed {
+		return store.TaskReward{}, store.ErrTaskAlreadyClaimed
+	}
+	task.Claimed = true
+	task.Progress = task.Target
+	a.tasks[taskID] = task
+	a.taskClaims = append(a.taskClaims, stampedTaskClaim{claim: outbox.TaskClaim{
+		DayKey: dayKey, TaskID: taskID, ClaimedAt: claimedAt,
+	}})
+	return store.TaskReward{Coin: task.RewardCoin}, nil
+}
+
+func (a *FarmActor) MailsReady() bool { return a != nil && a.mailsReady }
+
+func (a *FarmActor) LoadMails(mails []store.Mail) {
+	if a == nil {
+		return
+	}
+	a.mailsReady = true
+	a.mails = make(map[uint64]store.Mail, len(mails))
+	a.mailDeleted = nil
+	for _, mail := range mails {
+		a.mails[mail.ID] = mail
+	}
+}
+
+// MergeMails adds externally created durable mails without overwriting newer
+// Actor-owned read/claim/delete state. Tombstones prevent a not-yet-projected
+// local delete from being resurrected by a stale MySQL/cache baseline.
+func (a *FarmActor) MergeMails(mails []store.Mail) {
+	if a == nil || !a.mailsReady {
+		a.LoadMails(mails)
+		return
+	}
+	for _, mail := range mails {
+		if _, deleted := a.mailDeleted[mail.ID]; deleted {
+			continue
+		}
+		if _, exists := a.mails[mail.ID]; !exists {
+			a.mails[mail.ID] = mail
+		}
+	}
+}
+
+func (a *FarmActor) MailSnapshot() []store.Mail {
+	if !a.MailsReady() {
+		return nil
+	}
+	mails := make([]store.Mail, 0, len(a.mails))
+	for _, mail := range a.mails {
+		mails = append(mails, mail)
+	}
+	sort.Slice(mails, func(i, j int) bool { return mails[i].ID > mails[j].ID })
+	return mails
+}
+
+func (a *FarmActor) MarkMailsReadState(mailID uint64, occurredAt int64) int64 {
+	if !a.MailsReady() {
+		return 0
+	}
+	var affected int64
+	for id, mail := range a.mails {
+		if (mailID != 0 && id != mailID) || mail.Read {
+			continue
+		}
+		mail.Read = true
+		a.mails[id] = mail
+		a.mailMutations = append(a.mailMutations, stampedMailMutation{mutation: outbox.MailMutation{
+			MailID: id, Kind: outbox.MailRead, OccurredAt: occurredAt,
+		}})
+		affected++
+	}
+	return affected
+}
+
+func (a *FarmActor) DeleteMailsState(mailID uint64, occurredAt int64) int64 {
+	if !a.MailsReady() {
+		return 0
+	}
+	var affected int64
+	for id, mail := range a.mails {
+		if (mailID != 0 && id != mailID) || (mail.AttachmentCoin > 0 && !mail.Claimed) {
+			continue
+		}
+		delete(a.mails, id)
+		if a.mailDeleted == nil {
+			a.mailDeleted = make(map[uint64]struct{})
+		}
+		a.mailDeleted[id] = struct{}{}
+		a.mailMutations = append(a.mailMutations, stampedMailMutation{mutation: outbox.MailMutation{
+			MailID: id, Kind: outbox.MailDelete, OccurredAt: occurredAt,
+		}})
+		affected++
+	}
+	return affected
+}
+
+func (a *FarmActor) ClaimMailState(mailID uint64, occurredAt int64) (store.Mail, error) {
+	if !a.MailsReady() {
+		return store.Mail{}, errors.New("room: mail state is not loaded")
+	}
+	mail, ok := a.mails[mailID]
+	if !ok {
+		return store.Mail{}, store.ErrMailNotFound
+	}
+	if mail.AttachmentCoin <= 0 {
+		return store.Mail{}, store.ErrMailNoAttachment
+	}
+	if mail.Claimed {
+		return store.Mail{}, store.ErrMailAlreadyClaimed
+	}
+	mail.Claimed, mail.Read = true, true
+	a.mails[mailID] = mail
+	a.mailMutations = append(a.mailMutations, stampedMailMutation{mutation: outbox.MailMutation{
+		MailID: mailID, Kind: outbox.MailClaim, OccurredAt: occurredAt,
+	}})
+	return mail, nil
 }
 
 // RecordTaskAdvance and RecordCodexReward attach gameplay side effects to the
@@ -405,6 +641,14 @@ func (a *FarmActor) stampSideEffectGeneration(generation uint64) {
 		a.codexRewards[index].generation = generation
 	}
 	a.codexTail = len(a.codexRewards)
+	for index := a.taskClaimTail; index < len(a.taskClaims); index++ {
+		a.taskClaims[index].generation = generation
+	}
+	a.taskClaimTail = len(a.taskClaims)
+	for index := a.mailMutationTail; index < len(a.mailMutations); index++ {
+		a.mailMutations[index].generation = generation
+	}
+	a.mailMutationTail = len(a.mailMutations)
 }
 
 func (a *FarmActor) pendingTaskAdvances() []outbox.TaskAdvance {
@@ -427,6 +671,26 @@ func (a *FarmActor) pendingCodexRewards() []outbox.CodexReward {
 	return rewards
 }
 
+func (a *FarmActor) pendingTaskClaims() []outbox.TaskClaim {
+	claims := make([]outbox.TaskClaim, 0, len(a.taskClaims))
+	for _, stamped := range a.taskClaims {
+		if stamped.generation != 0 {
+			claims = append(claims, stamped.claim)
+		}
+	}
+	return claims
+}
+
+func (a *FarmActor) pendingMailMutations() []outbox.MailMutation {
+	mutations := make([]outbox.MailMutation, 0, len(a.mailMutations))
+	for _, stamped := range a.mailMutations {
+		if stamped.generation != 0 {
+			mutations = append(mutations, stamped.mutation)
+		}
+	}
+	return mutations
+}
+
 func (a *FarmActor) ackSideEffects(committedGen uint64) {
 	if a == nil || committedGen == 0 {
 		return
@@ -447,6 +711,22 @@ func (a *FarmActor) ackSideEffects(committedGen uint64) {
 	}
 	a.codexRewards = keptCodex
 	a.codexTail = len(keptCodex)
+	keptClaims := a.taskClaims[:0]
+	for _, stamped := range a.taskClaims {
+		if stamped.generation > committedGen {
+			keptClaims = append(keptClaims, stamped)
+		}
+	}
+	a.taskClaims = keptClaims
+	a.taskClaimTail = len(keptClaims)
+	keptMail := a.mailMutations[:0]
+	for _, stamped := range a.mailMutations {
+		if stamped.generation > committedGen {
+			keptMail = append(keptMail, stamped)
+		}
+	}
+	a.mailMutations = keptMail
+	a.mailMutationTail = len(keptMail)
 }
 
 // RecordOutbox queues a durable outbox event for the current callback generation.

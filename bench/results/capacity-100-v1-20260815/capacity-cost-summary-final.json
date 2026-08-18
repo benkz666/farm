@@ -1,0 +1,676 @@
+{
+  "baseline": "/data/workspace/farm/bench/model/capacity-experiment-baseline-v1.json",
+  "coefficients": {
+    "farm": {
+      "cpu_fit": {
+        "maximum_relative_deviation": 0.1554880211755482,
+        "points": [
+          {
+            "actual": 1.3413584994448284,
+            "predicted": 1.1327933206791494,
+            "qps": 3000.0,
+            "relative_deviation": 0.1554880211755482
+          },
+          {
+            "actual": 2.193350360813227,
+            "predicted": 1.8879888677985823,
+            "qps": 5000.0,
+            "relative_deviation": 0.139221484387668
+          },
+          {
+            "actual": 2.3356839861508356,
+            "predicted": 2.6431844149180153,
+            "qps": 7000.0,
+            "relative_deviation": 0.13165326756122292
+          }
+        ],
+        "slope_per_1000_qps": 0.37759777355971647,
+        "slope_per_qps": 0.00037759777355971647
+      },
+      "cpu_linear_enough": true,
+      "fixed_cpu_cores_per_instance_max": 0.0166655556439279,
+      "fixed_memory_mib_per_instance_max": 25.3984375,
+      "maximum_observed_cpu_per_1000_qps": 0.44711949981494276,
+      "maximum_observed_load_memory_mib": 144.1640625,
+      "maximum_observed_load_memory_mib_per_1000_qps": 32.09765625,
+      "memory_fit": {
+        "maximum_relative_deviation": 0.3101357602736613,
+        "points": [
+          {
+            "actual": 96.29296875,
+            "predicted": 66.42907567771084,
+            "qps": 3000.0,
+            "relative_deviation": 0.3101357602736613
+          },
+          {
+            "actual": 107.96875,
+            "predicted": 110.71512612951808,
+            "qps": 5000.0,
+            "relative_deviation": 0.02543676878280135
+          },
+          {
+            "actual": 144.1640625,
+            "predicted": 155.0011765813253,
+            "qps": 7000.0,
+            "relative_deviation": 0.07517209138945634
+          }
+        ],
+        "slope_per_1000_qps": 22.143025225903614,
+        "slope_per_qps": 0.022143025225903615
+      },
+      "memory_linear_enough": false,
+      "planning_cpu_method": "through-origin fit",
+      "planning_cpu_per_1000_qps": 0.37759777355971647,
+      "planning_memory_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_memory_mib_per_1000_qps": 32.09765625,
+      "state_cpu_cores_per_unit_max": 3.7669425095510427e-07,
+      "state_memory_mib_per_unit_max": 0.02458828125
+    },
+    "gateway": {
+      "cpu_fit": {
+        "maximum_relative_deviation": 0.2522258211675427,
+        "points": [
+          {
+            "actual": 1.2303518231038166,
+            "predicted": 0.9200253241964732,
+            "qps": 3000.0,
+            "relative_deviation": 0.2522258211675427
+          },
+          {
+            "actual": 1.60234647410586,
+            "predicted": 1.5333755403274554,
+            "qps": 5000.0,
+            "relative_deviation": 0.04304370802007205
+          },
+          {
+            "actual": 1.9644637327992875,
+            "predicted": 2.1467257564584377,
+            "qps": 7000.0,
+            "relative_deviation": 0.09277953093052704
+          }
+        ],
+        "slope_per_1000_qps": 0.3066751080654911,
+        "slope_per_qps": 0.0003066751080654911
+      },
+      "cpu_linear_enough": false,
+      "fixed_cpu_cores_per_instance_max": 0.0005925530895618808,
+      "fixed_memory_mib_per_instance_max": 8.963541666666666,
+      "maximum_observed_cpu_per_1000_qps": 0.41011727436793893,
+      "maximum_observed_load_memory_mib": 351.53125,
+      "maximum_observed_load_memory_mib_per_1000_qps": 68.19010416666667,
+      "memory_fit": {
+        "maximum_relative_deviation": 0.21635972954257354,
+        "points": [
+          {
+            "actual": 204.5703125,
+            "predicted": 160.30953501506025,
+            "qps": 3000.0,
+            "relative_deviation": 0.21635972954257354
+          },
+          {
+            "actual": 272.16015625,
+            "predicted": 267.1825583584337,
+            "qps": 5000.0,
+            "relative_deviation": 0.01828922337549654
+          },
+          {
+            "actual": 351.53125,
+            "predicted": 374.0555817018072,
+            "qps": 7000.0,
+            "relative_deviation": 0.06407490572120467
+          }
+        ],
+        "slope_per_1000_qps": 53.436511671686745,
+        "slope_per_qps": 0.05343651167168675
+      },
+      "memory_linear_enough": false,
+      "planning_cpu_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_cpu_per_1000_qps": 0.41011727436793893,
+      "planning_memory_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_memory_mib_per_1000_qps": 68.19010416666667,
+      "state_cpu_cores_per_unit_max": 1.5024868535504264e-06,
+      "state_memory_mib_per_unit_max": 0.04632578125
+    },
+    "mysql": {
+      "cpu_fit": {
+        "maximum_relative_deviation": 0.03318596385109031,
+        "points": [
+          {
+            "actual": 0.94967550340675,
+            "predicted": 0.9811914003330724,
+            "qps": 3000.0,
+            "relative_deviation": 0.03318596385109031
+          },
+          {
+            "actual": 1.6136916139030002,
+            "predicted": 1.6353190005551208,
+            "qps": 5000.0,
+            "relative_deviation": 0.013402428608903113
+          },
+          {
+            "actual": 2.3184015470685364,
+            "predicted": 2.289446600777169,
+            "qps": 7000.0,
+            "relative_deviation": 0.012489185200889286
+          }
+        ],
+        "slope_per_1000_qps": 0.32706380011102415,
+        "slope_per_qps": 0.00032706380011102414
+      },
+      "cpu_linear_enough": true,
+      "fixed_cpu_cores_per_instance_max": 0.017111490733753648,
+      "fixed_memory_mib_per_instance_max": 1247.84375,
+      "maximum_observed_cpu_per_1000_qps": 0.3312002210097909,
+      "maximum_observed_load_memory_mib": 6.5703125,
+      "maximum_observed_load_memory_mib_per_1000_qps": 1.3140625,
+      "memory_fit": {
+        "maximum_relative_deviation": 1.425694193081338,
+        "points": [
+          {
+            "actual": 2.25390625,
+            "predicted": 1.892366340361446,
+            "qps": 3000.0,
+            "relative_deviation": 0.1604059217807103
+          },
+          {
+            "actual": 6.5703125,
+            "predicted": 3.15394390060241,
+            "qps": 5000.0,
+            "relative_deviation": 0.5199704883744252
+          },
+          {
+            "actual": 1.8203125,
+            "predicted": 4.415521460843373,
+            "qps": 7000.0,
+            "relative_deviation": 1.425694193081338
+          }
+        ],
+        "slope_per_1000_qps": 0.630788780120482,
+        "slope_per_qps": 0.000630788780120482
+      },
+      "memory_linear_enough": false,
+      "planning_cpu_method": "through-origin fit",
+      "planning_cpu_per_1000_qps": 0.32706380011102415,
+      "planning_memory_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_memory_mib_per_1000_qps": 1.3140625,
+      "state_cpu_cores_per_unit_max": null,
+      "state_memory_mib_per_unit_max": null
+    },
+    "redis": {
+      "cpu_fit": {
+        "maximum_relative_deviation": 0.5039091362098943,
+        "points": [
+          {
+            "actual": 0.5261317998169007,
+            "predicted": 0.31399811642344577,
+            "qps": 3000.0,
+            "relative_deviation": 0.40319494747757056
+          },
+          {
+            "actual": 0.7397365040031088,
+            "predicted": 0.5233301940390763,
+            "qps": 5000.0,
+            "relative_deviation": 0.2925451276136063
+          },
+          {
+            "actual": 0.48717190022606005,
+            "predicted": 0.7326622716547068,
+            "qps": 7000.0,
+            "relative_deviation": 0.5039091362098943
+          }
+        ],
+        "slope_per_1000_qps": 0.10466603880781525,
+        "slope_per_qps": 0.00010466603880781526
+      },
+      "cpu_linear_enough": false,
+      "fixed_cpu_cores_per_instance_max": 0.018527351114292188,
+      "fixed_memory_mib_per_instance_max": 79.14453125,
+      "maximum_observed_cpu_per_1000_qps": 0.17537726660563357,
+      "maximum_observed_load_memory_mib": 14.15625,
+      "maximum_observed_load_memory_mib_per_1000_qps": 4.71875,
+      "memory_fit": {
+        "maximum_relative_deviation": 1.694419186178677,
+        "points": [
+          {
+            "actual": 14.15625,
+            "predicted": 2.8688347138554215,
+            "qps": 3000.0,
+            "relative_deviation": 0.797345009175776
+          },
+          {
+            "actual": 3.90234375,
+            "predicted": 4.781391189759036,
+            "qps": 5000.0,
+            "relative_deviation": 0.22526140598429756
+          },
+          {
+            "actual": 2.484375,
+            "predicted": 6.693947665662651,
+            "qps": 7000.0,
+            "relative_deviation": 1.694419186178677
+          }
+        ],
+        "slope_per_1000_qps": 0.9562782379518072,
+        "slope_per_qps": 0.0009562782379518072
+      },
+      "memory_linear_enough": false,
+      "planning_cpu_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_cpu_per_1000_qps": 0.17537726660563357,
+      "planning_memory_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_memory_mib_per_1000_qps": 4.71875,
+      "state_cpu_cores_per_unit_max": 1.6191568703749596e-07,
+      "state_memory_mib_per_unit_max": 0.0002390625
+    },
+    "social": {
+      "cpu_fit": {
+        "maximum_relative_deviation": 0.16838171647573624,
+        "points": [
+          {
+            "actual": 0.26033358499444825,
+            "predicted": 0.21649816909680109,
+            "qps": 3000.0,
+            "relative_deviation": 0.16838171647573624
+          },
+          {
+            "actual": 0.3546670812701826,
+            "predicted": 0.3608302818280018,
+            "qps": 5000.0,
+            "relative_deviation": 0.017377424867700473
+          },
+          {
+            "actual": 0.4907780738586534,
+            "predicted": 0.5051623945592025,
+            "qps": 7000.0,
+            "relative_deviation": 0.029309216256250034
+          }
+        ],
+        "slope_per_1000_qps": 0.07216605636560036,
+        "slope_per_qps": 7.216605636560037e-05
+      },
+      "cpu_linear_enough": true,
+      "fixed_cpu_cores_per_instance_max": 0.0008888296343428212,
+      "fixed_memory_mib_per_instance_max": 32.47265625,
+      "maximum_observed_cpu_per_1000_qps": 0.08677786166481607,
+      "maximum_observed_load_memory_mib": 8.33984375,
+      "maximum_observed_load_memory_mib_per_1000_qps": 2.4713541666666665,
+      "memory_fit": {
+        "maximum_relative_deviation": 0.4063376794850636,
+        "points": [
+          {
+            "actual": 7.4140625,
+            "predicted": 4.401449548192771,
+            "qps": 3000.0,
+            "relative_deviation": 0.4063376794850636
+          },
+          {
+            "actual": 8.23046875,
+            "predicted": 7.335749246987952,
+            "qps": 5000.0,
+            "relative_deviation": 0.1087082072952465
+          },
+          {
+            "actual": 8.33984375,
+            "predicted": 10.270048945783133,
+            "qps": 7000.0,
+            "relative_deviation": 0.2314438080189611
+          }
+        ],
+        "slope_per_1000_qps": 1.4671498493975903,
+        "slope_per_qps": 0.0014671498493975903
+      },
+      "memory_linear_enough": false,
+      "planning_cpu_method": "through-origin fit",
+      "planning_cpu_per_1000_qps": 0.07216605636560036,
+      "planning_memory_method": "maximum observed unit cost because fit deviation exceeds 20%",
+      "planning_memory_mib_per_1000_qps": 2.4713541666666665,
+      "state_cpu_cores_per_unit_max": null,
+      "state_memory_mib_per_unit_max": null
+    }
+  },
+  "method": "A/B/C/D aggregate-resource through-origin fit",
+  "rules": {
+    "cpu_fit_maximum_relative_deviation": 0.2,
+    "maximum_cpu_ratio_per_pod": 0.6,
+    "maximum_memory_ratio_per_pod": 0.7,
+    "maximum_throttled_core_ratio": 0.005,
+    "maximum_throttled_period_ratio": 0.05,
+    "memory_fit_maximum_relative_deviation": 0.2,
+    "per_operation_slo": "P90 < 300ms, P99 < 500ms, technical error <= 0.1%"
+  },
+  "runs": [
+    {
+      "failed": 0,
+      "invalid_reasons": [],
+      "p90_ms": 3.301636,
+      "p99_ms": 5.251516,
+      "run_dir": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/cost-03000-final-r1",
+      "run_id": "cost-03000-final-r1",
+      "sent": 90000,
+      "services": {
+        "farm": {
+          "cpu_peak_per_pod_cores": 1.4306666666666668,
+          "cpu_peak_per_pod_ratio": 0.3576666666666667,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 1.3413584994448284,
+          "fixed_cpu_cores_per_instance": 0.016221140826756488,
+          "fixed_memory_mib_per_instance": 23.15234375,
+          "load_memory_mib": 96.29296875,
+          "memory_peak_per_pod_mib": 483.78125,
+          "memory_peak_per_pod_ratio": 0.11811065673828125,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 2.8862852277515328e-08,
+          "state_memory_mib_per_unit": 0.0242890625,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "gateway": {
+          "cpu_peak_per_pod_cores": 0.42133333333333334,
+          "cpu_peak_per_pod_ratio": 0.21066666666666667,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 1.2303518231038166,
+          "fixed_cpu_cores_per_instance": 0.0005925530895618808,
+          "fixed_memory_mib_per_instance": 8.5859375,
+          "load_memory_mib": 204.5703125,
+          "memory_peak_per_pod_mib": 313.54296875,
+          "memory_peak_per_pod_ratio": 0.15309715270996094,
+          "memory_peak_source_window": "C_load",
+          "replicas": 3,
+          "state_cpu_cores_per_unit": 1.5024868535504264e-06,
+          "state_memory_mib_per_unit": 0.04595833333333333,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "mysql": {
+          "cpu_peak_per_pod_cores": 0.8714385953310092,
+          "cpu_peak_per_pod_ratio": 0.2178596488327523,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.94967550340675,
+          "fixed_cpu_cores_per_instance": 0.01645006884402736,
+          "fixed_memory_mib_per_instance": 1241.95703125,
+          "load_memory_mib": 2.25390625,
+          "memory_peak_per_pod_mib": 1244.5,
+          "memory_peak_per_pod_ratio": 0.20255533854166666,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "redis": {
+          "cpu_peak_per_pod_cores": 0.494228217349864,
+          "cpu_peak_per_pod_ratio": 0.247114108674932,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.5261317998169007,
+          "fixed_cpu_cores_per_instance": 0.018527351114292188,
+          "fixed_memory_mib_per_instance": 79.14453125,
+          "load_memory_mib": 14.15625,
+          "memory_peak_per_pod_mib": 93.4609375,
+          "memory_peak_per_pod_ratio": 0.030423482259114582,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 0.0,
+          "state_memory_mib_per_unit": 1.0677083333333333e-05,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "social": {
+          "cpu_peak_per_pod_cores": 0.2606666666666666,
+          "cpu_peak_per_pod_ratio": 0.1303333333333333,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.26033358499444825,
+          "fixed_cpu_cores_per_instance": 0.0008888296343428212,
+          "fixed_memory_mib_per_instance": 31.0625,
+          "load_memory_mib": 7.4140625,
+          "memory_peak_per_pod_mib": 61.2109375,
+          "memory_peak_per_pod_ratio": 0.029888153076171875,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        }
+      },
+      "slo_verdict": "pass",
+      "succeeded": 90000,
+      "successful_qps": 3000.0,
+      "target_qps": 3000,
+      "valid_cost_point": true
+    },
+    {
+      "failed": 0,
+      "invalid_reasons": [],
+      "p90_ms": 3.538932,
+      "p99_ms": 8.019128,
+      "run_dir": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/cost-05000-final-r1",
+      "run_id": "cost-05000-final-r1",
+      "sent": 150000,
+      "services": {
+        "farm": {
+          "cpu_peak_per_pod_cores": 1.9173333333333331,
+          "cpu_peak_per_pod_ratio": 0.4793333333333333,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 2.193350360813227,
+          "fixed_cpu_cores_per_instance": 0.0166655556439279,
+          "fixed_memory_mib_per_instance": 21.34765625,
+          "load_memory_mib": 107.96875,
+          "memory_peak_per_pod_mib": 486.1640625,
+          "memory_peak_per_pod_ratio": 0.11869239807128906,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 0.0,
+          "state_memory_mib_per_unit": 0.02378984375,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "CD_complete_accounting"
+        },
+        "gateway": {
+          "cpu_peak_per_pod_cores": 0.5493333333333332,
+          "cpu_peak_per_pod_ratio": 0.2746666666666666,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 1.60234647410586,
+          "fixed_cpu_cores_per_instance": 0.0005184839533666457,
+          "fixed_memory_mib_per_instance": 8.815104166666666,
+          "load_memory_mib": 272.16015625,
+          "memory_peak_per_pod_mib": 361.29296875,
+          "memory_peak_per_pod_ratio": 0.17641258239746094,
+          "memory_peak_source_window": "C_load",
+          "replicas": 3,
+          "state_cpu_cores_per_unit": 1.4732049356026853e-06,
+          "state_memory_mib_per_unit": 0.04632578125,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "mysql": {
+          "cpu_peak_per_pod_cores": 1.6296954538465511,
+          "cpu_peak_per_pod_ratio": 0.4074238634616378,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 1.6136916139030002,
+          "fixed_cpu_cores_per_instance": 0.017111490733753648,
+          "fixed_memory_mib_per_instance": 1244.203125,
+          "load_memory_mib": 6.5703125,
+          "memory_peak_per_pod_mib": 1250.44140625,
+          "memory_peak_per_pod_ratio": 0.2035223642985026,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "redis": {
+          "cpu_peak_per_pod_cores": 0.6209800418597671,
+          "cpu_peak_per_pod_ratio": 0.31049002092988354,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.7397365040031088,
+          "fixed_cpu_cores_per_instance": 0.016128829665020435,
+          "fixed_memory_mib_per_instance": 67.10546875,
+          "load_memory_mib": 3.90234375,
+          "memory_peak_per_pod_mib": 73.0859375,
+          "memory_peak_per_pod_ratio": 0.023790995279947918,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 0.0,
+          "state_memory_mib_per_unit": 0.00013854166666666667,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "social": {
+          "cpu_peak_per_pod_cores": 0.35400000000000004,
+          "cpu_peak_per_pod_ratio": 0.17700000000000002,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.3546670812701826,
+          "fixed_cpu_cores_per_instance": 0.0006666222257571159,
+          "fixed_memory_mib_per_instance": 30.81640625,
+          "load_memory_mib": 8.23046875,
+          "memory_peak_per_pod_mib": 61.36328125,
+          "memory_peak_per_pod_ratio": 0.029962539672851562,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "CD_complete_accounting"
+        }
+      },
+      "slo_verdict": "pass",
+      "succeeded": 150000,
+      "successful_qps": 5000.0,
+      "target_qps": 5000,
+      "valid_cost_point": true
+    },
+    {
+      "failed": 0,
+      "invalid_reasons": [],
+      "p90_ms": 4.256172,
+      "p99_ms": 10.293531,
+      "run_dir": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/cost-07000-final-r1",
+      "run_id": "cost-07000-final-r1",
+      "sent": 210000,
+      "services": {
+        "farm": {
+          "cpu_peak_per_pod_cores": 2.357333333333333,
+          "cpu_peak_per_pod_ratio": 0.5893333333333333,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 2.3356839861508356,
+          "fixed_cpu_cores_per_instance": 0.015998933418170783,
+          "fixed_memory_mib_per_instance": 25.3984375,
+          "load_memory_mib": 144.1640625,
+          "memory_peak_per_pod_mib": 538.38671875,
+          "memory_peak_per_pod_ratio": 0.13144207000732422,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 3.7669425095510427e-07,
+          "state_memory_mib_per_unit": 0.02458828125,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "gateway": {
+          "cpu_peak_per_pod_cores": 0.7106666666666667,
+          "cpu_peak_per_pod_ratio": 0.35533333333333333,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 1.9644637327992875,
+          "fixed_cpu_cores_per_instance": 0.0005184839533666456,
+          "fixed_memory_mib_per_instance": 8.963541666666666,
+          "load_memory_mib": 351.53125,
+          "memory_peak_per_pod_mib": 356.59765625,
+          "memory_peak_per_pod_ratio": 0.1741199493408203,
+          "memory_peak_source_window": "C_load",
+          "replicas": 3,
+          "state_cpu_cores_per_unit": 1.4950242320341658e-06,
+          "state_memory_mib_per_unit": 0.045778125,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "mysql": {
+          "cpu_peak_per_pod_cores": 2.216884534786249,
+          "cpu_peak_per_pod_ratio": 0.5542211336965622,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 2.3184015470685364,
+          "fixed_cpu_cores_per_instance": 0.01659450649396445,
+          "fixed_memory_mib_per_instance": 1247.84375,
+          "load_memory_mib": 1.8203125,
+          "memory_peak_per_pod_mib": 1249.59375,
+          "memory_peak_per_pod_ratio": 0.2033843994140625,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "C_load"
+        },
+        "redis": {
+          "cpu_peak_per_pod_cores": 0.7284697203259202,
+          "cpu_peak_per_pod_ratio": 0.3642348601629601,
+          "cpu_peak_source_window": "CD_complete_accounting",
+          "equivalent_complete_business_cpu_cores": 0.48717190022606005,
+          "fixed_cpu_cores_per_instance": 0.015094561696785027,
+          "fixed_memory_mib_per_instance": 63.671875,
+          "load_memory_mib": 2.484375,
+          "memory_peak_per_pod_mib": 69.7421875,
+          "memory_peak_per_pod_ratio": 0.022702534993489582,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": 1.6191568703749596e-07,
+          "state_memory_mib_per_unit": 0.0002390625,
+          "state_units_B": 15000.0,
+          "throttled_core_ratio": 6.387770752071267e-05,
+          "throttled_period_ratio": 0.002631578947368421,
+          "throttling_source_window": "CD_complete_accounting"
+        },
+        "social": {
+          "cpu_peak_per_pod_cores": 0.4233333333333333,
+          "cpu_peak_per_pod_ratio": 0.21166666666666664,
+          "cpu_peak_source_window": "C_load",
+          "equivalent_complete_business_cpu_cores": 0.4907780738586534,
+          "fixed_cpu_cores_per_instance": 0.00044441481717141074,
+          "fixed_memory_mib_per_instance": 32.47265625,
+          "load_memory_mib": 8.33984375,
+          "memory_peak_per_pod_mib": 64.765625,
+          "memory_peak_per_pod_ratio": 0.03162384033203125,
+          "memory_peak_source_window": "C_load",
+          "replicas": 1,
+          "state_cpu_cores_per_unit": null,
+          "state_memory_mib_per_unit": null,
+          "state_units_B": null,
+          "throttled_core_ratio": 0.0,
+          "throttled_period_ratio": 0.0,
+          "throttling_source_window": "CD_complete_accounting"
+        }
+      },
+      "slo_verdict": "pass",
+      "succeeded": 210000,
+      "successful_qps": 7000.0,
+      "target_qps": 7000,
+      "valid_cost_point": true
+    }
+  ],
+  "valid_cost_points": 3
+}

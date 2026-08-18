@@ -1,0 +1,1200 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/restartedAt": "2026-08-16T10:12:07+08:00",
+                    "prometheus.io/path": "/metrics",
+                    "prometheus.io/port": "9302",
+                    "prometheus.io/scrape": "true"
+                },
+                "creationTimestamp": "2026-08-16T02:12:14Z",
+                "generateName": "gateway-94bdcf695-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/name": "gateway",
+                    "app.kubernetes.io/part-of": "farm",
+                    "pod-template-hash": "94bdcf695"
+                },
+                "name": "gateway-94bdcf695-9bt4s",
+                "namespace": "benkz",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "gateway-94bdcf695",
+                        "uid": "9829927e-a933-4411-a5a3-53a1747ae615"
+                    }
+                ],
+                "resourceVersion": "128715",
+                "uid": "e3696f03-040b-4fe0-b532-50f5f309c53f"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "env": [
+                            {
+                                "name": "FARM_ENV",
+                                "value": "dev"
+                            },
+                            {
+                                "name": "FARM_MYSQL_DSN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "mysql-dsn",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_REDIS_ADDR",
+                                "value": "redis:6379"
+                            },
+                            {
+                                "name": "FARM_INTERNAL_TOKEN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "internal-token",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_HTTP_ADDR",
+                                "value": ":9002"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_ADDR",
+                                "value": ":9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADMIN_ADDR",
+                                "value": ":9302"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_ID",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.uid"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_HOST",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "status.podIP"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_PORT",
+                                "value": "9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_TTL",
+                                "value": "30s"
+                            },
+                            {
+                                "name": "FARM_ROUTE_TABLE",
+                                "value": "deploy/route-table.local.json"
+                            },
+                            {
+                                "name": "FARM_FARM_GRPC_TARGETS",
+                                "value": "{\"farm-0\":\"farm:9210\"}"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                "value": "{}"
+                            },
+                            {
+                                "name": "FARM_SOCIAL_GRPC_TARGET",
+                                "value": "social:9204"
+                            },
+                            {
+                                "name": "FARM_DISABLE_WS_RATE_LIMIT",
+                                "value": "0"
+                            },
+                            {
+                                "name": "FARM_ENABLE_API_DOCS",
+                                "value": "1"
+                            },
+                            {
+                                "name": "FARM_TIME_PROFILE",
+                                "value": "authentic"
+                            },
+                            {
+                                "name": "FARM_ALLOW_DEBUG_TIME",
+                                "value": "1"
+                            },
+                            {
+                                "name": "GOMAXPROCS",
+                                "value": "2"
+                            },
+                            {
+                                "name": "GOMEMLIMIT",
+                                "value": "1536MiB"
+                            }
+                        ],
+                        "image": "benkz/gateway:k3s",
+                        "imagePullPolicy": "Never",
+                        "lifecycle": {
+                            "preStop": {
+                                "sleep": {
+                                    "seconds": 5
+                                }
+                            }
+                        },
+                        "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 20,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "name": "gateway",
+                        "ports": [
+                            {
+                                "containerPort": 9002,
+                                "name": "http",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9202,
+                                "name": "grpc",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9302,
+                                "name": "admin",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 24,
+                            "httpGet": {
+                                "path": "/readyz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "periodSeconds": 5,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 3
+                        },
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-9hs7n",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "vm-218-62-tencentos",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 45,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-9hs7n",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:20Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:19Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:20Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:20Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:19Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "2",
+                            "memory": "2Gi"
+                        },
+                        "containerID": "containerd://cdb7cd1bc2a6fc530a6612ff1fe01119107c083e14bd1b67f5a3595b8f4748b1",
+                        "image": "docker.io/benkz/gateway:k3s",
+                        "imageID": "sha256:1d475482ca11333499303ce1352fad774dcca580a3976f2290645b172e2d5f69",
+                        "lastState": {},
+                        "name": "gateway",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "restartCount": 0,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-08-16T02:12:20Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-9hs7n",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "21.130.218.62",
+                "hostIPs": [
+                    {
+                        "ip": "21.130.218.62"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.42.0.251",
+                "podIPs": [
+                    {
+                        "ip": "10.42.0.251"
+                    }
+                ],
+                "qosClass": "Guaranteed",
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "2Gi"
+                    },
+                    "requests": {
+                        "cpu": "1999m",
+                        "memory": "2Gi"
+                    }
+                },
+                "startTime": "2026-08-16T02:12:19Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/restartedAt": "2026-08-16T10:12:07+08:00",
+                    "prometheus.io/path": "/metrics",
+                    "prometheus.io/port": "9302",
+                    "prometheus.io/scrape": "true"
+                },
+                "creationTimestamp": "2026-08-16T02:12:20Z",
+                "generateName": "gateway-94bdcf695-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/name": "gateway",
+                    "app.kubernetes.io/part-of": "farm",
+                    "pod-template-hash": "94bdcf695"
+                },
+                "name": "gateway-94bdcf695-ccn2t",
+                "namespace": "benkz",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "gateway-94bdcf695",
+                        "uid": "9829927e-a933-4411-a5a3-53a1747ae615"
+                    }
+                ],
+                "resourceVersion": "128749",
+                "uid": "31c913de-4ff0-4c49-81bb-5f8cdd2786c6"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "env": [
+                            {
+                                "name": "FARM_ENV",
+                                "value": "dev"
+                            },
+                            {
+                                "name": "FARM_MYSQL_DSN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "mysql-dsn",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_REDIS_ADDR",
+                                "value": "redis:6379"
+                            },
+                            {
+                                "name": "FARM_INTERNAL_TOKEN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "internal-token",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_HTTP_ADDR",
+                                "value": ":9002"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_ADDR",
+                                "value": ":9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADMIN_ADDR",
+                                "value": ":9302"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_ID",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.uid"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_HOST",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "status.podIP"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_PORT",
+                                "value": "9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_TTL",
+                                "value": "30s"
+                            },
+                            {
+                                "name": "FARM_ROUTE_TABLE",
+                                "value": "deploy/route-table.local.json"
+                            },
+                            {
+                                "name": "FARM_FARM_GRPC_TARGETS",
+                                "value": "{\"farm-0\":\"farm:9210\"}"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                "value": "{}"
+                            },
+                            {
+                                "name": "FARM_SOCIAL_GRPC_TARGET",
+                                "value": "social:9204"
+                            },
+                            {
+                                "name": "FARM_DISABLE_WS_RATE_LIMIT",
+                                "value": "0"
+                            },
+                            {
+                                "name": "FARM_ENABLE_API_DOCS",
+                                "value": "1"
+                            },
+                            {
+                                "name": "FARM_TIME_PROFILE",
+                                "value": "authentic"
+                            },
+                            {
+                                "name": "FARM_ALLOW_DEBUG_TIME",
+                                "value": "1"
+                            },
+                            {
+                                "name": "GOMAXPROCS",
+                                "value": "2"
+                            },
+                            {
+                                "name": "GOMEMLIMIT",
+                                "value": "1536MiB"
+                            }
+                        ],
+                        "image": "benkz/gateway:k3s",
+                        "imagePullPolicy": "Never",
+                        "lifecycle": {
+                            "preStop": {
+                                "sleep": {
+                                    "seconds": 5
+                                }
+                            }
+                        },
+                        "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 20,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "name": "gateway",
+                        "ports": [
+                            {
+                                "containerPort": 9002,
+                                "name": "http",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9202,
+                                "name": "grpc",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9302,
+                                "name": "admin",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 24,
+                            "httpGet": {
+                                "path": "/readyz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "periodSeconds": 5,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 3
+                        },
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-qrhsq",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "vm-218-62-tencentos",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 45,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-qrhsq",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:26Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:25Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:26Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:26Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:25Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "2",
+                            "memory": "2Gi"
+                        },
+                        "containerID": "containerd://1e55606fbe1857aa93c8e17aa09e462b60b208805146af88ea4dbad60f37cd6c",
+                        "image": "docker.io/benkz/gateway:k3s",
+                        "imageID": "sha256:1d475482ca11333499303ce1352fad774dcca580a3976f2290645b172e2d5f69",
+                        "lastState": {},
+                        "name": "gateway",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "restartCount": 0,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-08-16T02:12:26Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-qrhsq",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "21.130.218.62",
+                "hostIPs": [
+                    {
+                        "ip": "21.130.218.62"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.42.0.252",
+                "podIPs": [
+                    {
+                        "ip": "10.42.0.252"
+                    }
+                ],
+                "qosClass": "Guaranteed",
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "2Gi"
+                    },
+                    "requests": {
+                        "cpu": "1999m",
+                        "memory": "2Gi"
+                    }
+                },
+                "startTime": "2026-08-16T02:12:25Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/restartedAt": "2026-08-16T10:12:07+08:00",
+                    "prometheus.io/path": "/metrics",
+                    "prometheus.io/port": "9302",
+                    "prometheus.io/scrape": "true"
+                },
+                "creationTimestamp": "2026-08-16T02:12:07Z",
+                "generateName": "gateway-94bdcf695-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/name": "gateway",
+                    "app.kubernetes.io/part-of": "farm",
+                    "pod-template-hash": "94bdcf695"
+                },
+                "name": "gateway-94bdcf695-p8pgc",
+                "namespace": "benkz",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "gateway-94bdcf695",
+                        "uid": "9829927e-a933-4411-a5a3-53a1747ae615"
+                    }
+                ],
+                "resourceVersion": "128661",
+                "uid": "0845de8d-cca4-4f39-8eb4-d15ef0a7da93"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "env": [
+                            {
+                                "name": "FARM_ENV",
+                                "value": "dev"
+                            },
+                            {
+                                "name": "FARM_MYSQL_DSN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "mysql-dsn",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_REDIS_ADDR",
+                                "value": "redis:6379"
+                            },
+                            {
+                                "name": "FARM_INTERNAL_TOKEN",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "internal-token",
+                                        "name": "farm-secrets"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_HTTP_ADDR",
+                                "value": ":9002"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_ADDR",
+                                "value": ":9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADMIN_ADDR",
+                                "value": ":9302"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_ID",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.uid"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_HOST",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "status.podIP"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "FARM_GATEWAY_ADVERTISE_PORT",
+                                "value": "9202"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_INSTANCE_TTL",
+                                "value": "30s"
+                            },
+                            {
+                                "name": "FARM_ROUTE_TABLE",
+                                "value": "deploy/route-table.local.json"
+                            },
+                            {
+                                "name": "FARM_FARM_GRPC_TARGETS",
+                                "value": "{\"farm-0\":\"farm:9210\"}"
+                            },
+                            {
+                                "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                "value": "{}"
+                            },
+                            {
+                                "name": "FARM_SOCIAL_GRPC_TARGET",
+                                "value": "social:9204"
+                            },
+                            {
+                                "name": "FARM_DISABLE_WS_RATE_LIMIT",
+                                "value": "0"
+                            },
+                            {
+                                "name": "FARM_ENABLE_API_DOCS",
+                                "value": "1"
+                            },
+                            {
+                                "name": "FARM_TIME_PROFILE",
+                                "value": "authentic"
+                            },
+                            {
+                                "name": "FARM_ALLOW_DEBUG_TIME",
+                                "value": "1"
+                            },
+                            {
+                                "name": "GOMAXPROCS",
+                                "value": "2"
+                            },
+                            {
+                                "name": "GOMEMLIMIT",
+                                "value": "1536MiB"
+                            }
+                        ],
+                        "image": "benkz/gateway:k3s",
+                        "imagePullPolicy": "Never",
+                        "lifecycle": {
+                            "preStop": {
+                                "sleep": {
+                                    "seconds": 5
+                                }
+                            }
+                        },
+                        "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 20,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "name": "gateway",
+                        "ports": [
+                            {
+                                "containerPort": 9002,
+                                "name": "http",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9202,
+                                "name": "grpc",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 9302,
+                                "name": "admin",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 24,
+                            "httpGet": {
+                                "path": "/readyz",
+                                "port": "admin",
+                                "scheme": "HTTP"
+                            },
+                            "periodSeconds": 5,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 3
+                        },
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-b2h72",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "vm-218-62-tencentos",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 45,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-b2h72",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "2",
+                    "memory": "2Gi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:13Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:12Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:14Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:14Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-08-16T02:12:12Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "2",
+                            "memory": "2Gi"
+                        },
+                        "containerID": "containerd://afd0a71345edd251c017b68821cd8f63175b16cf5783b0824bf2a55a4577851f",
+                        "image": "docker.io/benkz/gateway:k3s",
+                        "imageID": "sha256:1d475482ca11333499303ce1352fad774dcca580a3976f2290645b172e2d5f69",
+                        "lastState": {},
+                        "name": "gateway",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            },
+                            "requests": {
+                                "cpu": "2",
+                                "memory": "2Gi"
+                            }
+                        },
+                        "restartCount": 0,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-08-16T02:12:13Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-b2h72",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "21.130.218.62",
+                "hostIPs": [
+                    {
+                        "ip": "21.130.218.62"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.42.0.250",
+                "podIPs": [
+                    {
+                        "ip": "10.42.0.250"
+                    }
+                ],
+                "qosClass": "Guaranteed",
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "2Gi"
+                    },
+                    "requests": {
+                        "cpu": "1999m",
+                        "memory": "2Gi"
+                    }
+                },
+                "startTime": "2026-08-16T02:12:12Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

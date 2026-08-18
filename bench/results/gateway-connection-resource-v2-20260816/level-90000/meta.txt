@@ -1,0 +1,10 @@
+level=90000
+ping_qps=3000
+duration=120s
+fixture=/fixtures/gateway-connection-120000.json
+gateway_urls=ws://10.42.0.228:9002/ws,ws://10.42.0.229:9002/ws,ws://10.42.0.227:9002/ws
+gateway_metrics=gateway-7b56658758-2jk44|http://10.42.0.228:9302/metrics,gateway-7b56658758-7xgqw|http://10.42.0.229:9302/metrics,gateway-7b56658758-nrglc|http://10.42.0.227:9302/metrics
+bench_bin=/tmp/servicebench-connection-v2
+start_unix=1786844955
+end_unix=1786844984
+exit_code=2

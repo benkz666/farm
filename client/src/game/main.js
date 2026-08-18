@@ -56,7 +56,14 @@ state.settings = state.settings || { sound: true };
 const sfx = new SFX();
 sfx.enabled = state.settings.sound;
 
-const scene = new FarmScene(document.getElementById('scene-container'));
+let scene = null;
+
+function ensureScene() {
+  if (scene) return scene;
+  scene = new FarmScene(document.getElementById('scene-container'));
+  bindSceneInteractions(scene);
+  return scene;
+}
 
 let activeTool = null;
 let selectedSeed = null;
@@ -263,7 +270,7 @@ function announceMatureTransitions() {
   if (matured.length === 0) return;
 
   sfx.mature();
-  matured.forEach((plotId) => scene.matureAnim(plotId));
+  matured.forEach((plotId) => scene?.matureAnim(plotId));
   ui.toast(
     matured.length === 1
       ? `✨ ${cropOf(state.plots[matured[0]])?.name || '作物'}已成熟，可以收获了！`
@@ -435,9 +442,7 @@ function enterOnlineFromNet(client, enterEnv) {
   }
   enterOnline({ uid: client.uid, token: client.token });
   bindOnlineClient(client);
-  applyAuthoritativeFarmEnter(reconnectRestoreDeps(client), enterEnv, {
-    toast: '已进入 online 模式：操作将发往服务端',
-  });
+  applyAuthoritativeFarmEnter(reconnectRestoreDeps(client), enterEnv);
   // 清掉登录前本地灌入的假邮件/任务，避免右侧红点误报；真实列表按需拉取
   state.mails = [];
   state.tasks = [];
@@ -479,39 +484,39 @@ function playOnlineFx(tool, plotId) {
   switch (tool) {
     case 'till':
       sfx.till();
-      scene.burst(plotId, 0x8d6e63, 12, true);
+      scene?.burst(plotId, 0x8d6e63, 12, true);
       break;
     case 'plant':
       sfx.plant();
-      scene.burst(plotId, 0x9be15d, 12, true);
+      scene?.burst(plotId, 0x9be15d, 12, true);
       break;
     case 'water':
       sfx.water();
-      scene.waterAnim(plotId);
+      scene?.waterAnim(plotId);
       break;
     case 'weed':
       sfx.weed();
-      scene.burst(plotId, 0x81c784, 10, true);
+      scene?.burst(plotId, 0x81c784, 10, true);
       break;
     case 'pest':
       sfx.pest();
-      scene.burst(plotId, 0xffb74d, 10, true);
+      scene?.burst(plotId, 0xffb74d, 10, true);
       break;
     case 'remove':
       sfx.remove();
-      scene.burst(plotId, 0x8d6e63, 14, true);
+      scene?.burst(plotId, 0x8d6e63, 14, true);
       break;
     case 'fert':
       sfx.fertilize();
-      scene.magicAnim(plotId);
+      scene?.magicAnim(plotId);
       break;
     case 'harvest':
       sfx.harvest();
-      scene.harvestAnim(plotId);
+      scene?.harvestAnim(plotId);
       break;
     case 'steal':
       sfx.steal();
-      scene.harvestAnim(plotId);
+      scene?.harvestAnim(plotId);
       break;
     default:
       break;
@@ -827,6 +832,7 @@ function tooltipHTML(plotId) {
 
 // ---------------- 3D 同步 ----------------
 function syncAllPlots() {
+  if (!scene) return;
   const now = farmNow();
   const farm = currentFarm();
   scene.forEachPlot((g, i) => {
@@ -1556,18 +1562,45 @@ const ui = new UI({
 });
 
 // ---------------- 事件绑定 ----------------
-scene.clickCb = onPlotClick;
-scene.hoverCb = (plotId, x, y) => {
-  hoverPlot = plotId;
-  if (plotId === null || ui.modalOpen) { ui.showTooltip(null); return; }
-  ui.showTooltip(tooltipHTML(plotId), x, y);
-};
+function bindSceneInteractions(targetScene) {
+  targetScene.clickCb = onPlotClick;
+  targetScene.hoverCb = (plotId, x, y) => {
+    const changed = hoverPlot !== plotId;
+    hoverPlot = plotId;
+    lastMouse[0] = x;
+    lastMouse[1] = y;
+    if (plotId === null || ui.modalOpen) { ui.showTooltip(null); return; }
+    if (changed || ui.tooltip.classList.contains('hidden')) {
+      ui.showTooltip(tooltipHTML(plotId), x, y);
+    } else {
+      ui.moveTooltip(x, y);
+    }
+  };
+}
 
 // ---------------- 主循环 ----------------
 const CLOCK_ICONS = [[0.22, '🌙'], [0.28, '🌅'], [0.42, '☀️'], [0.68, '☀️'], [0.78, '🌇'], [0.84, '🌙'], [1.01, '🌙']];
 let lastTick = Date.now();
+let runtimeRouteActive = hmrRuntime?.routeActive === true;
+
+function updateSceneActivity() {
+  if (runtimeRouteActive && document.visibilityState !== 'hidden') ensureScene().start();
+  else scene?.stop();
+}
+
+function setRuntimeActive(active) {
+  const next = Boolean(active);
+  const becameActive = next && !runtimeRouteActive;
+  runtimeRouteActive = next;
+  updateSceneActivity();
+  if (becameActive) {
+    lastTick = Date.now();
+    tick();
+  }
+}
 
 function tick() {
+  if (!runtimeRouteActive || document.visibilityState === 'hidden') return;
   const localNow = Date.now();
   const now = farmNow(localNow);
   const dt = localNow - lastTick;
@@ -1589,7 +1622,7 @@ function tick() {
 
   // 日夜循环：跟全局逻辑日相位，各客户端同刻同天空
   const phase = logicDayPhase(now, state.timeScale);
-  scene.setDayPhase(phase);
+  scene?.setDayPhase(phase);
   const icon = CLOCK_ICONS.find(([t]) => phase < t)?.[1] || '☀️';
   ui.setClock(icon);
 
@@ -1598,9 +1631,9 @@ function tick() {
     const guardDog = state.visitingGuardDog;
     const dogDef = guardDog ? DOGS.find((dog) => dog.dogType === guardDog.dogType) : null;
     const hungry = !guardDog || guardDog.bowlEmptyAt <= now;
-    scene.setDog(dogDef || null, hungry);
+    scene?.setDog(dogDef || null, hungry);
   } else {
-    scene.setDog(state.dog ? DOGS.find(d => d.id === state.dog.id) : null, state.dog ? state.dogBowl <= 0 : false);
+    scene?.setDog(state.dog ? DOGS.find(d => d.id === state.dog.id) : null, state.dog ? state.dogBowl <= 0 : false);
   }
 
   syncAllPlots();
@@ -1616,31 +1649,34 @@ function tick() {
 }
 
 const lastMouse = [0, 0];
-const onGlobalPointerMove = (e) => { lastMouse[0] = e.clientX; lastMouse[1] = e.clientY; };
-addEventListener('pointermove', onGlobalPointerMove);
 
 // 后台标签页的 timer 可能被浏览器降频；重新可见或获得焦点时立即校准，
 // 保证玩家切回任意农场视图时执行一次权威校准。
 const onFarmPageResume = () => {
-  if (document.visibilityState === 'hidden' || !isOnline() || !session.viewingOwnerUid) return;
+  if (!runtimeRouteActive || document.visibilityState === 'hidden' || !isOnline() || !session.viewingOwnerUid) return;
   void farmAdvanceScheduler?.reconcileNow?.();
 };
+const onFarmVisibilityChange = () => {
+  updateSceneActivity();
+  onFarmPageResume();
+};
 addEventListener('focus', onFarmPageResume);
-document.addEventListener('visibilitychange', onFarmPageResume);
+document.addEventListener('visibilitychange', onFarmVisibilityChange);
 
 // ---------------- 启动 ----------------
 // 登录页 authFlow / DEV 诊断：暴露 online 切入与状态
 window.__farm = {
   __runtime: runtimeHandle,
   getState: () => state,
-  scene,
+  get scene() { return scene; },
   enterOnlineFromNet,
   isOnline,
   getNetClient: () => netClient,
+  setActive: setRuntimeActive,
 };
 refreshToolbar();
 syncAllPlots();
-scene.start();
+updateSceneActivity();
 const tickIntervalId = setInterval(tick, 300);
 tick();
 
@@ -1650,10 +1686,10 @@ removePageUnload = bindPageUnload({
   removeEventListener: (type, listener) => window.removeEventListener(type, listener),
   clearInterval: (id) => window.clearInterval(id),
   tickIntervalId,
-  onPointerMove: onGlobalPointerMove,
+  onPointerMove: null,
   getReconnectBinding: () => reconnectBinding,
   setReconnectBinding: (v) => { reconnectBinding = v; },
-  scene,
+  scene: { dispose: () => scene?.dispose?.() },
   getNetClient: () => netClient,
   onCleanup: () => {
     disposeTaskRuntime();
@@ -1662,7 +1698,7 @@ removePageUnload = bindPageUnload({
     stopTaskNotifySubscription?.();
     stopTaskNotifySubscription = null;
     removeEventListener('focus', onFarmPageResume);
-    document.removeEventListener('visibilitychange', onFarmPageResume);
+    document.removeEventListener('visibilitychange', onFarmVisibilityChange);
   },
 });
 
@@ -1696,10 +1732,10 @@ function disposeRuntimeForHMR() {
   farmMirror = null;
   removePageUnload?.();
   removePageUnload = null;
-  removeEventListener('pointermove', onGlobalPointerMove);
   removeEventListener('focus', onFarmPageResume);
-  document.removeEventListener('visibilitychange', onFarmPageResume);
-  scene.dispose();
+  document.removeEventListener('visibilitychange', onFarmVisibilityChange);
+  scene?.dispose();
+  scene = null;
   // HMR 交接时故意不关闭 netClient：新模块会继续接管它。
   if (window.__farm?.__runtime === runtimeHandle) {
     delete window.__farm;
@@ -1713,12 +1749,12 @@ if (import.meta.hot) {
   window.__farmActiveRuntime = {
     runtime: runtimeHandle,
     dispose: disposeRuntimeForHMR,
-    snapshot: () => ({ state, netClient }),
+    snapshot: () => ({ state, netClient, routeActive: runtimeRouteActive }),
   };
   import.meta.hot.dispose(() => {
-    import.meta.hot.data.runtime = { state, netClient };
+    import.meta.hot.data.runtime = { state, netClient, routeActive: runtimeRouteActive };
     disposeRuntimeForHMR();
   });
 }
 
-// 未 online 时不提示本地开局指引（须登录）；online 后由 enterOnlineFromNet toast
+// 未 online 时不提示本地开局指引；登录成功后直接进入农场，不再额外弹模式提示。

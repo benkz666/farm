@@ -1,0 +1,482 @@
+{
+  "mode": "gateway-mixed-capacity-100-v1",
+  "warmup_mode": "full",
+  "state_ready_unix_ms": 1786904292598,
+  "state_window_millis": 30910,
+  "target_qps": 3334,
+  "sent": 200040,
+  "succeeded": 193441,
+  "failed": 6599,
+  "actual_qps": 3224.016666666667,
+  "completion_qps": 3185.446017785623,
+  "average_ms": 579.1879508978861,
+  "p50_ms": 593.699639,
+  "p90_ms": 948.429667,
+  "p95_ms": 1010.859755,
+  "p99_ms": 1176.25762,
+  "max_ms": 2030.213465,
+  "wall_millis": 60726,
+  "measurement_start_unix_ms": 1786904323509,
+  "measurement_end_unix_ms": 1786904384235,
+  "first_error_code": -1,
+  "measurement_millis": 60000,
+  "drain_millis": 726,
+  "error_codes": {
+    "-1": 6599
+  },
+  "steps": {
+    "buy": {
+      "target_qps": 80.01599999983996,
+      "sent": 4800,
+      "succeeded": 4586,
+      "failed": 214,
+      "actual_qps": 76.43333333333334,
+      "average_ms": 547.8369038754906,
+      "p90_ms": 942.285511,
+      "p95_ms": 1014.343217,
+      "p99_ms": 1154.40838,
+      "max_ms": 1422.864119,
+      "error_codes": {
+        "-1": 214
+      }
+    },
+    "clear": {
+      "target_qps": 86.68400000316062,
+      "sent": 5215,
+      "succeeded": 4997,
+      "failed": 218,
+      "actual_qps": 83.28333333333333,
+      "average_ms": 555.4401216479888,
+      "p90_ms": 952.006516,
+      "p95_ms": 1034.094009,
+      "p99_ms": 1188.391284,
+      "max_ms": 1425.603201,
+      "error_codes": {
+        "-1": 218
+      }
+    },
+    "codex-list": {
+      "target_qps": 73.34799999651929,
+      "sent": 4390,
+      "succeeded": 4198,
+      "failed": 192,
+      "actual_qps": 69.96666666666667,
+      "average_ms": 565.9903547539304,
+      "p90_ms": 950.286641,
+      "p95_ms": 1035.232491,
+      "p99_ms": 1363.363899,
+      "max_ms": 1876.206852,
+      "error_codes": {
+        "-1": 192
+      }
+    },
+    "enter-friend": {
+      "target_qps": 170.03399999965993,
+      "sent": 10186,
+      "succeeded": 10186,
+      "failed": 0,
+      "actual_qps": 169.76666666666668,
+      "average_ms": 545.3163792229531,
+      "p90_ms": 936.556086,
+      "p95_ms": 999.916251,
+      "p99_ms": 1123.422929,
+      "max_ms": 1786.869683
+    },
+    "enter-self": {
+      "target_qps": 33.33999999659932,
+      "sent": 2065,
+      "succeeded": 1979,
+      "failed": 86,
+      "actual_qps": 32.983333333333334,
+      "average_ms": 560.5558389176352,
+      "p90_ms": 951.525979,
+      "p95_ms": 1013.358873,
+      "p99_ms": 1198.568838,
+      "max_ms": 1629.490016,
+      "error_codes": {
+        "-1": 86
+      }
+    },
+    "fertilize": {
+      "target_qps": 103.35399999645928,
+      "sent": 6184,
+      "succeeded": 5913,
+      "failed": 271,
+      "actual_qps": 98.55,
+      "average_ms": 547.842355056993,
+      "p90_ms": 931.151511,
+      "p95_ms": 999.215007,
+      "p99_ms": 1133.922586,
+      "max_ms": 1237.026659,
+      "error_codes": {
+        "-1": 271
+      }
+    },
+    "friend-list": {
+      "target_qps": 186.7040000029606,
+      "sent": 11134,
+      "succeeded": 10844,
+      "failed": 290,
+      "actual_qps": 180.73333333333332,
+      "average_ms": 722.2165403336408,
+      "p90_ms": 966.207089,
+      "p95_ms": 996.840127,
+      "p99_ms": 1300.498321,
+      "max_ms": 1689.376328,
+      "error_codes": {
+        "-1": 290
+      }
+    },
+    "gen-share": {
+      "target_qps": 43.341999996579304,
+      "sent": 2605,
+      "succeeded": 2536,
+      "failed": 69,
+      "actual_qps": 42.266666666666666,
+      "average_ms": 733.0150809676657,
+      "p90_ms": 962.847164,
+      "p95_ms": 1004.30105,
+      "p99_ms": 1520.344124,
+      "max_ms": 1835.946647,
+      "error_codes": {
+        "-1": 69
+      }
+    },
+    "harvest": {
+      "target_qps": 166.7000000030006,
+      "sent": 10052,
+      "succeeded": 9620,
+      "failed": 432,
+      "actual_qps": 160.33333333333334,
+      "average_ms": 560.5423915717256,
+      "p90_ms": 945.164898,
+      "p95_ms": 1013.186166,
+      "p99_ms": 1205.915742,
+      "max_ms": 1841.994085,
+      "error_codes": {
+        "-1": 432
+      }
+    },
+    "list-friend-requests": {
+      "target_qps": 156.69800000302058,
+      "sent": 9240,
+      "succeeded": 9002,
+      "failed": 238,
+      "actual_qps": 150.03333333333333,
+      "average_ms": 715.5302737450567,
+      "p90_ms": 960.041674,
+      "p95_ms": 985.065484,
+      "p99_ms": 1130.155012,
+      "max_ms": 1571.087117,
+      "error_codes": {
+        "-1": 238
+      }
+    },
+    "mail-claim": {
+      "target_qps": 40.00799999991998,
+      "sent": 2385,
+      "succeeded": 2278,
+      "failed": 107,
+      "actual_qps": 37.96666666666667,
+      "average_ms": 560.7521211189639,
+      "p90_ms": 960.105552,
+      "p95_ms": 1043.105593,
+      "p99_ms": 1171.032271,
+      "max_ms": 1733.221634,
+      "error_codes": {
+        "-1": 107
+      }
+    },
+    "mail-delete": {
+      "target_qps": 6.668000003320663,
+      "sent": 394,
+      "succeeded": 377,
+      "failed": 17,
+      "actual_qps": 6.283333333333333,
+      "average_ms": 558.7175084509283,
+      "p90_ms": 947.570568,
+      "p95_ms": 1019.532226,
+      "p99_ms": 1134.577129,
+      "max_ms": 1387.789992,
+      "error_codes": {
+        "-1": 17
+      }
+    },
+    "mail-list": {
+      "target_qps": 150.02999999969992,
+      "sent": 9077,
+      "succeeded": 8684,
+      "failed": 393,
+      "actual_qps": 144.73333333333332,
+      "average_ms": 552.5085442699217,
+      "p90_ms": 939.298307,
+      "p95_ms": 1006.462255,
+      "p99_ms": 1185.534405,
+      "max_ms": 1506.458473,
+      "error_codes": {
+        "-1": 393
+      }
+    },
+    "mail-read": {
+      "target_qps": 70.01399999985996,
+      "sent": 4129,
+      "succeeded": 3957,
+      "failed": 172,
+      "actual_qps": 65.95,
+      "average_ms": 568.843528833207,
+      "p90_ms": 955.626606,
+      "p95_ms": 1042.857339,
+      "p99_ms": 1321.939252,
+      "max_ms": 1619.103748,
+      "error_codes": {
+        "-1": 172
+      }
+    },
+    "pest-cross": {
+      "target_qps": 56.67800000322064,
+      "sent": 3356,
+      "succeeded": 3356,
+      "failed": 0,
+      "actual_qps": 55.93333333333333,
+      "average_ms": 550.9120823939214,
+      "p90_ms": 933.524542,
+      "p95_ms": 1005.671225,
+      "p99_ms": 1141.445737,
+      "max_ms": 1509.698933
+    },
+    "pest-local": {
+      "target_qps": 86.68400000316062,
+      "sent": 5379,
+      "succeeded": 5148,
+      "failed": 231,
+      "actual_qps": 85.8,
+      "average_ms": 563.2846529597903,
+      "p90_ms": 956.65116,
+      "p95_ms": 1049.489431,
+      "p99_ms": 1273.782394,
+      "max_ms": 1479.26262,
+      "error_codes": {
+        "-1": 231
+      }
+    },
+    "pet-activate": {
+      "target_qps": 6.668000003320663,
+      "sent": 384,
+      "succeeded": 366,
+      "failed": 18,
+      "actual_qps": 6.1,
+      "average_ms": 549.1585779180327,
+      "p90_ms": 942.209234,
+      "p95_ms": 1016.933051,
+      "p99_ms": 1176.917783,
+      "max_ms": 1289.180027,
+      "error_codes": {
+        "-1": 18
+      }
+    },
+    "pet-feed": {
+      "target_qps": 63.345999996539305,
+      "sent": 3813,
+      "succeeded": 3652,
+      "failed": 161,
+      "actual_qps": 60.86666666666667,
+      "average_ms": 547.7221765008214,
+      "p90_ms": 936.7732,
+      "p95_ms": 1000.382748,
+      "p99_ms": 1129.215084,
+      "max_ms": 1535.151312,
+      "error_codes": {
+        "-1": 161
+      }
+    },
+    "pet-status": {
+      "target_qps": 80.01599999983996,
+      "sent": 4816,
+      "succeeded": 4614,
+      "failed": 202,
+      "actual_qps": 76.9,
+      "average_ms": 552.4246959824447,
+      "p90_ms": 937.984469,
+      "p95_ms": 1016.476193,
+      "p99_ms": 1233.248544,
+      "max_ms": 1644.46172,
+      "error_codes": {
+        "-1": 202
+      }
+    },
+    "plant": {
+      "target_qps": 143.36199999637927,
+      "sent": 8527,
+      "succeeded": 8164,
+      "failed": 363,
+      "actual_qps": 136.06666666666666,
+      "average_ms": 552.253905927119,
+      "p90_ms": 935.077692,
+      "p95_ms": 1003.106379,
+      "p99_ms": 1139.038147,
+      "max_ms": 1560.22652,
+      "error_codes": {
+        "-1": 363
+      }
+    },
+    "search-user": {
+      "target_qps": 90.01799999981996,
+      "sent": 5374,
+      "succeeded": 5232,
+      "failed": 142,
+      "actual_qps": 87.2,
+      "average_ms": 718.0274695105122,
+      "p90_ms": 960.702258,
+      "p95_ms": 991.230258,
+      "p99_ms": 1142.562198,
+      "max_ms": 1577.643192,
+      "error_codes": {
+        "-1": 142
+      }
+    },
+    "sell": {
+      "target_qps": 63.345999996539305,
+      "sent": 3776,
+      "succeeded": 3608,
+      "failed": 168,
+      "actual_qps": 60.13333333333333,
+      "average_ms": 558.3053628082039,
+      "p90_ms": 936.992544,
+      "p95_ms": 1010.733527,
+      "p99_ms": 1157.408144,
+      "max_ms": 1455.906646,
+      "error_codes": {
+        "-1": 168
+      }
+    },
+    "steal": {
+      "target_qps": 140.02799999971992,
+      "sent": 8387,
+      "succeeded": 8387,
+      "failed": 0,
+      "actual_qps": 139.78333333333333,
+      "average_ms": 550.3502281158936,
+      "p90_ms": 937.720996,
+      "p95_ms": 1011.208105,
+      "p99_ms": 1144.728283,
+      "max_ms": 1242.590899
+    },
+    "sync": {
+      "target_qps": 130.02599999973995,
+      "sent": 7743,
+      "succeeded": 7407,
+      "failed": 336,
+      "actual_qps": 123.45,
+      "average_ms": 540.4476611375725,
+      "p90_ms": 932.275234,
+      "p95_ms": 994.467148,
+      "p99_ms": 1134.365004,
+      "max_ms": 1586.547857,
+      "error_codes": {
+        "-1": 336
+      }
+    },
+    "task-claim": {
+      "target_qps": 80.01599999983996,
+      "sent": 4825,
+      "succeeded": 4616,
+      "failed": 209,
+      "actual_qps": 76.93333333333334,
+      "average_ms": 554.9599443342721,
+      "p90_ms": 934.227825,
+      "p95_ms": 1009.448429,
+      "p99_ms": 1169.561369,
+      "max_ms": 1471.023727,
+      "error_codes": {
+        "-1": 209
+      }
+    },
+    "task-list": {
+      "target_qps": 320.06399999935985,
+      "sent": 19217,
+      "succeeded": 18386,
+      "failed": 831,
+      "actual_qps": 306.43333333333334,
+      "average_ms": 562.4807004812358,
+      "p90_ms": 943.959229,
+      "p95_ms": 1021.647484,
+      "p99_ms": 1198.90412,
+      "max_ms": 1968.86394,
+      "error_codes": {
+        "-1": 831
+      }
+    },
+    "till": {
+      "target_qps": 86.68400000316062,
+      "sent": 5291,
+      "succeeded": 5066,
+      "failed": 225,
+      "actual_qps": 84.43333333333334,
+      "average_ms": 545.4378190242795,
+      "p90_ms": 935.999549,
+      "p95_ms": 1002.039345,
+      "p99_ms": 1139.024137,
+      "max_ms": 1556.457675,
+      "error_codes": {
+        "-1": 225
+      }
+    },
+    "water-cross": {
+      "target_qps": 140.02799999971992,
+      "sent": 8519,
+      "succeeded": 8519,
+      "failed": 0,
+      "actual_qps": 141.98333333333332,
+      "average_ms": 555.7719662141096,
+      "p90_ms": 935.561131,
+      "p95_ms": 1009.127388,
+      "p99_ms": 1156.975654,
+      "max_ms": 1780.485244
+    },
+    "water-local": {
+      "target_qps": 283.3899999960992,
+      "sent": 17079,
+      "succeeded": 16343,
+      "failed": 736,
+      "actual_qps": 272.3833333333333,
+      "average_ms": 566.9411659532522,
+      "p90_ms": 961.37984,
+      "p95_ms": 1036.82769,
+      "p99_ms": 1186.637408,
+      "max_ms": 1523.078416,
+      "error_codes": {
+        "-1": 736
+      }
+    },
+    "weed-cross": {
+      "target_qps": 86.68400000316062,
+      "sent": 5178,
+      "succeeded": 5178,
+      "failed": 0,
+      "actual_qps": 86.3,
+      "average_ms": 548.6342291658941,
+      "p90_ms": 932.398789,
+      "p95_ms": 995.460633,
+      "p99_ms": 1136.322975,
+      "max_ms": 1716.962924
+    },
+    "weed-local": {
+      "target_qps": 110.02199999977995,
+      "sent": 6520,
+      "succeeded": 6242,
+      "failed": 278,
+      "actual_qps": 104.03333333333333,
+      "average_ms": 561.5564652504005,
+      "p90_ms": 955.630325,
+      "p95_ms": 1028.366192,
+      "p99_ms": 1170.652822,
+      "max_ms": 2030.213465,
+      "error_codes": {
+        "-1": 278
+      }
+    }
+  },
+  "resident_actors_target": 40000,
+  "connection_keepalives": 150113,
+  "connection_keepalive_failures": 1036
+}

@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+// A matching room watermark is transport synchronization state, not Farm
+// business state. Keep the shortcut deliberately short-lived: a periodic Farm
+// Sync remains the authority for lazy time advancement and missing deltas.
+const roomWatermarkFreshness = 2 * time.Second
+
 // Room state is transport state only. Farm decides whether access is allowed
 // and returns subscribe/unsubscribe directives in its typed response.
 func (connection *wsConnection) currentRoom() uint64 {
@@ -27,6 +32,22 @@ func (connection *wsConnection) setRoomWatermark(ownerUID, farmSeq uint64) {
 		connection.roomSeqObservedAt = time.Now().UnixNano()
 	}
 	connection.roomMu.Unlock()
+}
+
+func (connection *wsConnection) matchesFreshRoomWatermark(
+	ownerUID uint64,
+	fromSeq uint64,
+	now time.Time,
+) (uint64, bool) {
+	if connection == nil || ownerUID == 0 {
+		return 0, false
+	}
+	connection.roomMu.Lock()
+	defer connection.roomMu.Unlock()
+	age := now.UnixNano() - connection.roomSeqObservedAt
+	fresh := connection.roomUID == ownerUID && connection.roomSeqKnown &&
+		fromSeq == connection.roomSeq && age >= 0 && age <= roomWatermarkFreshness.Nanoseconds()
+	return connection.roomSeq, fresh
 }
 
 func (connection *wsConnection) observeRoomDeltaLocked(farmSeq uint64) {

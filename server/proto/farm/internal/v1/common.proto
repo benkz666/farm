@@ -24,6 +24,9 @@ message ClientCommandRequest {
   uint64 active_farm_uid = 3;
   uint64 route_uid = 4;
   farm.public.v3.WireEnvelope envelope = 5;
+  // Gateway requests the opaque response fast path. Other internal callers
+  // keep receiving a complete typed envelope by default.
+  bool prefer_prepared = 6;
 }
 
 enum RoomAction {
@@ -32,15 +35,60 @@ enum RoomAction {
   ROOM_ACTION_UNSUBSCRIBE = 2;
 }
 
-// ClientCommandResponse contains a complete typed public response. The room
-// fields are transport instructions rather than business payloads; Gateway
-// applies them without inspecting the response body.
+// ClientCommandResponse normally contains a complete typed public response.
+// Hot paths may instead carry the already-marshaled public oneof body in
+// prepared_payload; Gateway validates prepared_field and embeds those bytes
+// directly in the final WebSocket frame without decoding business data.
+// The room fields are transport instructions rather than business payloads.
 message ClientCommandResponse {
   farm.public.v3.WireEnvelope envelope = 1;
   RoomAction room_action = 2;
   uint64 room_uid = 3;
   uint64 room_seq = 4;
   repeated farm.public.v3.WireEnvelope pushes = 5;
+  bytes prepared_payload = 6;
+  // WireEnvelope oneof field number: 13=EnterFarmResponse,
+  // 14=SyncFarmResponse, 17=CommandResponse.
+  uint32 prepared_field = 7;
+}
+
+// Shared command-stream batches amortize HTTP/2 metadata and protobuf framing
+// for both Farm and Social hot paths while request_id preserves correlation.
+message StreamExecuteRequest {
+  uint64 request_id = 1;
+  ClientCommandRequest request = 2;
+  // Self SyncFarm is the dominant read path. These flat fields avoid building
+  // ClientCommandRequest -> WireEnvelope -> SyncFarmRequest on both sides of
+  // the trusted Gateway/Farm stream. request remains the compatibility and
+  // non-self fallback; exactly one representation must be populated.
+  uint64 fast_sync_uid = 3;
+  uint32 fast_sync_client_seq = 4;
+  uint64 fast_sync_from_seq = 5;
+  uint64 fast_sync_conn_id = 6;
+  string fast_sync_gateway_id = 7;
+}
+
+message StreamExecuteResponse {
+  uint64 request_id = 1;
+  ClientCommandResponse response = 2;
+  // Flat success response for a flat self SyncFarm request. caught_up carries
+  // only scalar state so the single Farm CPU does not allocate and marshal an
+  // otherwise empty public response; Gateway builds that tiny public payload.
+  uint32 fast_sync_client_seq = 3;
+  uint64 fast_sync_uid = 4;
+  uint64 fast_sync_farm_seq = 5;
+  bytes fast_sync_prepared_payload = 6;
+  bool fast_sync_caught_up = 7;
+  int64 fast_sync_server_time = 8;
+  string fast_sync_time_profile = 9;
+}
+
+message StreamExecuteBatchRequest {
+  repeated StreamExecuteRequest requests = 1;
+}
+
+message StreamExecuteBatchResponse {
+  repeated StreamExecuteResponse responses = 1;
 }
 
 // FriendCacheInvalidation is the binary Redis Pub/Sub contract used to keep

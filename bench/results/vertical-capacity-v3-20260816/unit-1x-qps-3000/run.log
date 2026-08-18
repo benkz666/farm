@@ -1,0 +1,49 @@
+配置1倍垂直资源档...
+deployment.apps/k6 scaled
+deployment.apps/gateway scaled
+deployment.apps/farm scaled
+deployment.apps/social scaled
+statefulset.apps/mysql patched (no change)
+deployment "k6" successfully rolled out
+deployment "gateway" successfully rolled out
+deployment "farm" successfully rolled out
+deployment "social" successfully rolled out
+partitioned roll out complete: 1 new pods have been updated...
+partitioned roll out complete: 1 new pods have been updated...
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+gateway   1/1     1            1           2d22h
+farm      1/1     1            1           2d22h
+social    1/1     1            1           2d22h
+k6        3/3     3            3           2d22h
+NAME    READY   AGE
+mysql   1/1     2d22h
+redis   1/1     2d22h
+并行重置3份mixed合法夹具，每份16261个账号...
+deployment.apps/farm restarted
+deployment.apps/gateway restarted
+deployment.apps/social restarted
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "farm" rollout to finish: 0 of 1 updated replicas are available...
+deployment "farm" successfully rolled out
+Waiting for deployment "gateway" rollout to finish: 0 of 1 updated replicas are available...
+deployment "gateway" successfully rolled out
+deployment "social" successfully rolled out
+A窗口：空载60s...
+启动3个发压分片：每分片1000 QPS、12000连接、16260 Actor；全部就绪后统一释放C窗口
+三个分片已就绪，统一C窗口开始=1786859607895
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+tar: removing leading '/' from member names
+完成：/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "target_qps": 1000,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "target_qps": 1000,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:      "target_qps": 1000,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:  "target_qps": 3000,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/slo.json:  "verdict": "fail"
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/client-merged.json:  "resident_actor_refresh_failures": 0,
+/data/workspace/farm/bench/results/vertical-capacity-v3-20260816/unit-1x-qps-3000/client-merged.json:  "target_qps": 3000

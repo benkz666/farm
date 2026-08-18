@@ -69,18 +69,27 @@ func (s *Store) listMailsFromMySQL(ctx context.Context, uid uint64) ([]Mail, err
 // MarkMailsRead 持久化玩家的阅读进度。mailID=0 时批量处理当前收件箱；
 // UPDATE 只触碰尚未阅读的行，因此重复打开邮箱是幂等的。
 func (s *Store) MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (int64, error) {
+	return s.markMailsRead(ctx, uid, mailID, s.db)
+}
+
+func (s *Store) markMailsRead(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+	exec sqlContextExecer,
+) (int64, error) {
 	now := time.Now().UnixMilli()
 	var (
 		result sql.Result
 		err    error
 	)
 	if mailID == 0 {
-		result, err = s.db.ExecContext(ctx,
+		result, err = exec.ExecContext(ctx,
 			`UPDATE mail SET read_at = ? WHERE uid = ? AND read_at IS NULL`,
 			now, uid,
 		)
 	} else {
-		result, err = s.db.ExecContext(ctx,
+		result, err = exec.ExecContext(ctx,
 			`UPDATE mail SET read_at = ? WHERE uid = ? AND id = ? AND read_at IS NULL`,
 			now, uid, mailID,
 		)
@@ -101,19 +110,28 @@ func (s *Store) MarkMailsRead(ctx context.Context, uid uint64, mailID uint64) (i
 // DeleteMails 删除玩家主动清理的邮件。未领取附件属于玩家资产，单封与批量
 // 清理都必须保留；uid 始终进入 WHERE，禁止跨玩家清理。
 func (s *Store) DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int64, error) {
+	return s.deleteMails(ctx, uid, mailID, s.db)
+}
+
+func (s *Store) deleteMails(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+	exec sqlContextExecer,
+) (int64, error) {
 	var (
 		result sql.Result
 		err    error
 	)
 	if mailID == 0 {
-		result, err = s.db.ExecContext(ctx, `
+		result, err = exec.ExecContext(ctx, `
 			DELETE FROM mail
 			WHERE uid = ?
 			  AND (attachment_coin = 0 OR claimed_at IS NOT NULL)`,
 			uid,
 		)
 	} else {
-		result, err = s.db.ExecContext(ctx, `
+		result, err = exec.ExecContext(ctx, `
 			DELETE FROM mail
 			WHERE uid = ? AND id = ?
 			  AND (attachment_coin = 0 OR claimed_at IS NOT NULL)`,
@@ -135,19 +153,41 @@ func (s *Store) DeleteMails(ctx context.Context, uid uint64, mailID uint64) (int
 
 // ClaimMail 原子标记附件、增加金币，避免重复领取资损。
 func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Mail{}, fmt.Errorf("store: begin claim mail tx: %w", err)
-	}
-	defer tx.Rollback()
+	return s.claimMail(ctx, uid, mailID, nil)
+}
 
+// ClaimMailAtState claims an attachment while persisting the Actor's absolute
+// post-reward coin value at the next Farm sequence. This removes the need to
+// synchronously project unrelated pending farm records before a mail claim.
+func (s *Store) ClaimMailAtState(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+	state DirectClaimState,
+) (Mail, error) {
+	if state.NextFarmSeq == 0 {
+		return Mail{}, errors.New("store: direct mail claim has invalid next farm sequence")
+	}
+	return s.claimMail(ctx, uid, mailID, &state)
+}
+
+func (s *Store) claimMail(ctx context.Context, uid uint64, mailID uint64, state *DirectClaimState) (Mail, error) {
+	return s.claimMailWithExecer(ctx, uid, mailID, state, s.db)
+}
+
+func (s *Store) claimMailWithExecer(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+	state *DirectClaimState,
+	exec sqlContextExecer,
+) (Mail, error) {
 	var mail Mail
 	var claimedAt sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, title, attachment_coin, claimed_at, created_at
 		FROM mail
-		WHERE id = ? AND uid = ?
-		FOR UPDATE`, mailID, uid).Scan(
+		WHERE id = ? AND uid = ?`, mailID, uid).Scan(
 		&mail.ID, &mail.Title, &mail.AttachmentCoin, &claimedAt, &mail.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -164,19 +204,40 @@ func (s *Store) ClaimMail(ctx context.Context, uid uint64, mailID uint64) (Mail,
 	}
 
 	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `UPDATE player SET coin = coin + ?, updated_at = ? WHERE uid = ?`, mail.AttachmentCoin, now, uid); err != nil {
-		return Mail{}, fmt.Errorf("store: credit mail attachment: %w", err)
+	// Credit and claim in one joined UPDATE. The initial non-locking read only
+	// builds the response; claimed_at in the WHERE clause is the atomic
+	// exactly-once boundary when another process races this request.
+	var result sql.Result
+	if state == nil {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE player AS p
+			JOIN mail AS m ON m.uid = p.uid AND m.id = ?
+			SET p.coin = p.coin + m.attachment_coin, p.updated_at = ?,
+				m.claimed_at = ?, m.read_at = COALESCE(m.read_at, ?)
+			WHERE p.uid = ? AND m.attachment_coin > 0 AND m.claimed_at IS NULL`,
+			mailID, now, now, now, uid,
+		)
+	} else {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE player AS p
+			JOIN mail AS m ON m.uid = p.uid AND m.id = ?
+			SET p.coin = ? + m.attachment_coin, p.farm_seq = ?, p.updated_at = ?,
+				m.claimed_at = ?, m.read_at = COALESCE(m.read_at, ?)
+			WHERE p.uid = ? AND m.attachment_coin > 0 AND m.claimed_at IS NULL`,
+			mailID, state.Coin, state.NextFarmSeq, now, now, now, uid,
+		)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE mail SET claimed_at = ?, read_at = COALESCE(read_at, ?) WHERE id = ?`, now, now, mail.ID); err != nil {
-		return Mail{}, fmt.Errorf("store: mark mail claimed: %w", err)
+	if err != nil {
+		return Mail{}, fmt.Errorf("store: atomically claim mail: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return Mail{}, fmt.Errorf("store: commit claim mail: %w", err)
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Mail{}, fmt.Errorf("store: inspect claimed mail: %w", err)
 	}
-	s.invalidateMailboxAfterCommit(uid)
-	// ClaimMail 由 Gateway/FarmRPC 放在 uid 权威 Actor 的串行段内调用，并同步
-	// 更新在线聚合；删除缓存同时保护离线调用者不会加载旧金币快照。
-	_ = s.DeleteFarmCache(ctx, uid)
+	if affected == 0 {
+		return Mail{}, ErrMailAlreadyClaimed
+	}
+	s.invalidateMailAndFarmAfterClaim(uid)
 	mail.Claimed = true
 	mail.Read = true
 	return mail, nil

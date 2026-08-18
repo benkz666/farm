@@ -1,6 +1,7 @@
 package telemetry_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -91,6 +92,17 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 	m.ObserveActorSave(8*time.Millisecond, io.EOF)
 	m.ObserveCommitBatch(4, 7)
 	m.SetWriteJournalProjectionLimit(2)
+	m.AddWriteJournalProjectionActive(1)
+	m.AddWriteJournalBarrierWaiter("task_claim", 1)
+	m.ObserveWriteJournalBarrier("task_claim", 20*time.Millisecond, context.DeadlineExceeded)
+	m.AddWriteJournalBarrierWaiter("task_claim", -1)
+	m.ObserveWriteJournalBarrierFastPath("mail_claim")
+	m.ObserveWriteJournalTargetedProjection("task_claim", 12*time.Millisecond, io.EOF)
+	m.ObserveFarmStreamQueued("barrier")
+	m.ObserveFarmStreamStarted("barrier", 2*time.Millisecond)
+	m.ObserveFarmStreamFinished("barrier")
+	m.ObserveFarmStreamRejected("barrier")
+	m.AddFarmStreamActiveSequencer(1)
 	m.SetFarmWriteAdmission(384, 123, 456, false)
 	m.ObserveFarmWriteRejected()
 	m.ObserveDeltaBroadcast(1, 4, 3*time.Millisecond, 7*time.Millisecond)
@@ -119,6 +131,18 @@ func TestWSAndActorAndDeltaMetrics(t *testing.T) {
 		"farm_committer_farms_total",
 		"farm_committer_requests_total",
 		"farm_write_journal_projection_limit",
+		"farm_write_journal_projection_active",
+		"farm_write_journal_barrier_waiters",
+		"farm_write_journal_barrier_wait_duration_seconds",
+		"farm_write_journal_barrier_timeouts_total",
+		"farm_write_journal_barrier_fast_path_total",
+		"farm_write_journal_targeted_projection_duration_seconds",
+		"farm_write_journal_targeted_projection_errors_total",
+		"farm_grpc_stream_queue_depth",
+		"farm_grpc_stream_in_flight",
+		"farm_grpc_stream_queue_wait_seconds",
+		"farm_grpc_stream_rejected_total",
+		"farm_grpc_stream_active_sequencers",
 		"farm_actor_save_errors_total",
 		"farm_delta_broadcast_batches_total",
 		"farm_delta_broadcast_targets",

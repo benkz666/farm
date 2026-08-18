@@ -40,6 +40,10 @@ spec:
             - --max-connections=1000
             - --innodb-buffer-pool-size=3G
             - --innodb-flush-log-at-trx-commit=1
+            # 压测环境保留 binlog，以维持与生产主从一致的提交 fsync 成本；
+            # 但必须限制单文件大小与保留时长，否则会累积撑爆节点磁盘并触发 kubelet 驱逐。
+            - --max-binlog-size=134217728
+            - --binlog-expire-logs-seconds=1800
           env:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:

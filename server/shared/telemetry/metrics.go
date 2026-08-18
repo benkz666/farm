@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -64,6 +65,19 @@ type Metrics struct {
 	WriteJournalProjectionDuration prometheus.Histogram
 	WriteJournalProjectionErrors   prometheus.Counter
 	WriteJournalProjectionLimit    prometheus.Gauge
+	WriteJournalProjectionActive   prometheus.Gauge
+	WriteJournalBarrierWaiters     *prometheus.GaugeVec
+	WriteJournalBarrierDuration    *prometheus.HistogramVec
+	WriteJournalBarrierTimeouts    *prometheus.CounterVec
+	WriteJournalBarrierFastPaths   *prometheus.CounterVec
+	WriteJournalTargetedDuration   *prometheus.HistogramVec
+	WriteJournalTargetedErrors     *prometheus.CounterVec
+
+	FarmStreamQueueDepth       *prometheus.GaugeVec
+	FarmStreamInFlight         *prometheus.GaugeVec
+	FarmStreamQueueWait        *prometheus.HistogramVec
+	FarmStreamRejected         *prometheus.CounterVec
+	FarmStreamActiveSequencers prometheus.Gauge
 
 	DeltaBatches        prometheus.Counter
 	DeltaTargets        prometheus.Histogram
@@ -243,6 +257,58 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		Name: "farm_write_journal_projection_limit",
 		Help: "Current adaptive upper bound for concurrent MySQL projector work",
 	})
+	m.WriteJournalProjectionActive = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_write_journal_projection_active",
+		Help: "Current number of write-journal projectors materializing records in MySQL",
+	})
+	m.WriteJournalBarrierWaiters = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "farm_write_journal_barrier_waiters",
+		Help: "Current projection-barrier waiters by bounded operation reason",
+	}, []string{"reason"})
+	m.WriteJournalBarrierDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "farm_write_journal_barrier_wait_duration_seconds",
+		Help:    "End-to-end projection-barrier wait latency by bounded operation reason",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10},
+	}, []string{"reason"})
+	m.WriteJournalBarrierTimeouts = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_write_journal_barrier_timeouts_total",
+		Help: "Projection-barrier waits that ended because their context deadline expired",
+	}, []string{"reason"})
+	m.WriteJournalBarrierFastPaths = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_write_journal_barrier_fast_path_total",
+		Help: "Projection barriers skipped because the UID had no unprojected claim-relevant records",
+	}, []string{"reason"})
+	m.WriteJournalTargetedDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "farm_write_journal_targeted_projection_duration_seconds",
+		Help:    "Latency of claim-driven projection restricted to one UID",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5},
+	}, []string{"reason"})
+	m.WriteJournalTargetedErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_write_journal_targeted_projection_errors_total",
+		Help: "Claim-driven UID projection attempts that failed before the ordinary projector fallback",
+	}, []string{"reason"})
+
+	m.FarmStreamQueueDepth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "farm_grpc_stream_queue_depth",
+		Help: "Current queued Gateway-to-Farm requests by isolated execution lane",
+	}, []string{"lane"})
+	m.FarmStreamInFlight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "farm_grpc_stream_in_flight",
+		Help: "Current executing Gateway-to-Farm requests by isolated execution lane",
+	}, []string{"lane"})
+	m.FarmStreamQueueWait = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "farm_grpc_stream_queue_wait_seconds",
+		Help:    "Time a Gateway-to-Farm request waits for its isolated execution lane",
+		Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5},
+	}, []string{"lane"})
+	m.FarmStreamRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "farm_grpc_stream_rejected_total",
+		Help: "Gateway-to-Farm requests rejected because an isolated lane reached its bounded queue capacity",
+	}, []string{"lane"})
+	m.FarmStreamActiveSequencers = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "farm_grpc_stream_active_sequencers",
+		Help: "UID sequencers currently active across Gateway-to-Farm streams",
+	})
 
 	m.DeltaBatches = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "farm_delta_broadcast_batches_total",
@@ -280,7 +346,11 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 		m.WriteJournalAppendDuration, m.WriteJournalAppendErrors,
 		m.WriteJournalProjectionBatches, m.WriteJournalProjectionRecords,
 		m.WriteJournalProjectionDuration, m.WriteJournalProjectionErrors,
-		m.WriteJournalProjectionLimit,
+		m.WriteJournalProjectionLimit, m.WriteJournalProjectionActive,
+		m.WriteJournalBarrierWaiters, m.WriteJournalBarrierDuration, m.WriteJournalBarrierTimeouts,
+		m.WriteJournalBarrierFastPaths, m.WriteJournalTargetedDuration, m.WriteJournalTargetedErrors,
+		m.FarmStreamQueueDepth, m.FarmStreamInFlight, m.FarmStreamQueueWait,
+		m.FarmStreamRejected, m.FarmStreamActiveSequencers,
 		m.DeltaBatches, m.DeltaTargets, m.DeltaEncodeDuration, m.DeltaPushDuration,
 	)
 	return m
@@ -322,6 +392,113 @@ func (m *Metrics) SetWriteJournalProjectionLimit(limit int) {
 	if m != nil && limit > 0 {
 		m.WriteJournalProjectionLimit.Set(float64(limit))
 	}
+}
+
+func (m *Metrics) AddWriteJournalProjectionActive(delta float64) {
+	if m != nil && delta != 0 {
+		m.WriteJournalProjectionActive.Add(delta)
+	}
+}
+
+// AddWriteJournalBarrierWaiter records the current number of synchronous
+// consistency barriers. The reason is normalized to a closed set so callers
+// can never introduce UID- or request-shaped metric cardinality.
+func (m *Metrics) AddWriteJournalBarrierWaiter(reason string, delta float64) {
+	if m != nil && delta != 0 {
+		m.WriteJournalBarrierWaiters.WithLabelValues(normalizeBarrierReason(reason)).Add(delta)
+	}
+}
+
+func (m *Metrics) ObserveWriteJournalBarrier(reason string, duration time.Duration, err error) {
+	if m == nil {
+		return
+	}
+	reason = normalizeBarrierReason(reason)
+	m.WriteJournalBarrierDuration.WithLabelValues(reason).Observe(duration.Seconds())
+	if errors.Is(err, context.DeadlineExceeded) {
+		m.WriteJournalBarrierTimeouts.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) ObserveWriteJournalBarrierFastPath(reason string) {
+	if m != nil {
+		m.WriteJournalBarrierFastPaths.WithLabelValues(normalizeBarrierReason(reason)).Inc()
+	}
+}
+
+func (m *Metrics) ObserveWriteJournalTargetedProjection(reason string, duration time.Duration, err error) {
+	if m == nil {
+		return
+	}
+	reason = normalizeBarrierReason(reason)
+	m.WriteJournalTargetedDuration.WithLabelValues(reason).Observe(duration.Seconds())
+	if err != nil {
+		m.WriteJournalTargetedErrors.WithLabelValues(reason).Inc()
+	}
+}
+
+func normalizeBarrierReason(reason string) string {
+	switch reason {
+	case "actor_load", "task_claim", "daily_login_claim", "mail_claim":
+		return reason
+	default:
+		return "other"
+	}
+}
+
+// ObserveFarmStreamQueued/Started/Finished expose the two isolated stream
+// lanes without labeling by command or UID. Queue depth is a current gauge;
+// queue wait is measured from admission until a lane permit is acquired.
+func (m *Metrics) ObserveFarmStreamQueued(lane string) {
+	if m != nil {
+		m.FarmStreamQueueDepth.WithLabelValues(normalizeFarmStreamLane(lane)).Inc()
+	}
+}
+
+func (m *Metrics) ObserveFarmStreamStarted(lane string, wait time.Duration) {
+	if m == nil {
+		return
+	}
+	lane = normalizeFarmStreamLane(lane)
+	m.FarmStreamQueueDepth.WithLabelValues(lane).Dec()
+	m.FarmStreamInFlight.WithLabelValues(lane).Inc()
+	m.FarmStreamQueueWait.WithLabelValues(lane).Observe(wait.Seconds())
+}
+
+func (m *Metrics) ObserveFarmStreamFinished(lane string) {
+	if m != nil {
+		m.FarmStreamInFlight.WithLabelValues(normalizeFarmStreamLane(lane)).Dec()
+	}
+}
+
+func (m *Metrics) ObserveFarmStreamDropped(lane string, rejected bool) {
+	if m == nil {
+		return
+	}
+	lane = normalizeFarmStreamLane(lane)
+	m.FarmStreamQueueDepth.WithLabelValues(lane).Dec()
+	if rejected {
+		m.FarmStreamRejected.WithLabelValues(lane).Inc()
+	}
+}
+
+func (m *Metrics) ObserveFarmStreamRejected(lane string) {
+	if m != nil {
+		m.FarmStreamRejected.WithLabelValues(normalizeFarmStreamLane(lane)).Inc()
+	}
+}
+
+func (m *Metrics) AddFarmStreamActiveSequencer(delta float64) {
+	if m != nil && delta != 0 {
+		m.FarmStreamActiveSequencers.Add(delta)
+	}
+}
+
+func normalizeFarmStreamLane(lane string) string {
+	if lane == "barrier" {
+		return lane
+	}
+	return "normal"
 }
 
 // SetFarmWriteAdmission records the Farm-local control-loop inputs and limit.

@@ -33,6 +33,8 @@ func encodeFarmCache(agg *farm.Aggregate) ([]byte, error) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: build farm cache protobuf: %w", err)

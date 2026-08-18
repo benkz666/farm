@@ -1,0 +1,13 @@
+total_level=90000
+shard_index=1
+shard_connections=45000
+account_offset=45000
+ping_qps=1500
+duration=120s
+fixture=/fixtures/gateway-connection-120000.json
+gateway_urls=ws://10.42.0.235:9002/ws,ws://10.42.0.236:9002/ws,ws://10.42.0.237:9002/ws
+gateway_metrics=gateway-67f694d755-5ktns|http://10.42.0.235:9302/metrics,gateway-67f694d755-ccs46|http://10.42.0.236:9302/metrics,gateway-67f694d755-t5d9l|http://10.42.0.237:9302/metrics
+bench_bin=/tmp/servicebench-connection-v2
+start_unix=1786845461
+end_unix=1786845600
+exit_code=0

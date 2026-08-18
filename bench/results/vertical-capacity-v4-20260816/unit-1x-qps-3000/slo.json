@@ -1,0 +1,1422 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "candidate-certification",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.024056666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 3.854624,
+          "p99_ms": 35.494199,
+          "pass": true,
+          "sent": 7217,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.024056666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 3.808705,
+          "p99_ms": 37.031322,
+          "pass": true,
+          "sent": 7217,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.024056666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 3.765695,
+          "p99_ms": 34.073525,
+          "pass": true,
+          "sent": 7217,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 21651,
+      "succeeded": 21651,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.854624,
+      "worst_p99_ms": 37.031322
+    },
+    "clear": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02598,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.925011,
+          "p99_ms": 33.085951,
+          "pass": true,
+          "sent": 7794,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.02598,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.962441,
+          "p99_ms": 35.810202,
+          "pass": true,
+          "sent": 7794,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.02598,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.905013,
+          "p99_ms": 33.381043,
+          "pass": true,
+          "sent": 7794,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 23382,
+      "succeeded": 23382,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.962441,
+      "worst_p99_ms": 35.810202
+    },
+    "codex-list": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02208,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 1.556981,
+          "p99_ms": 31.800752,
+          "pass": true,
+          "sent": 6624,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.02208,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 1.547981,
+          "p99_ms": 33.86222,
+          "pass": true,
+          "sent": 6624,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.02208,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 1.548602,
+          "p99_ms": 27.766814,
+          "pass": true,
+          "sent": 6624,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 19872,
+      "succeeded": 19872,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.556981,
+      "worst_p99_ms": 33.86222
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05056,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 3.863304,
+          "p99_ms": 32.733678,
+          "pass": true,
+          "sent": 15168,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.05056,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 3.832213,
+          "p99_ms": 32.349588,
+          "pass": true,
+          "sent": 15168,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.05056,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 3.758066,
+          "p99_ms": 31.525418,
+          "pass": true,
+          "sent": 15168,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 45504,
+      "succeeded": 45504,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.863304,
+      "worst_p99_ms": 32.733678
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.010136666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 2.437519,
+          "p99_ms": 14.069916,
+          "pass": true,
+          "sent": 3041,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.010136666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 2.42231,
+          "p99_ms": 17.404293,
+          "pass": true,
+          "sent": 3041,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.010136666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 2.38114,
+          "p99_ms": 13.1773,
+          "pass": true,
+          "sent": 3041,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 9123,
+      "succeeded": 9123,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.437519,
+      "worst_p99_ms": 17.404293
+    },
+    "fertilize": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03142333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 3.882323,
+          "p99_ms": 36.510394,
+          "pass": true,
+          "sent": 9427,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.03142333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 3.871913,
+          "p99_ms": 36.544633,
+          "pass": true,
+          "sent": 9427,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.03142333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 3.801054,
+          "p99_ms": 33.929419,
+          "pass": true,
+          "sent": 9427,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 28281,
+      "succeeded": 28281,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.882323,
+      "worst_p99_ms": 36.544633
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.055683333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 3.147961,
+          "p99_ms": 40.720247,
+          "pass": true,
+          "sent": 16705,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.055683333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 3.226599,
+          "p99_ms": 42.21202,
+          "pass": true,
+          "sent": 16705,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.055683333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 3.092783,
+          "p99_ms": 39.960578,
+          "pass": true,
+          "sent": 16705,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 50115,
+      "succeeded": 50115,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.226599,
+      "worst_p99_ms": 42.21202
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.012793333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.450514,
+          "p99_ms": 13.660288,
+          "pass": true,
+          "sent": 3838,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.012793333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.495613,
+          "p99_ms": 25.601158,
+          "pass": true,
+          "sent": 3838,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.012793333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.429734,
+          "p99_ms": 9.361054,
+          "pass": true,
+          "sent": 3838,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 11514,
+      "succeeded": 11514,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.495613,
+      "worst_p99_ms": 25.601158
+    },
+    "harvest": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05018333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.05,
+          "p90_ms": 3.774366,
+          "p99_ms": 36.478115,
+          "pass": true,
+          "sent": 15055,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.05018333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.05,
+          "p90_ms": 3.782816,
+          "p99_ms": 37.560157,
+          "pass": true,
+          "sent": 15055,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.05018333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.05,
+          "p90_ms": 3.723536,
+          "p99_ms": 34.023747,
+          "pass": true,
+          "sent": 15055,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 45165,
+      "succeeded": 45165,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.782816,
+      "worst_p99_ms": 37.560157
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04646,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.306252,
+          "p99_ms": 19.810182,
+          "pass": true,
+          "sent": 13938,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.04646,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.451788,
+          "p99_ms": 30.285941,
+          "pass": true,
+          "sent": 13938,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.04646,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.328272,
+          "p99_ms": 23.603358,
+          "pass": true,
+          "sent": 13938,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 41814,
+      "succeeded": 41814,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.451788,
+      "worst_p99_ms": 30.285941
+    },
+    "mail-claim": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.011966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 304.755366,
+          "p99_ms": 583.054297,
+          "pass": false,
+          "sent": 3590,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.011966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 304.392475,
+          "p99_ms": 582.593757,
+          "pass": false,
+          "sent": 3590,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.011966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 306.335997,
+          "p99_ms": 593.870145,
+          "pass": false,
+          "sent": 3590,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 10770,
+      "succeeded": 10770,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 306.335997,
+      "worst_p99_ms": 593.870145
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.0019733333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 246.02722,
+          "p99_ms": 524.491735,
+          "pass": false,
+          "sent": 592,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.0019733333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 249.519872,
+          "p99_ms": 518.777368,
+          "pass": false,
+          "sent": 592,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.0019733333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 250.029929,
+          "p99_ms": 524.401398,
+          "pass": false,
+          "sent": 592,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 1776,
+      "succeeded": 1776,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 250.029929,
+      "worst_p99_ms": 524.491735
+    },
+    "mail-list": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04521666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 14.853497,
+          "p99_ms": 262.642253,
+          "pass": true,
+          "sent": 13565,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.04521666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 16.803189,
+          "p99_ms": 277.331514,
+          "pass": true,
+          "sent": 13565,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.04521666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 13.767104,
+          "p99_ms": 252.211045,
+          "pass": true,
+          "sent": 13565,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 40695,
+      "succeeded": 40695,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 16.803189,
+      "worst_p99_ms": 277.331514
+    },
+    "mail-read": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.020773333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 307.179987,
+          "p99_ms": 561.37411,
+          "pass": false,
+          "sent": 6232,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.020773333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 307.576645,
+          "p99_ms": 564.19206,
+          "pass": false,
+          "sent": 6232,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.020773333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 310.144181,
+          "p99_ms": 565.930336,
+          "pass": false,
+          "sent": 6232,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 18696,
+      "succeeded": 18696,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 310.144181,
+      "worst_p99_ms": 565.930336
+    },
+    "pest-cross": {
+      "failed": 3,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01687666666666667,
+          "error_rate": 0.00019751135690302193,
+          "expected_weight": 0.017,
+          "p90_ms": 3.916302,
+          "p99_ms": 41.688643,
+          "pass": true,
+          "sent": 5063,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.01687666666666667,
+          "error_rate": 0.00019751135690302193,
+          "expected_weight": 0.017,
+          "p90_ms": 3.861973,
+          "p99_ms": 42.758857,
+          "pass": true,
+          "sent": 5063,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.01687666666666667,
+          "error_rate": 0.00019751135690302193,
+          "expected_weight": 0.017,
+          "p90_ms": 3.903133,
+          "p99_ms": 45.083489,
+          "pass": true,
+          "sent": 5063,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 15189,
+      "succeeded": 15186,
+      "technical_error_rate": 0.00019751135690302193,
+      "worst_p90_ms": 3.916302,
+      "worst_p99_ms": 45.083489
+    },
+    "pest-local": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.026533333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.881862,
+          "p99_ms": 33.232686,
+          "pass": true,
+          "sent": 7960,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.026533333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.017339,
+          "p99_ms": 34.939333,
+          "pass": true,
+          "sent": 7960,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.026533333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.831344,
+          "p99_ms": 33.342772,
+          "pass": true,
+          "sent": 7960,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 23880,
+      "succeeded": 23880,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.017339,
+      "worst_p99_ms": 34.939333
+    },
+    "pet-activate": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.00198,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 3.939931,
+          "p99_ms": 136.970494,
+          "pass": true,
+          "sent": 594,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.00198,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 3.789525,
+          "p99_ms": 137.381744,
+          "pass": true,
+          "sent": 594,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.00198,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 3.829054,
+          "p99_ms": 157.515409,
+          "pass": true,
+          "sent": 594,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 1782,
+      "succeeded": 1782,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.939931,
+      "worst_p99_ms": 157.515409
+    },
+    "pet-feed": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.019146666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 4.244854,
+          "p99_ms": 34.633781,
+          "pass": true,
+          "sent": 5744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.019146666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 4.355081,
+          "p99_ms": 37.072329,
+          "pass": true,
+          "sent": 5744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.019146666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 4.194946,
+          "p99_ms": 35.152069,
+          "pass": true,
+          "sent": 5744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 17232,
+      "succeeded": 17232,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.355081,
+      "worst_p99_ms": 37.072329
+    },
+    "pet-status": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 1.562222,
+          "p99_ms": 8.81002,
+          "pass": true,
+          "sent": 7190,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.023966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 1.61691,
+          "p99_ms": 14.7836,
+          "pass": true,
+          "sent": 7190,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.023966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 1.57425,
+          "p99_ms": 12.735591,
+          "pass": true,
+          "sent": 7190,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 21570,
+      "succeeded": 21570,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.61691,
+      "worst_p99_ms": 14.7836
+    },
+    "plant": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04248,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 3.96117,
+          "p99_ms": 36.637331,
+          "pass": true,
+          "sent": 12744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.04248,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 4.008289,
+          "p99_ms": 38.031096,
+          "pass": true,
+          "sent": 12744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.04248,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 3.918043,
+          "p99_ms": 35.673535,
+          "pass": true,
+          "sent": 12744,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 38232,
+      "succeeded": 38232,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.008289,
+      "worst_p99_ms": 38.031096
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.027183333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.401739,
+          "p99_ms": 27.925749,
+          "pass": true,
+          "sent": 8155,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.027183333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.538555,
+          "p99_ms": 41.142448,
+          "pass": true,
+          "sent": 8155,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.027183333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.329912,
+          "p99_ms": 22.222082,
+          "pass": true,
+          "sent": 8155,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 24465,
+      "succeeded": 24465,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.538555,
+      "worst_p99_ms": 41.142448
+    },
+    "sell": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01894,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 3.726027,
+          "p99_ms": 32.772968,
+          "pass": true,
+          "sent": 5682,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.01894,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 3.737466,
+          "p99_ms": 32.969333,
+          "pass": true,
+          "sent": 5682,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.01894,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 3.667348,
+          "p99_ms": 31.844091,
+          "pass": true,
+          "sent": 5682,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 17046,
+      "succeeded": 17046,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.737466,
+      "worst_p99_ms": 32.969333
+    },
+    "steal": {
+      "failed": 1,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04238,
+          "error_rate": 7.865345288658172e-05,
+          "expected_weight": 0.042,
+          "p90_ms": 3.897011,
+          "p99_ms": 45.059349,
+          "pass": true,
+          "sent": 12714,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.04238,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 4.014029,
+          "p99_ms": 45.191797,
+          "pass": true,
+          "sent": 12714,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.04238,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 3.846764,
+          "p99_ms": 43.742544,
+          "pass": true,
+          "sent": 12714,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 38142,
+      "succeeded": 38141,
+      "technical_error_rate": 2.6217817628860575e-05,
+      "worst_p90_ms": 4.014029,
+      "worst_p99_ms": 45.191797
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.038446666666666664,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 3.402005,
+          "p99_ms": 28.629692,
+          "pass": true,
+          "sent": 11534,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.038446666666666664,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 3.390115,
+          "p99_ms": 28.32198,
+          "pass": true,
+          "sent": 11534,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.038446666666666664,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 3.316756,
+          "p99_ms": 28.058646,
+          "pass": true,
+          "sent": 11534,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 34602,
+      "succeeded": 34602,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 3.402005,
+      "worst_p99_ms": 28.629692
+    },
+    "task-claim": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02375,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 280.799906,
+          "p99_ms": 564.319326,
+          "pass": false,
+          "sent": 7125,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.02375,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 278.31311,
+          "p99_ms": 565.124505,
+          "pass": false,
+          "sent": 7125,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.02375,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 282.522604,
+          "p99_ms": 569.774929,
+          "pass": false,
+          "sent": 7125,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 21375,
+      "succeeded": 21375,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 282.522604,
+      "worst_p99_ms": 569.774929
+    },
+    "task-list": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.09593666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 2.387669,
+          "p99_ms": 197.546345,
+          "pass": true,
+          "sent": 28781,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.09593666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 2.255304,
+          "p99_ms": 148.514625,
+          "pass": true,
+          "sent": 28781,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.09593666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 2.302662,
+          "p99_ms": 190.516993,
+          "pass": true,
+          "sent": 28781,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 86343,
+      "succeeded": 86343,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.387669,
+      "worst_p99_ms": 197.546345
+    },
+    "till": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02629,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 3.927941,
+          "p99_ms": 45.960827,
+          "pass": true,
+          "sent": 7887,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.02629,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.081899,
+          "p99_ms": 45.994156,
+          "pass": true,
+          "sent": 7887,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.02629,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.025288,
+          "p99_ms": 45.599447,
+          "pass": true,
+          "sent": 7887,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 23661,
+      "succeeded": 23661,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.081899,
+      "worst_p99_ms": 45.994156
+    },
+    "water-cross": {
+      "failed": 6,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04247,
+          "error_rate": 0.00015697354995683227,
+          "expected_weight": 0.042,
+          "p90_ms": 3.93281,
+          "p99_ms": 36.385117,
+          "pass": true,
+          "sent": 12741,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.04247,
+          "error_rate": 0.00015697354995683227,
+          "expected_weight": 0.042,
+          "p90_ms": 3.941791,
+          "p99_ms": 37.137259,
+          "pass": true,
+          "sent": 12741,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.04247,
+          "error_rate": 0.00015697354995683227,
+          "expected_weight": 0.042,
+          "p90_ms": 3.922872,
+          "p99_ms": 36.920045,
+          "pass": true,
+          "sent": 12741,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 38223,
+      "succeeded": 38217,
+      "technical_error_rate": 0.00015697354995683227,
+      "worst_p90_ms": 3.941791,
+      "worst_p99_ms": 37.137259
+    },
+    "water-local": {
+      "failed": 3,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.08513666666666667,
+          "error_rate": 3.915273481852707e-05,
+          "expected_weight": 0.085,
+          "p90_ms": 3.726237,
+          "p99_ms": 35.825412,
+          "pass": true,
+          "sent": 25541,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.08513666666666667,
+          "error_rate": 3.915273481852707e-05,
+          "expected_weight": 0.085,
+          "p90_ms": 3.821184,
+          "p99_ms": 36.753188,
+          "pass": true,
+          "sent": 25541,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.08513666666666667,
+          "error_rate": 3.915273481852707e-05,
+          "expected_weight": 0.085,
+          "p90_ms": 3.724716,
+          "p99_ms": 35.652506,
+          "pass": true,
+          "sent": 25541,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 76623,
+      "succeeded": 76620,
+      "technical_error_rate": 3.915273481852707e-05,
+      "worst_p90_ms": 3.821184,
+      "worst_p99_ms": 36.753188
+    },
+    "weed-cross": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02606,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.116237,
+          "p99_ms": 55.400891,
+          "pass": true,
+          "sent": 7818,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.02606,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.198544,
+          "p99_ms": 56.64677,
+          "pass": true,
+          "sent": 7818,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.02606,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 4.071708,
+          "p99_ms": 54.833115,
+          "pass": true,
+          "sent": 7818,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 23454,
+      "succeeded": 23454,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.198544,
+      "worst_p99_ms": 56.64677
+    },
+    "weed-local": {
+      "failed": 3,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03313666666666667,
+          "error_rate": 0.00010059350165979277,
+          "expected_weight": 0.033,
+          "p90_ms": 3.723526,
+          "p99_ms": 34.29842,
+          "pass": true,
+          "sent": 9941,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json"
+        },
+        {
+          "actual_weight": 0.03313666666666667,
+          "error_rate": 0.00010059350165979277,
+          "expected_weight": 0.033,
+          "p90_ms": 3.765186,
+          "p99_ms": 34.729409,
+          "pass": true,
+          "sent": 9941,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json"
+        },
+        {
+          "actual_weight": 0.03313666666666667,
+          "error_rate": 0.00010059350165979277,
+          "expected_weight": 0.033,
+          "p90_ms": 3.747246,
+          "p99_ms": 34.559472,
+          "pass": true,
+          "sent": 9941,
+          "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json"
+        }
+      ],
+      "rounds_passed": 3,
+      "sent": 29823,
+      "succeeded": 29820,
+      "technical_error_rate": 0.00010059350165979277,
+      "worst_p90_ms": 3.765186,
+      "worst_p99_ms": 34.729409
+    }
+  },
+  "per_shard_target_qps": 1000,
+  "rounds": [
+    {
+      "client_drain_milliseconds": 107,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.99998,
+      "failed_operations": [
+        "task-claim",
+        "mail-read",
+        "mail-claim",
+        "mail-delete"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-0.json",
+      "target_qps": 1000,
+      "technical_error_rate": 2e-05,
+      "unexpected_operations": []
+    },
+    {
+      "client_drain_milliseconds": 96,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.9999833333333333,
+      "failed_operations": [
+        "task-claim",
+        "mail-read",
+        "mail-claim",
+        "mail-delete"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-1.json",
+      "target_qps": 1000,
+      "technical_error_rate": 1.6666666666666667e-05,
+      "unexpected_operations": []
+    },
+    {
+      "client_drain_milliseconds": 98,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 0.9999833333333333,
+      "failed_operations": [
+        "task-claim",
+        "mail-read",
+        "mail-claim",
+        "mail-delete"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/vertical-capacity-v4-20260816/unit-1x-qps-3000/client-shard-2.json",
+      "target_qps": 1000,
+      "technical_error_rate": 1.6666666666666667e-05,
+      "unexpected_operations": []
+    }
+  ],
+  "shards": 3,
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 500,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 3000,
+  "verdict": "fail"
+}

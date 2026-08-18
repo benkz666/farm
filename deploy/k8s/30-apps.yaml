@@ -130,13 +130,13 @@ spec:
             - name: FARM_HAZARD_SECRET
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: hazard-secret}
-            - {name: FARM_TIME_PROFILE, value: demo}
+            - {name: FARM_TIME_PROFILE, value: authentic}
             - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
             - {name: FARM_ACTOR_IDLE_TTL, value: 2m}
             - {name: FARM_ACTOR_MAX_RESIDENT, value: "20000"}
-            - {name: FARM_COMMITTER_SHARDS, value: "16"}
+            - {name: FARM_COMMITTER_SHARDS, value: "8"}
             - {name: FARM_WRITE_JOURNAL_SHARDS, value: "32"}
-            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "4"}
+            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "12"}
             - {name: FARM_WRITE_JOURNAL_BATCH, value: "1024"}
             - {name: FARM_WRITE_JOURNAL_BLOCK, value: 50ms}
             - {name: FARM_WRITE_JOURNAL_LATEST_TTL, value: 24h}
@@ -153,7 +153,7 @@ spec:
             - {name: FARM_WRITE_BACKLOG_POLL, value: 250ms}
             - {name: FARM_WRITE_BACKLOG_TIMEOUT, value: 150ms}
             - {name: FARM_WRITE_BACKLOG_ERROR_GRACE, value: 2s}
-            - {name: FARM_WRITE_ADMISSION_WAIT, value: 2ms}
+            - {name: FARM_WRITE_ADMISSION_WAIT, value: 5ms}
             - {name: GOMAXPROCS, value: "1"}
             - {name: GOMEMLIMIT, value: 800MiB}
           ports:
@@ -255,7 +255,7 @@ spec:
             - {name: FARM_SOCIAL_GRPC_TARGET, value: "social:9204"}
             - {name: FARM_DISABLE_WS_RATE_LIMIT, value: "0"}
             - {name: FARM_ENABLE_API_DOCS, value: "1"}
-            - {name: FARM_TIME_PROFILE, value: demo}
+            - {name: FARM_TIME_PROFILE, value: authentic}
             - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
             - {name: GOMAXPROCS, value: "1"}
             - {name: GOMEMLIMIT, value: 800MiB}

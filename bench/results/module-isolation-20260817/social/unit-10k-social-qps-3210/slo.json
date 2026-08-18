@@ -1,0 +1,176 @@
+{
+  "excluded_operations": [],
+  "extra_operations": [
+    "are-friends"
+  ],
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Client drain time is diagnostic only; making it a pass/fail gate would add an undeclared maximum-latency SLO on top of P90/P99.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "candidate-certification",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "only_operations": [
+    "are-friends",
+    "friend-list",
+    "gen-share",
+    "list-friend-requests",
+    "search-user"
+  ],
+  "operations": {
+    "are-friends": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.5526479750778817,
+          "error_rate": 0.0,
+          "expected_weight": 0.0,
+          "p90_ms": 0.34844,
+          "p99_ms": 0.505777,
+          "pass": true,
+          "sent": 106440,
+          "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 106440,
+      "succeeded": 106440,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 0.34844,
+      "worst_p99_ms": 0.505777
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.17477154724818275,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 0.638024,
+          "p99_ms": 0.902287,
+          "pass": true,
+          "sent": 33661,
+          "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 33661,
+      "succeeded": 33661,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 0.638024,
+      "worst_p99_ms": 0.902287
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03998961578400831,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 0.277523,
+          "p99_ms": 0.328201,
+          "pass": true,
+          "sent": 7702,
+          "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7702,
+      "succeeded": 7702,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 0.277523,
+      "worst_p99_ms": 0.328201
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.1480944963655244,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 0.447738,
+          "p99_ms": 0.541847,
+          "pass": true,
+          "sent": 28523,
+          "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 28523,
+      "succeeded": 28523,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 0.447738,
+      "worst_p99_ms": 0.541847
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 500,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.08449636552440291,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 0.41678,
+          "p99_ms": 0.892076,
+          "pass": true,
+          "sent": 16274,
+          "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 16274,
+      "succeeded": 16274,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 0.41678,
+      "worst_p99_ms": 0.892076
+    }
+  },
+  "per_shard_target_qps": null,
+  "rounds": [
+    {
+      "client_drain_milliseconds": 0,
+      "client_drain_within_diagnostic_limit": true,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 1.0,
+      "failed_operations": [],
+      "missing_operations": [],
+      "pass": true,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/module-isolation-20260817/social/unit-10k-social-qps-3210/client.json",
+      "target_qps": 3210,
+      "technical_error_rate": 0.0,
+      "unexpected_operations": []
+    }
+  ],
+  "shards": 1,
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 500,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 3210,
+  "verdict": "pass"
+}

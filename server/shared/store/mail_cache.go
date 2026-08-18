@@ -229,6 +229,52 @@ func (s *Store) invalidateMailboxAfterCommit(uid uint64) {
 	}
 }
 
+// invalidateFarmAfterDirectClaim removes the absolute farm snapshot after an
+// atomic reward credit. It deliberately uses a fresh bounded context: once
+// MySQL committed, an expired client context must not leave a stale snapshot
+// available to another Farm instance.
+func (s *Store) invalidateFarmAfterDirectClaim(uid uint64) {
+	if s == nil || s.rdb == nil || uid == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := s.rdb.Del(ctx, farmKey(uid)).Err(); err != nil {
+		telemetry.L().Warn("farm cache invalidation after claim failed",
+			"component", "store", "uid", uid, "err", err.Error())
+	}
+}
+
+// invalidateMailAndFarmAfterClaim combines the mailbox version publish and
+// farm snapshot deletion into one Redis round trip. Both are best-effort cache
+// maintenance after the authoritative joined MySQL UPDATE has committed.
+func (s *Store) invalidateMailAndFarmAfterClaim(uid uint64) {
+	if s == nil || uid == 0 {
+		return
+	}
+	s.deleteLocalMailbox(uid)
+	if s.rdb == nil {
+		return
+	}
+	invalidation, err := proto.Marshal(&farmv1.MailboxCacheInvalidation{Uid: uid})
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = s.rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, farmKey(uid))
+		pipe.Incr(ctx, mailRedisVersionKey(uid))
+		pipe.Expire(ctx, mailRedisVersionKey(uid), mailRedisVersionTTL)
+		pipe.Publish(ctx, mailInvalidationChannel, invalidation)
+		return nil
+	})
+	if err != nil {
+		telemetry.L().Warn("claim cache invalidation failed",
+			"component", "store", "uid", uid, "err", err.Error())
+	}
+}
+
 func (s *Store) startMailboxInvalidations() {
 	if s == nil || s.rdb == nil || s.mailbox.cancel != nil {
 		return

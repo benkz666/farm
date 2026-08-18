@@ -1,0 +1,4054 @@
+{
+  "derived": {
+    "services": {
+      "farm": {
+        "business_cpu_cores_C_minus_B": 2.314679989346797,
+        "business_cpu_milliseconds_per_successful_request": 0.2893349986683496,
+        "complete_business_cpu_seconds": 76.64079936080779,
+        "complete_cpu_milliseconds_per_successful_request": 0.3193366640033658,
+        "deferred_drain_cpu_seconds": 7.200399680403896,
+        "fixed_cpu_cores_A": 0.01710997039311493,
+        "fixed_memory_mib_A": 124.44170673076923,
+        "load_memory_mib_C_minus_B": 111.26808035714288,
+        "state_cpu_cores_B_minus_A": -0.000456626406578519,
+        "state_memory_mib_B_minus_A": 334.3934495192308,
+        "synchronous_business_cpu_seconds": 69.4403996804039
+      },
+      "gateway": {
+        "business_cpu_cores_C_minus_B": 2.140018118844977,
+        "business_cpu_milliseconds_per_successful_request": 0.2675022648556221,
+        "complete_business_cpu_seconds": 64.20054623196279,
+        "complete_cpu_milliseconds_per_successful_request": 0.2675022759665116,
+        "deferred_drain_cpu_seconds": 2.6666134896186078e-06,
+        "fixed_cpu_cores_A": 0.0013332444462167475,
+        "fixed_memory_mib_A": 132.4161658653846,
+        "load_memory_mib_C_minus_B": 291.78247767857147,
+        "state_cpu_cores_B_minus_A": 0.02131530337547278,
+        "state_memory_mib_B_minus_A": 587.5150841346153,
+        "synchronous_business_cpu_seconds": 64.2005435653493
+      },
+      "mysql": {
+        "business_cpu_cores_C_minus_B": 1.7094455590892363,
+        "business_cpu_milliseconds_per_successful_request": 0.21368069488615454,
+        "complete_business_cpu_seconds": 52.06171595539471,
+        "complete_cpu_milliseconds_per_successful_request": 0.2169238164808113,
+        "deferred_drain_cpu_seconds": 0.7783491827176188,
+        "fixed_cpu_cores_A": 0.017419011488015966,
+        "fixed_memory_mib_A": 1093.5688100961538,
+        "load_memory_mib_C_minus_B": 12.070535714285825,
+        "state_cpu_cores_B_minus_A": -0.0010520046589147063,
+        "state_memory_mib_B_minus_A": 1.8757211538461434,
+        "synchronous_business_cpu_seconds": 51.28336677267709
+      },
+      "redis": {
+        "business_cpu_cores_C_minus_B": 0.7897631648865961,
+        "business_cpu_milliseconds_per_successful_request": 0.09872039561082452,
+        "complete_business_cpu_seconds": 34.13421298566415,
+        "complete_cpu_milliseconds_per_successful_request": 0.1422258874402673,
+        "deferred_drain_cpu_seconds": 10.441318039066266,
+        "fixed_cpu_cores_A": 0.016583777359886524,
+        "fixed_memory_mib_A": 41.6328125,
+        "load_memory_mib_C_minus_B": 16.86177455357143,
+        "state_cpu_cores_B_minus_A": -0.00027684114627512385,
+        "state_memory_mib_B_minus_A": 3.8636718750000014,
+        "synchronous_business_cpu_seconds": 23.69289494659788
+      },
+      "social": {
+        "business_cpu_cores_C_minus_B": 0.482667199573872,
+        "business_cpu_milliseconds_per_successful_request": 0.060333399946734,
+        "complete_business_cpu_seconds": 14.48001598721616,
+        "complete_cpu_milliseconds_per_successful_request": 0.06033339994673399,
+        "deferred_drain_cpu_seconds": 0.0,
+        "fixed_cpu_cores_A": 0.0004444148154055823,
+        "fixed_memory_mib_A": 70.75841346153847,
+        "load_memory_mib_C_minus_B": 15.611607142857139,
+        "state_cpu_cores_B_minus_A": 0.0002217189440558748,
+        "state_memory_mib_B_minus_A": 19.862680288461533,
+        "synchronous_business_cpu_seconds": 14.48001598721616
+      }
+    },
+    "successful_qps": 8000.0
+  },
+  "method": "A idle / B state / C business / D recovery exact benchmark windows",
+  "notes": [
+    "CPU average uses Prometheus counter increase divided by exact window duration.",
+    "CPU peak is a 30-second smoothed diagnostic and is not used as the unit-cost slope.",
+    "C-minus-B isolates business CPU; B-minus-A isolates connection/Actor state cost.",
+    "Complete per-request CPU adds post-C drain work and subtracts the matching state baseline.",
+    "All service resource values are aggregate sums; per-Pod values remain for skew checks."
+  ],
+  "prometheus_url": "http://21.130.218.62:30909",
+  "result_summary": {
+    "client_drain_milliseconds": 35,
+    "failed": 0,
+    "sent": 240000,
+    "succeeded": 240000,
+    "target_qps": 8000
+  },
+  "source_context": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/cost-08000-r1/window-context.json",
+  "source_result": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/cost-08000-r1/client.json",
+  "windows": {
+    "A_idle": {
+      "duration_seconds": 60.004000186920166,
+      "end_unix_seconds": 1786809494.081,
+      "name": "A_idle",
+      "node": {
+        "cpu": {
+          "average_used_cores": 0.7080176666572778,
+          "average_utilization_ratio": 0.022125552083039932,
+          "increase": 42.48389220244608,
+          "machine_cores": 32.0,
+          "per_second": 0.7080176666572778,
+          "smoothed_30s": {
+            "average": 0.6007013198865985,
+            "last": 0.6615798922802344,
+            "peak": 0.7820928261625527,
+            "samples": 13
+          }
+        },
+        "errors": {},
+        "memory": {
+          "machine_mib": 63029.66796875,
+          "working_set_mib": {
+            "average": 21109.26141826923,
+            "last": 21112.72265625,
+            "peak": 21114.07421875,
+            "samples": 13
+          }
+        }
+      },
+      "services": {
+        "farm": {
+          "container_cpu_cross_check": {
+            "increase": 0.8454596882418598,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 0.8454596882418598
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.01409005542310753
+            },
+            "per_second": 0.01409005542310753
+          },
+          "cpu": {
+            "average_cores": 0.01710997039311493,
+            "increase": 1.0266666666666668,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 1.0266666666666668
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.01710997039311493
+            },
+            "per_pod_smoothed_30s": {
+              "farm-657cbb6659-v7k4g": {
+                "average": 0.01743589743589744,
+                "last": 0.016,
+                "peak": 0.019333333333333338,
+                "samples": 13
+              }
+            },
+            "per_second": 0.01710997039311493,
+            "smoothed_30s": {
+              "average": 0.01743589743589744,
+              "last": 0.016,
+              "peak": 0.019333333333333338,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 25845301.333333336,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 25845301.333333336
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 430726.30579331215
+            },
+            "per_second": 430726.30579331215
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 124.44170673076923,
+              "last": 126.73046875,
+              "peak": 126.73046875,
+              "samples": 13
+            },
+            "per_pod": {
+              "farm-569bfd6797-rbkp2": {
+                "average": 102.6875,
+                "last": 102.6875,
+                "peak": 102.6875,
+                "samples": 13
+              },
+              "farm-657cbb6659-v7k4g": {
+                "average": 21.75420673076923,
+                "last": 24.04296875,
+                "peak": 24.04296875,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 4261856.893542757,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 4261856.893542757
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 71026.21292358052
+            },
+            "per_second": 71026.21292358052
+          },
+          "network_transmit_bytes": {
+            "increase": 5792224.781849912,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 5792224.781849912
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 96530.6440205051
+            },
+            "per_second": 96530.6440205051
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "farm-657cbb6659-v7k4g": 0.0
+            },
+            "periods": 486.99265669843754,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "gateway": {
+          "container_cpu_cross_check": {
+            "increase": 0.09310028942738321,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.033852964048573325,
+              "gateway-655ff8fcb-b9sw2": 0.029550895453849684,
+              "gateway-655ff8fcb-jkm2t": 0.029696429924960206
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.0005641784538216951,
+              "gateway-655ff8fcb-b9sw2": 0.0004924820905572103,
+              "gateway-655ff8fcb-jkm2t": 0.0004949075033739753
+            },
+            "per_second": 0.0015515680477528808
+          },
+          "cpu": {
+            "average_cores": 0.0013332444462167475,
+            "increase": 0.07999999999999999,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.02666666666666666,
+              "gateway-655ff8fcb-b9sw2": 0.02666666666666666,
+              "gateway-655ff8fcb-jkm2t": 0.026666666666666672
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.0004444148154055825,
+              "gateway-655ff8fcb-b9sw2": 0.0004444148154055825,
+              "gateway-655ff8fcb-jkm2t": 0.00044441481540558265
+            },
+            "per_pod_smoothed_30s": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 0.0005641025641025641,
+                "last": 0.0,
+                "peak": 0.0006666666666666668,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 0.00041025641025641023,
+                "last": 0.0006666666666666663,
+                "peak": 0.0013333333333333333,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 0.0006153846153846155,
+                "last": 0.0,
+                "peak": 0.0006666666666666673,
+                "samples": 13
+              }
+            },
+            "per_second": 0.0013332444462167475,
+            "smoothed_30s": {
+              "average": 0.0015897435897435897,
+              "last": 0.0006666666666666663,
+              "peak": 0.0026666666666666666,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 4554986.666666666,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 2098762.6666666665,
+              "gateway-655ff8fcb-b9sw2": 1196352.0,
+              "gateway-655ff8fcb-jkm2t": 1259872.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 34977.04586575481,
+              "gateway-655ff8fcb-b9sw2": 19937.87074650373,
+              "gateway-655ff8fcb-jkm2t": 20996.466836799827
+            },
+            "per_second": 75911.38344905835
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 132.4161658653846,
+              "last": 134.65234375,
+              "peak": 134.65234375,
+              "samples": 13
+            },
+            "per_pod": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 8.061298076923077,
+                "last": 8.984375,
+                "peak": 8.984375,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 6.773737980769231,
+                "last": 7.25390625,
+                "peak": 7.25390625,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 8.042067307692308,
+                "last": 8.875,
+                "peak": 8.875,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-8j9fk": {
+                "average": 35.9609375,
+                "last": 35.9609375,
+                "peak": 35.9609375,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-8xhsn": {
+                "average": 36.9375,
+                "last": 36.9375,
+                "peak": 36.9375,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-w7h5c": {
+                "average": 36.640625,
+                "last": 36.640625,
+                "peak": 36.640625,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 41953.767868219074,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 16160.740962055572,
+              "gateway-655ff8fcb-b9sw2": 14715.94092467672,
+              "gateway-655ff8fcb-jkm2t": 11077.085981486782
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 269.32772668010114,
+              "gateway-655ff8fcb-b9sw2": 245.24933135848735,
+              "gateway-655ff8fcb-jkm2t": 184.60579206353304
+            },
+            "per_second": 699.1828501021215
+          },
+          "network_transmit_bytes": {
+            "increase": 111571.07804456129,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 41863.502496905545,
+              "gateway-655ff8fcb-b9sw2": 41271.59857466215,
+              "gateway-655ff8fcb-jkm2t": 28435.9769729936
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 697.6785275397533,
+              "gateway-655ff8fcb-b9sw2": 687.8141198269419,
+              "gateway-655ff8fcb-jkm2t": 473.90135464988805
+            },
+            "per_second": 1859.394002016583
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "gateway-655ff8fcb-9zdj5": 0.0,
+              "gateway-655ff8fcb-b9sw2": 0.0,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "periods": 135.7422815285012,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "load_generator": {
+          "cpu": {
+            "average_cores": 0.0,
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_smoothed_30s": {
+              "k6-668465f7cd-d82kw": {
+                "average": 0.0,
+                "last": 0.0,
+                "peak": 0.0,
+                "samples": 12
+              }
+            },
+            "per_second": 0.0,
+            "smoothed_30s": {
+              "average": 0.0,
+              "last": 0.0,
+              "peak": 0.0,
+              "samples": 12
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 10.67998798076923,
+              "last": 10.58203125,
+              "peak": 11.109375,
+              "samples": 13
+            },
+            "per_pod": {
+              "k6-668465f7cd-d82kw": {
+                "average": 10.67998798076923,
+                "last": 10.58203125,
+                "peak": 11.109375,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 435.8112314780227,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 435.8112314780227
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 7.26303629958694
+            },
+            "per_second": 7.26303629958694
+          },
+          "network_transmit_bytes": {
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_second": 0.0
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "periods": 0.0,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "mysql": {
+          "cpu": {
+            "average_cores": 0.017419011488015966,
+            "increase": 1.0452103685828746,
+            "per_pod_increase": {
+              "mysql-0": 1.0452103685828746
+            },
+            "per_pod_per_second": {
+              "mysql-0": 0.017419011488015966
+            },
+            "per_pod_smoothed_30s": {
+              "mysql-0": {
+                "average": 0.017044199234113863,
+                "last": 0.018285812751292034,
+                "peak": 0.018285812751292034,
+                "samples": 9
+              }
+            },
+            "per_second": 0.017419011488015966,
+            "smoothed_30s": {
+              "average": 0.017044199234113863,
+              "last": 0.018285812751292034,
+              "peak": 0.018285812751292034,
+              "samples": 9
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1093.5688100961538,
+              "last": 1094.04296875,
+              "peak": 1094.04296875,
+              "samples": 13
+            },
+            "per_pod": {
+              "mysql-0": {
+                "average": 1093.5688100961538,
+                "last": 1094.04296875,
+                "peak": 1094.04296875,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 144128.63058235086,
+            "per_pod_increase": {
+              "mysql-0": 144128.63058235086
+            },
+            "per_pod_per_second": {
+              "mysql-0": 2401.983703309307
+            },
+            "per_second": 2401.983703309307
+          },
+          "network_transmit_bytes": {
+            "increase": 222837.00285816367,
+            "per_pod_increase": {
+              "mysql-0": 222837.00285816367
+            },
+            "per_pod_per_second": {
+              "mysql-0": 3713.7024559029032
+            },
+            "per_second": 3713.7024559029032
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "mysql-0": 0.0
+            },
+            "periods": 516.093877709882,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "redis": {
+          "cpu": {
+            "average_cores": 0.016583777359886524,
+            "increase": 0.9950929798024734,
+            "per_pod_increase": {
+              "redis-0": 0.9950929798024734
+            },
+            "per_pod_per_second": {
+              "redis-0": 0.016583777359886524
+            },
+            "per_pod_smoothed_30s": {
+              "redis-0": {
+                "average": 0.018248382752255456,
+                "last": 0.012249687519918872,
+                "peak": 0.029749963369963845,
+                "samples": 11
+              }
+            },
+            "per_second": 0.016583777359886524,
+            "smoothed_30s": {
+              "average": 0.018248382752255456,
+              "last": 0.012249687519918872,
+              "peak": 0.029749963369963845,
+              "samples": 11
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 41.6328125,
+              "last": 42.0078125,
+              "peak": 42.203125,
+              "samples": 13
+            },
+            "per_pod": {
+              "redis-0": {
+                "average": 41.6328125,
+                "last": 42.0078125,
+                "peak": 42.203125,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 5713904.8955676565,
+            "per_pod_increase": {
+              "redis-0": 5606876.431585292,
+              "redis-exporter-7bdbb8c876-nrhb6": 107028.46398236402
+            },
+            "per_pod_per_second": {
+              "redis-0": 93441.71078793335,
+              "redis-exporter-7bdbb8c876-nrhb6": 1783.6888148949504
+            },
+            "per_second": 95225.3996028283
+          },
+          "network_transmit_bytes": {
+            "increase": 4244719.209784968,
+            "per_pod_increase": {
+              "redis-0": 4196671.488848704,
+              "redis-exporter-7bdbb8c876-nrhb6": 48047.72093626403
+            },
+            "per_pod_per_second": {
+              "redis-0": 69939.8619387963,
+              "redis-exporter-7bdbb8c876-nrhb6": 800.7419636455771
+            },
+            "per_second": 70740.60390244187
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "redis-0": 0.0
+            },
+            "periods": 600.5872408577275,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "social": {
+          "container_cpu_cross_check": {
+            "increase": 0.035617042702663824,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.035617042702663824
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.000593577804674891
+            },
+            "per_second": 0.000593577804674891
+          },
+          "cpu": {
+            "average_cores": 0.0004444148154055823,
+            "increase": 0.02666666666666665,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.02666666666666665
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0004444148154055823
+            },
+            "per_pod_smoothed_30s": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 0.0005128205128205128,
+                "last": 0.0,
+                "peak": 0.0006666666666666673,
+                "samples": 13
+              }
+            },
+            "per_second": 0.0004444148154055823,
+            "smoothed_30s": {
+              "average": 0.0005128205128205128,
+              "last": 0.0,
+              "peak": 0.0006666666666666673,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 1357440.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 1357440.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 22622.491763405775
+            },
+            "per_second": 22622.491763405775
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 70.75841346153847,
+              "last": 71.609375,
+              "peak": 71.609375,
+              "samples": 13
+            },
+            "per_pod": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 30.00060096153846,
+                "last": 30.8515625,
+                "peak": 30.8515625,
+                "samples": 13
+              },
+              "social-bb56ffb49-9pcf2": {
+                "average": 40.7578125,
+                "last": 40.7578125,
+                "peak": 40.7578125,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 17046.406140963012,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 17046.406140963012
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 284.08782894242495
+            },
+            "per_second": 284.08782894242495
+          },
+          "network_transmit_bytes": {
+            "increase": 43488.74738311235,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 43488.74738311235
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 724.7641365182208
+            },
+            "per_second": 724.7641365182208
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "periods": 46.03543769630997,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        }
+      },
+      "start_unix_seconds": 1786809434.077,
+      "system_metrics": {
+        "counters": {
+          "farm_barrier_timeouts": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_requests": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_appends": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_stream_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_write_admission_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "gateway_rate_limited": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "mysql_questions": {
+            "increase": 769.3333333333333,
+            "per_second": 12.821367424451056
+          },
+          "mysql_row_lock_waits": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_commands": {
+            "increase": 28545.333333333332,
+            "per_second": 475.7238391509058
+          },
+          "redis_failed_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_connections": {
+            "increase": 0.0,
+            "per_second": 0.0
+          }
+        },
+        "errors": {},
+        "gauges": {
+          "farm_actor_mailbox_depth_p99": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_actor_resident": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "farm_barrier_waiters": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_projection_active": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "farm_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_stream_in_flight": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_stream_queue_depth": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_targeted_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_write_admission_limit": {
+            "average": 512.0,
+            "last": 512.0,
+            "peak": 512.0,
+            "samples": 13
+          },
+          "farm_write_lag": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "farm_write_pending": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "gateway_ws_connections": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "mysql_threads_connected": {
+            "average": 6.0,
+            "last": 6.0,
+            "peak": 6.0,
+            "samples": 13
+          },
+          "mysql_threads_running": {
+            "average": 2.0,
+            "last": 2.0,
+            "peak": 2.0,
+            "samples": 13
+          },
+          "redis_connected_clients": {
+            "average": 278.0,
+            "last": 278.0,
+            "peak": 278.0,
+            "samples": 13
+          },
+          "redis_dataset_memory_mib": {
+            "average": 21.068574758676384,
+            "last": 21.077579498291016,
+            "peak": 21.077579498291016,
+            "samples": 13
+          },
+          "redis_rss_memory_mib": {
+            "average": 40.85787259615385,
+            "last": 41.01171875,
+            "peak": 41.01171875,
+            "samples": 13
+          },
+          "redis_used_memory_mib": {
+            "average": 35.16170443021334,
+            "last": 35.17071533203125,
+            "peak": 35.17071533203125,
+            "samples": 13
+          }
+        }
+      }
+    },
+    "B_state": {
+      "duration_seconds": 45.03600001335144,
+      "end_unix_seconds": 1786809542.204,
+      "name": "B_state",
+      "node": {
+        "cpu": {
+          "average_used_cores": 0.29691802105004084,
+          "average_utilization_ratio": 0.009278688157813776,
+          "increase": 13.371999999973923,
+          "machine_cores": 32.0,
+          "per_second": 0.29691802105004084,
+          "smoothed_30s": {
+            "average": 1.194911933151409,
+            "last": 0.42442434695829495,
+            "peak": 2.6132376395520134,
+            "samples": 10
+          }
+        },
+        "errors": {},
+        "memory": {
+          "machine_mib": 63029.66796875,
+          "working_set_mib": {
+            "average": 22350.71796875,
+            "last": 22502.99609375,
+            "peak": 22502.99609375,
+            "samples": 10
+          }
+        }
+      },
+      "services": {
+        "farm": {
+          "container_cpu_cross_check": {
+            "increase": 0.7484005979073233,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 0.7484005979073233
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.016617830128906903
+            },
+            "per_second": 0.016617830128906903
+          },
+          "cpu": {
+            "average_cores": 0.016653343986536413,
+            "increase": 0.75,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 0.75
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.016653343986536413
+            },
+            "per_pod_smoothed_30s": {
+              "farm-657cbb6659-v7k4g": {
+                "average": 0.13061281333333336,
+                "last": 0.016666666666666666,
+                "peak": 0.44733333333333336,
+                "samples": 10
+              }
+            },
+            "per_second": 0.016653343986536413,
+            "smoothed_30s": {
+              "average": 0.13061281333333336,
+              "last": 0.016666666666666666,
+              "peak": 0.44733333333333336,
+              "samples": 10
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 18427080.0,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 18427080.0
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 409163.3358765672
+            },
+            "per_second": 409163.3358765672
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 458.83515625,
+              "last": 496.57421875,
+              "peak": 496.57421875,
+              "samples": 10
+            },
+            "per_pod": {
+              "farm-569bfd6797-rbkp2": {
+                "average": 102.6875,
+                "last": 102.6875,
+                "peak": 102.6875,
+                "samples": 10
+              },
+              "farm-657cbb6659-v7k4g": {
+                "average": 356.14765625,
+                "last": 393.88671875,
+                "peak": 393.88671875,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 3189430.3138101897,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 3189430.3138101897
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 70819.57351595715
+            },
+            "per_second": 70819.57351595715
+          },
+          "network_transmit_bytes": {
+            "increase": 4337198.450006353,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 4337198.450006353
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 96305.14363443779
+            },
+            "per_second": 96305.14363443779
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "farm-657cbb6659-v7k4g": 0.0
+            },
+            "periods": 438.82126841768087,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "gateway": {
+          "container_cpu_cross_check": {
+            "increase": 0.9747022027716614,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.30893485305930246,
+              "gateway-655ff8fcb-b9sw2": 0.32314975950617314,
+              "gateway-655ff8fcb-jkm2t": 0.34261759020618576
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.006859731169902193,
+              "gateway-655ff8fcb-b9sw2": 0.007175365472297088,
+              "gateway-655ff8fcb-jkm2t": 0.0076076381140557075
+            },
+            "per_second": 0.02164273475625499
+          },
+          "cpu": {
+            "average_cores": 0.022648547821689527,
+            "increase": 1.0200000000000002,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.3300000000000003,
+              "gateway-655ff8fcb-b9sw2": 0.345,
+              "gateway-655ff8fcb-jkm2t": 0.345
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.007327471354076028,
+              "gateway-655ff8fcb-b9sw2": 0.007660538233806749,
+              "gateway-655ff8fcb-jkm2t": 0.007660538233806749
+            },
+            "per_pod_smoothed_30s": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 0.05817890666666666,
+                "last": 0.012666666666666663,
+                "peak": 0.21781857777777777,
+                "samples": 10
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 0.06095593333333332,
+                "last": 0.008000000000000007,
+                "peak": 0.1129642222222222,
+                "samples": 10
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 0.05730664,
+                "last": 0.014000000000000026,
+                "peak": 0.22302213333333332,
+                "samples": 10
+              }
+            },
+            "per_second": 0.022648547821689527,
+            "smoothed_30s": {
+              "average": 0.17644147999999998,
+              "last": 0.03466666666666669,
+              "peak": 0.46617404444444444,
+              "samples": 10
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 16186764.0,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 6263820.0,
+              "gateway-655ff8fcb-b9sw2": 3672492.0,
+              "gateway-655ff8fcb-jkm2t": 6250452.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 139084.73217299534,
+              "gateway-655ff8fcb-b9sw2": 81545.69675173744,
+              "gateway-655ff8fcb-jkm2t": 138787.90296977933
+            },
+            "per_second": 359418.3318945121
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 719.93125,
+              "last": 819.23046875,
+              "peak": 819.828125,
+              "samples": 10
+            },
+            "per_pod": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 212.514453125,
+                "last": 236.1171875,
+                "peak": 236.1171875,
+                "samples": 10
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 209.298046875,
+                "last": 237.80078125,
+                "peak": 238.3984375,
+                "samples": 10
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 188.5796875,
+                "last": 235.7734375,
+                "peak": 235.7734375,
+                "samples": 10
+              },
+              "gateway-6b5c9d5f86-8j9fk": {
+                "average": 35.9609375,
+                "last": 35.9609375,
+                "peak": 35.9609375,
+                "samples": 10
+              },
+              "gateway-6b5c9d5f86-8xhsn": {
+                "average": 36.9375,
+                "last": 36.9375,
+                "peak": 36.9375,
+                "samples": 10
+              },
+              "gateway-6b5c9d5f86-w7h5c": {
+                "average": 36.640625,
+                "last": 36.640625,
+                "peak": 36.640625,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 5020496.590083694,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 1677422.3219293323,
+              "gateway-655ff8fcb-b9sw2": 1810742.7441165785,
+              "gateway-655ff8fcb-jkm2t": 1532331.5240377837
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 37246.25458371172,
+              "gateway-655ff8fcb-b9sw2": 40206.562385197685,
+              "gateway-655ff8fcb-jkm2t": 34024.591961619735
+            },
+            "per_second": 111477.40893052913
+          },
+          "network_transmit_bytes": {
+            "increase": 5133535.927322798,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 1716661.2450925405,
+              "gateway-655ff8fcb-b9sw2": 1852712.8325192751,
+              "gateway-655ff8fcb-jkm2t": 1564161.8497109828
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 38117.53363050929,
+              "gateway-655ff8fcb-b9sw2": 41138.485477618284,
+              "gateway-655ff8fcb-jkm2t": 34731.36711180542
+            },
+            "per_second": 113987.386219933
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "gateway-655ff8fcb-9zdj5": 0.0,
+              "gateway-655ff8fcb-b9sw2": 0.0,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "periods": 333.8162643032964,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "load_generator": {
+          "cpu": {
+            "average_cores": 0.002658465481951234,
+            "increase": 0.11972665148065013,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.11972665148065013
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.002658465481951234
+            },
+            "per_pod_smoothed_30s": {
+              "k6-668465f7cd-d82kw": {
+                "average": 0.15708341696456252,
+                "last": 0.0,
+                "peak": 0.5453037946049877,
+                "samples": 7
+              }
+            },
+            "per_second": 0.002658465481951234,
+            "smoothed_30s": {
+              "average": 0.15708341696456252,
+              "last": 0.0,
+              "peak": 0.5453037946049877,
+              "samples": 7
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 285.365234375,
+              "last": 436.3515625,
+              "peak": 437.26171875,
+              "samples": 10
+            },
+            "per_pod": {
+              "k6-668465f7cd-d82kw": {
+                "average": 285.365234375,
+                "last": 436.3515625,
+                "peak": 437.26171875,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 4508987.075443342,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 4508987.075443342
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 100119.61706427306
+            },
+            "per_second": 100119.61706427306
+          },
+          "network_transmit_bytes": {
+            "increase": 4463480.6131650135,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 4463480.6131650135
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 99109.17070436459
+            },
+            "per_second": 99109.17070436459
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "periods": 38.26879271070616,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "mysql": {
+          "cpu": {
+            "average_cores": 0.01636700682910126,
+            "increase": 0.7371045197739274,
+            "per_pod_increase": {
+              "mysql-0": 0.7371045197739274
+            },
+            "per_pod_per_second": {
+              "mysql-0": 0.01636700682910126
+            },
+            "per_pod_smoothed_30s": {
+              "mysql-0": {
+                "average": 0.10040380686046786,
+                "last": 0.01638010043942061,
+                "peak": 0.18379227584422467,
+                "samples": 6
+              }
+            },
+            "per_second": 0.01636700682910126,
+            "smoothed_30s": {
+              "average": 0.10040380686046786,
+              "last": 0.01638010043942061,
+              "peak": 0.18379227584422467,
+              "samples": 6
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1095.44453125,
+              "last": 1097.71484375,
+              "peak": 1097.71484375,
+              "samples": 10
+            },
+            "per_pod": {
+              "mysql-0": {
+                "average": 1095.44453125,
+                "last": 1097.71484375,
+                "peak": 1097.71484375,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 142976.76146727015,
+            "per_pod_increase": {
+              "mysql-0": 142976.76146727015
+            },
+            "per_pod_per_second": {
+              "mysql-0": 3174.7215877272192
+            },
+            "per_second": 3174.7215877272192
+          },
+          "network_transmit_bytes": {
+            "increase": 246677.70046612172,
+            "per_pod_increase": {
+              "mysql-0": 246677.70046612172
+            },
+            "per_pod_per_second": {
+              "mysql-0": 5477.344799560158
+            },
+            "per_second": 5477.344799560158
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "mysql-0": 0.0
+            },
+            "periods": 407.2504708097929,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "redis": {
+          "cpu": {
+            "average_cores": 0.0163069362136114,
+            "increase": 0.7343991795339241,
+            "per_pod_increase": {
+              "redis-0": 0.7343991795339241
+            },
+            "per_pod_per_second": {
+              "redis-0": 0.0163069362136114
+            },
+            "per_pod_smoothed_30s": {
+              "redis-0": {
+                "average": 0.05153045246941391,
+                "last": 0.016319981767420538,
+                "peak": 0.15964157408368837,
+                "samples": 8
+              }
+            },
+            "per_second": 0.0163069362136114,
+            "smoothed_30s": {
+              "average": 0.05153045246941391,
+              "last": 0.016319981767420538,
+              "peak": 0.15964157408368837,
+              "samples": 8
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 45.496484375,
+              "last": 46.77734375,
+              "peak": 47.27734375,
+              "samples": 10
+            },
+            "per_pod": {
+              "redis-0": {
+                "average": 45.496484375,
+                "last": 46.77734375,
+                "peak": 47.27734375,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 4278560.511500519,
+            "per_pod_increase": {
+              "redis-0": 4209404.3887147335,
+              "redis-exporter-7bdbb8c876-nrhb6": 69156.12278578502
+            },
+            "per_pod_per_second": {
+              "redis-0": 93467.54568493666,
+              "redis-exporter-7bdbb8c876-nrhb6": 1535.5742687024356
+            },
+            "per_second": 95003.11995363909
+          },
+          "network_transmit_bytes": {
+            "increase": 3182638.0453688377,
+            "per_pod_increase": {
+              "redis-0": 3151622.2570532914,
+              "redis-exporter-7bdbb8c876-nrhb6": 31015.788315546262
+            },
+            "per_pod_per_second": {
+              "redis-0": 69980.06608311033,
+              "redis-exporter-7bdbb8c876-nrhb6": 688.6887891098515
+            },
+            "per_second": 70668.75487222018
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "redis-0": 0.0
+            },
+            "periods": 448.69238220044446,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "social": {
+          "container_cpu_cross_check": {
+            "increase": 0.02728920578178453,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.02728920578178453
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0006059420413379148
+            },
+            "per_second": 0.0006059420413379148
+          },
+          "cpu": {
+            "average_cores": 0.0006661337594614571,
+            "increase": 0.030000000000000027,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.030000000000000027
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0006661337594614571
+            },
+            "per_pod_smoothed_30s": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 0.029734940000000005,
+                "last": 0.0,
+                "peak": 0.08600000000000001,
+                "samples": 10
+              }
+            },
+            "per_second": 0.0006661337594614571,
+            "smoothed_30s": {
+              "average": 0.029734940000000005,
+              "last": 0.0,
+              "peak": 0.08600000000000001,
+              "samples": 10
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 3293244.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 3293244.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 73124.7002181295
+            },
+            "per_second": 73124.7002181295
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 90.62109375,
+              "last": 95.41796875,
+              "peak": 95.41796875,
+              "samples": 10
+            },
+            "per_pod": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 49.86328125,
+                "last": 54.66015625,
+                "peak": 54.66015625,
+                "samples": 10
+              },
+              "social-bb56ffb49-9pcf2": {
+                "average": 40.7578125,
+                "last": 40.7578125,
+                "peak": 40.7578125,
+                "samples": 10
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 16022.23778672737,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 16022.23778672737
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 355.7651163952703
+            },
+            "per_second": 355.7651163952703
+          },
+          "network_transmit_bytes": {
+            "increase": 37096.83067763964,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 37096.83067763964
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 823.7150427800395
+            },
+            "per_second": 823.7150427800395
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "periods": 31.473422443270128,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        }
+      },
+      "start_unix_seconds": 1786809497.168,
+      "system_metrics": {
+        "counters": {
+          "farm_barrier_timeouts": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_requests": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_appends": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_stream_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_write_admission_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "gateway_rate_limited": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "mysql_questions": {
+            "increase": 574.5,
+            "per_second": 12.756461493686892
+          },
+          "mysql_row_lock_waits": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_commands": {
+            "increase": 21417.0,
+            "per_second": 475.5528908795338
+          },
+          "redis_failed_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_connections": {
+            "increase": 0.0,
+            "per_second": 0.0
+          }
+        },
+        "errors": {},
+        "gauges": {
+          "farm_actor_mailbox_depth_p99": {
+            "average": 0.9899999999999999,
+            "last": 0.99,
+            "peak": 0.99,
+            "samples": 3
+          },
+          "farm_actor_resident": {
+            "average": 12000.0,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 10
+          },
+          "farm_barrier_waiters": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_projection_active": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 10
+          },
+          "farm_projection_duration_p99_ms": {
+            "average": 9.395495495495501,
+            "last": 9.395495495495503,
+            "peak": 9.395495495495506,
+            "samples": 3
+          },
+          "farm_stream_in_flight": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 8
+          },
+          "farm_stream_queue_depth": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 8
+          },
+          "farm_targeted_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_write_admission_limit": {
+            "average": 512.0,
+            "last": 512.0,
+            "peak": 512.0,
+            "samples": 10
+          },
+          "farm_write_lag": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 10
+          },
+          "farm_write_pending": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 10
+          },
+          "gateway_ws_connections": {
+            "average": 12469.9,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 10
+          },
+          "mysql_threads_connected": {
+            "average": 25.0,
+            "last": 25.0,
+            "peak": 25.0,
+            "samples": 10
+          },
+          "mysql_threads_running": {
+            "average": 3.5,
+            "last": 2.0,
+            "peak": 7.0,
+            "samples": 10
+          },
+          "redis_connected_clients": {
+            "average": 554.8,
+            "last": 624.0,
+            "peak": 624.0,
+            "samples": 10
+          },
+          "redis_dataset_memory_mib": {
+            "average": 24.13691635131836,
+            "last": 24.901721954345703,
+            "peak": 24.940847396850586,
+            "samples": 10
+          },
+          "redis_rss_memory_mib": {
+            "average": 45.165234375,
+            "last": 45.73046875,
+            "peak": 46.9921875,
+            "samples": 10
+          },
+          "redis_used_memory_mib": {
+            "average": 40.50124740600586,
+            "last": 41.82653045654297,
+            "peak": 41.84613037109375,
+            "samples": 10
+          }
+        }
+      }
+    },
+    "C_load": {
+      "duration_seconds": 30.0,
+      "end_unix_seconds": 1786809572.204,
+      "name": "C_load",
+      "node": {
+        "cpu": {
+          "average_used_cores": 5.469685183339858,
+          "average_utilization_ratio": 0.17092766197937057,
+          "increase": 164.09055550019573,
+          "machine_cores": 32.0,
+          "per_second": 5.469685183339858,
+          "smoothed_30s": {
+            "average": 4.24106584071544,
+            "last": 5.469685183339858,
+            "peak": 8.566460741331023,
+            "samples": 7
+          }
+        },
+        "errors": {},
+        "memory": {
+          "machine_mib": 63029.66796875,
+          "working_set_mib": {
+            "average": 23057.492745535714,
+            "last": 23229.578125,
+            "peak": 23229.578125,
+            "samples": 7
+          }
+        }
+      },
+      "services": {
+        "farm": {
+          "container_cpu_cross_check": null,
+          "cpu": {
+            "average_cores": 2.3313333333333333,
+            "increase": 69.94,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 69.94
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 2.3313333333333333
+            },
+            "per_pod_smoothed_30s": {
+              "farm-657cbb6659-v7k4g": {
+                "average": 1.1034821079365078,
+                "last": 2.3313333333333333,
+                "peak": 2.3313333333333333,
+                "samples": 7
+              }
+            },
+            "per_second": 2.3313333333333333,
+            "smoothed_30s": {
+              "average": 1.1034821079365078,
+              "last": 2.3313333333333333,
+              "peak": 2.3313333333333333,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {
+            "container_cpu_cross_check": "Prometheus query returned no finite samples: sum(increase(container_cpu_usage_seconds_total{namespace=\"benkz\",container=\"farm\",pod=~\"farm-.*\"}[30s]))",
+            "throttling": "Prometheus query returned no finite samples: sum(increase(container_cpu_cfs_throttled_seconds_total{namespace=\"benkz\",container=\"farm\",pod=~\"farm-.*\"}[30s]))"
+          },
+          "go_allocated_bytes": {
+            "increase": 5026220720.0,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 5026220720.0
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 167540690.66666666
+            },
+            "per_second": 167540690.66666666
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 570.1032366071429,
+              "last": 625.25,
+              "peak": 625.25,
+              "samples": 7
+            },
+            "per_pod": {
+              "farm-569bfd6797-rbkp2": {
+                "average": 102.6875,
+                "last": 102.6875,
+                "peak": 102.6875,
+                "samples": 7
+              },
+              "farm-657cbb6659-v7k4g": {
+                "average": 467.41573660714283,
+                "last": 522.5625,
+                "peak": 522.5625,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 167882445.84936777,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 167882445.84936777
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 5596081.528312259
+            },
+            "per_second": 5596081.528312259
+          },
+          "network_transmit_bytes": {
+            "increase": 364259955.4700385,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 364259955.4700385
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 12141998.515667949
+            },
+            "per_second": 12141998.515667949
+          },
+          "throttling": null
+        },
+        "gateway": {
+          "container_cpu_cross_check": {
+            "increase": 64.90605389675879,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 21.700435557819663,
+              "gateway-655ff8fcb-b9sw2": 21.727684719409424,
+              "gateway-655ff8fcb-jkm2t": 21.477933619529704
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.7233478519273221,
+              "gateway-655ff8fcb-b9sw2": 0.7242561573136475,
+              "gateway-655ff8fcb-jkm2t": 0.7159311206509902
+            },
+            "per_second": 2.16353512989196
+          },
+          "cpu": {
+            "average_cores": 2.1626666666666665,
+            "increase": 64.88,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 22.64,
+              "gateway-655ff8fcb-b9sw2": 20.799999999999997,
+              "gateway-655ff8fcb-jkm2t": 21.439999999999998
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.7546666666666667,
+              "gateway-655ff8fcb-b9sw2": 0.6933333333333332,
+              "gateway-655ff8fcb-jkm2t": 0.7146666666666666
+            },
+            "per_pod_smoothed_30s": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 0.3620576761904762,
+                "last": 0.7546666666666667,
+                "peak": 0.7546666666666667,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 0.3686239682539683,
+                "last": 0.6933333333333332,
+                "peak": 0.7166666666666667,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 0.3416940952380952,
+                "last": 0.7146666666666666,
+                "peak": 0.7146666666666666,
+                "samples": 7
+              }
+            },
+            "per_second": 2.1626666666666665,
+            "smoothed_30s": {
+              "average": 1.0723757396825397,
+              "last": 2.1626666666666665,
+              "peak": 2.1626666666666665,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 991442880.0,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 339828288.0,
+              "gateway-655ff8fcb-b9sw2": 324040896.0,
+              "gateway-655ff8fcb-jkm2t": 327573696.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 11327609.6,
+              "gateway-655ff8fcb-b9sw2": 10801363.2,
+              "gateway-655ff8fcb-jkm2t": 10919123.2
+            },
+            "per_second": 33048096.0
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1011.7137276785714,
+              "last": 1210.828125,
+              "peak": 1210.828125,
+              "samples": 7
+            },
+            "per_pod": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 300.21875,
+                "last": 368.16015625,
+                "peak": 368.16015625,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 300.11607142857144,
+                "last": 365.453125,
+                "peak": 365.453125,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 301.83984375,
+                "last": 367.67578125,
+                "peak": 367.67578125,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-8j9fk": {
+                "average": 35.9609375,
+                "last": 35.9609375,
+                "peak": 35.9609375,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-8xhsn": {
+                "average": 36.9375,
+                "last": 36.9375,
+                "peak": 36.9375,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-w7h5c": {
+                "average": 36.640625,
+                "last": 36.640625,
+                "peak": 36.640625,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 84726553.86184216,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 43139957.62191377,
+              "gateway-655ff8fcb-jkm2t": 41586596.23992839
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 1437998.5873971255,
+              "gateway-655ff8fcb-jkm2t": 1386219.8746642796
+            },
+            "per_second": 2824218.462061405
+          },
+          "network_transmit_bytes": {
+            "increase": 85478777.90843281,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 44553644.515415795,
+              "gateway-655ff8fcb-jkm2t": 40925133.39301702
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 1485121.4838471932,
+              "gateway-655ff8fcb-jkm2t": 1364171.1131005671
+            },
+            "per_second": 2849292.5969477603
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "gateway-655ff8fcb-9zdj5": 0.0,
+              "gateway-655ff8fcb-b9sw2": 0.0,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "periods": 900.2886196438462,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "load_generator": {
+          "cpu": {
+            "average_cores": 1.1177138247526195,
+            "increase": 33.53141474257858,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 33.53141474257858
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 1.1177138247526195
+            },
+            "per_pod_smoothed_30s": {
+              "k6-668465f7cd-d82kw": {
+                "average": 0.5042339334676175,
+                "last": 1.1177138247526195,
+                "peak": 1.1177138247526195,
+                "samples": 7
+              }
+            },
+            "per_second": 1.1177138247526195,
+            "smoothed_30s": {
+              "average": 0.5042339334676175,
+              "last": 1.1177138247526195,
+              "peak": 1.1177138247526195,
+              "samples": 7
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 550.765625,
+              "last": 648.7109375,
+              "peak": 648.7109375,
+              "samples": 7
+            },
+            "per_pod": {
+              "k6-668465f7cd-d82kw": {
+                "average": 550.765625,
+                "last": 648.7109375,
+                "peak": 648.7109375,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 55538064.26199988,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 55538064.26199988
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 1851268.8087333294
+            },
+            "per_second": 1851268.8087333294
+          },
+          "network_transmit_bytes": {
+            "increase": 42653583.366158344,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 42653583.366158344
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 1421786.1122052781
+            },
+            "per_second": 1421786.1122052781
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "periods": 301.1616234045605,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "mysql": {
+          "cpu": {
+            "average_cores": 1.7258125659183376,
+            "increase": 51.774376977550126,
+            "per_pod_increase": {
+              "mysql-0": 51.774376977550126
+            },
+            "per_pod_per_second": {
+              "mysql-0": 1.7258125659183376
+            },
+            "per_pod_smoothed_30s": {
+              "mysql-0": {
+                "average": 0.8943582932409472,
+                "last": 1.7258125659183374,
+                "peak": 1.7258125659183376,
+                "samples": 4
+              }
+            },
+            "per_second": 1.7258125659183376,
+            "smoothed_30s": {
+              "average": 0.8943582932409472,
+              "last": 1.7258125659183374,
+              "peak": 1.7258125659183376,
+              "samples": 4
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1107.5150669642858,
+              "last": 1124.359375,
+              "peak": 1124.359375,
+              "samples": 7
+            },
+            "per_pod": {
+              "mysql-0": {
+                "average": 1107.5150669642858,
+                "last": 1124.359375,
+                "peak": 1124.359375,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 93498087.2418452,
+            "per_pod_increase": {
+              "mysql-0": 93498087.2418452
+            },
+            "per_pod_per_second": {
+              "mysql-0": 3116602.9080615067
+            },
+            "per_second": 3116602.9080615067
+          },
+          "network_transmit_bytes": {
+            "increase": 44212204.20768192,
+            "per_pod_increase": {
+              "mysql-0": 44212204.20768192
+            },
+            "per_pod_per_second": {
+              "mysql-0": 1473740.1402560638
+            },
+            "per_second": 1473740.1402560638
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "mysql-0": 0.0
+            },
+            "periods": 301.340967304505,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "redis": {
+          "cpu": {
+            "average_cores": 0.8060701011002075,
+            "increase": 24.182103033006225,
+            "per_pod_increase": {
+              "redis-0": 24.182103033006225
+            },
+            "per_pod_per_second": {
+              "redis-0": 0.8060701011002075
+            },
+            "per_pod_smoothed_30s": {
+              "redis-0": {
+                "average": 0.5300565328635908,
+                "last": 0.8060701011002076,
+                "peak": 0.8060701011002076,
+                "samples": 5
+              }
+            },
+            "per_second": 0.8060701011002075,
+            "smoothed_30s": {
+              "average": 0.5300565328635908,
+              "last": 0.8060701011002076,
+              "peak": 0.8060701011002076,
+              "samples": 5
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 62.35825892857143,
+              "last": 75.09765625,
+              "peak": 75.09765625,
+              "samples": 7
+            },
+            "per_pod": {
+              "redis-0": {
+                "average": 62.35825892857143,
+                "last": 75.09765625,
+                "peak": 75.09765625,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 211693823.5674835,
+            "per_pod_increase": {
+              "redis-0": 211635823.29317272,
+              "redis-exporter-7bdbb8c876-nrhb6": 58000.27431079413
+            },
+            "per_pod_per_second": {
+              "redis-0": 7054527.443105757,
+              "redis-exporter-7bdbb8c876-nrhb6": 1933.342477026471
+            },
+            "per_second": 7056460.785582784
+          },
+          "network_transmit_bytes": {
+            "increase": 89560777.9365465,
+            "per_pod_increase": {
+              "redis-0": 89534258.94052401,
+              "redis-exporter-7bdbb8c876-nrhb6": 26518.996022493484
+            },
+            "per_pod_per_second": {
+              "redis-0": 2984475.298017467,
+              "redis-exporter-7bdbb8c876-nrhb6": 883.9665340831161
+            },
+            "per_second": 2985359.26455155
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "redis-0": 0.0
+            },
+            "periods": 298.84032114183765,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "social": {
+          "container_cpu_cross_check": {
+            "increase": 15.392435285510222,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 15.392435285510222
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.5130811761836741
+            },
+            "per_second": 0.5130811761836741
+          },
+          "cpu": {
+            "average_cores": 0.48333333333333345,
+            "increase": 14.500000000000004,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 14.500000000000004
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.48333333333333345
+            },
+            "per_pod_smoothed_30s": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 0.24727739047619046,
+                "last": 0.48333333333333345,
+                "peak": 0.49964724444444436,
+                "samples": 7
+              }
+            },
+            "per_second": 0.48333333333333345,
+            "smoothed_30s": {
+              "average": 0.24727739047619046,
+              "last": 0.48333333333333345,
+              "peak": 0.49964724444444436,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {
+            "network_receive_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_receive_bytes_total{namespace=\"benkz\",pod=~\"social-.*\"}[30s]))",
+            "network_transmit_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_transmit_bytes_total{namespace=\"benkz\",pod=~\"social-.*\"}[30s]))"
+          },
+          "go_allocated_bytes": {
+            "increase": 153657184.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 153657184.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 5121906.133333334
+            },
+            "per_second": 5121906.133333334
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 106.23270089285714,
+              "last": 120.3359375,
+              "peak": 120.3359375,
+              "samples": 7
+            },
+            "per_pod": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 65.47488839285714,
+                "last": 79.578125,
+                "peak": 79.578125,
+                "samples": 7
+              },
+              "social-bb56ffb49-9pcf2": {
+                "average": 40.7578125,
+                "last": 40.7578125,
+                "peak": 40.7578125,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": null,
+          "network_transmit_bytes": null,
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "periods": 299.9686443925722,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        }
+      },
+      "start_unix_seconds": 1786809542.204,
+      "system_metrics": {
+        "counters": {
+          "farm_barrier_timeouts": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_batches": {
+            "increase": 83922.0,
+            "per_second": 2797.4
+          },
+          "farm_committer_requests": {
+            "increase": 123863.62073333333,
+            "per_second": 4128.787357777777
+          },
+          "farm_journal_append_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_records": {
+            "increase": 171318.0,
+            "per_second": 5710.6
+          },
+          "farm_journal_appends": {
+            "increase": 100762.0,
+            "per_second": 3358.733333333333
+          },
+          "farm_projection_batches": {
+            "increase": 17058.0,
+            "per_second": 568.6
+          },
+          "farm_projection_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_records": {
+            "increase": 88742.0,
+            "per_second": 2958.0666666666666
+          },
+          "farm_stream_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_write_admission_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "gateway_rate_limited": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "mysql_questions": {
+            "increase": 222218.0,
+            "per_second": 7407.266666666666
+          },
+          "mysql_row_lock_waits": {
+            "increase": 20.0,
+            "per_second": 0.6666666666666666
+          },
+          "redis_commands": {
+            "increase": 1576588.0,
+            "per_second": 52552.933333333334
+          },
+          "redis_failed_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_connections": {
+            "increase": 0.0,
+            "per_second": 0.0
+          }
+        },
+        "errors": {},
+        "gauges": {
+          "farm_actor_mailbox_depth_p99": {
+            "average": 0.99,
+            "last": 0.9900000000000001,
+            "peak": 0.9900000000000001,
+            "samples": 5
+          },
+          "farm_actor_resident": {
+            "average": 15000.0,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 7
+          },
+          "farm_barrier_waiters": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_projection_active": {
+            "average": 2.142857142857143,
+            "last": 3.0,
+            "peak": 3.0,
+            "samples": 7
+          },
+          "farm_projection_duration_p99_ms": {
+            "average": 24.06881355991654,
+            "last": 24.330273437499983,
+            "peak": 24.330273437499983,
+            "samples": 5
+          },
+          "farm_stream_in_flight": {
+            "average": 5.857142857142857,
+            "last": 10.0,
+            "peak": 10.0,
+            "samples": 7
+          },
+          "farm_stream_queue_depth": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 7
+          },
+          "farm_targeted_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_write_admission_limit": {
+            "average": 430.2857142857143,
+            "last": 298.0,
+            "peak": 512.0,
+            "samples": 7
+          },
+          "farm_write_lag": {
+            "average": 21454.714285714286,
+            "last": 49362.0,
+            "peak": 49362.0,
+            "samples": 7
+          },
+          "farm_write_pending": {
+            "average": 5442.0,
+            "last": 13704.0,
+            "peak": 13704.0,
+            "samples": 7
+          },
+          "gateway_ws_connections": {
+            "average": 15000.0,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 7
+          },
+          "mysql_threads_connected": {
+            "average": 26.285714285714285,
+            "last": 25.0,
+            "peak": 28.0,
+            "samples": 7
+          },
+          "mysql_threads_running": {
+            "average": 3.857142857142857,
+            "last": 3.0,
+            "peak": 6.0,
+            "samples": 7
+          },
+          "redis_connected_clients": {
+            "average": 637.7142857142857,
+            "last": 651.0,
+            "peak": 651.0,
+            "samples": 7
+          },
+          "redis_dataset_memory_mib": {
+            "average": 31.656556265694753,
+            "last": 44.55101013183594,
+            "peak": 44.55101013183594,
+            "samples": 7
+          },
+          "redis_rss_memory_mib": {
+            "average": 61.944754464285715,
+            "last": 82.23046875,
+            "peak": 82.23046875,
+            "samples": 7
+          },
+          "redis_used_memory_mib": {
+            "average": 49.85228838239397,
+            "last": 63.74967956542969,
+            "peak": 63.74967956542969,
+            "samples": 7
+          }
+        }
+      }
+    },
+    "D_drain_accounting": {
+      "duration_seconds": 30.0,
+      "end_unix_seconds": 1786809602.204,
+      "name": "D_drain_accounting",
+      "node": {
+        "cpu": {
+          "average_used_cores": 1.7000199322308691,
+          "average_utilization_ratio": 0.05312562288221466,
+          "increase": 51.00059796692607,
+          "machine_cores": 32.0,
+          "per_second": 1.7000199322308691,
+          "smoothed_30s": {
+            "average": 3.891913642205663,
+            "last": 1.7000199322308691,
+            "peak": 7.487661398872221,
+            "samples": 7
+          }
+        },
+        "errors": {},
+        "memory": {
+          "machine_mib": 63029.66796875,
+          "working_set_mib": {
+            "average": 22890.3515625,
+            "last": 22818.390625,
+            "peak": 23229.578125,
+            "samples": 7
+          }
+        }
+      },
+      "services": {
+        "farm": {
+          "container_cpu_cross_check": {
+            "increase": 9.351966642791371,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 9.351966642791371
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.311732221426379
+            },
+            "per_second": 0.311732221426379
+          },
+          "cpu": {
+            "average_cores": 0.25666666666666627,
+            "increase": 7.699999999999989,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 7.699999999999989
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.25666666666666627
+            },
+            "per_pod_smoothed_30s": {
+              "farm-657cbb6659-v7k4g": {
+                "average": 1.4762857142857142,
+                "last": 0.25666666666666627,
+                "peak": 2.3313333333333333,
+                "samples": 7
+              }
+            },
+            "per_second": 0.25666666666666627,
+            "smoothed_30s": {
+              "average": 1.4762857142857142,
+              "last": 0.25666666666666627,
+              "peak": 2.3313333333333333,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 524627808.0,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 524627808.0
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 17487593.6
+            },
+            "per_second": 17487593.6
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 672.3046875,
+              "last": 678.71484375,
+              "peak": 680.86328125,
+              "samples": 7
+            },
+            "per_pod": {
+              "farm-569bfd6797-rbkp2": {
+                "average": 102.6875,
+                "last": 102.6875,
+                "peak": 102.6875,
+                "samples": 7
+              },
+              "farm-657cbb6659-v7k4g": {
+                "average": 569.6171875,
+                "last": 576.02734375,
+                "peak": 578.17578125,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 2111228.922716628,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 2111228.922716628
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 70374.29742388759
+            },
+            "per_second": 70374.29742388759
+          },
+          "network_transmit_bytes": {
+            "increase": 2862621.779859485,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 2862621.779859485
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 95420.72599531617
+            },
+            "per_second": 95420.72599531617
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "farm-657cbb6659-v7k4g": 0.0
+            },
+            "periods": 299.29397319144584,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "gateway": {
+          "container_cpu_cross_check": {
+            "increase": 0.04295132401486607,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.013715843683728263,
+              "gateway-655ff8fcb-b9sw2": 0.015158326497130246,
+              "gateway-655ff8fcb-jkm2t": 0.014077153834007563
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.0004571947894576088,
+              "gateway-655ff8fcb-b9sw2": 0.0005052775499043415,
+              "gateway-655ff8fcb-jkm2t": 0.00046923846113358544
+            },
+            "per_second": 0.0014317108004955358
+          },
+          "cpu": {
+            "average_cores": 0.001333333333333068,
+            "increase": 0.03999999999999204,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.01999999999999602,
+              "gateway-655ff8fcb-b9sw2": 0.01999999999999602,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.000666666666666534,
+              "gateway-655ff8fcb-b9sw2": 0.000666666666666534,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "per_pod_smoothed_30s": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 0.3875238095238095,
+                "last": 0.000666666666666534,
+                "peak": 0.7546666666666667,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 0.3495238095238095,
+                "last": 0.000666666666666534,
+                "peak": 0.6933333333333332,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 0.4065714285714286,
+                "last": 0.0,
+                "peak": 0.7146666666666666,
+                "samples": 7
+              }
+            },
+            "per_second": 0.001333333333333068,
+            "smoothed_30s": {
+              "average": 1.1436190476190475,
+              "last": 0.001333333333333068,
+              "peak": 2.1626666666666665,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 4935968.0,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 498240.0,
+              "gateway-655ff8fcb-b9sw2": 2218304.0,
+              "gateway-655ff8fcb-jkm2t": 2219424.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 16608.0,
+              "gateway-655ff8fcb-b9sw2": 73943.46666666666,
+              "gateway-655ff8fcb-jkm2t": 73980.8
+            },
+            "per_second": 164532.26666666666
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1189.0279017857142,
+              "last": 1181.7421875,
+              "peak": 1210.828125,
+              "samples": 7
+            },
+            "per_pod": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 360.2935267857143,
+                "last": 357.28515625,
+                "peak": 368.16015625,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 359.75111607142856,
+                "last": 358.73828125,
+                "peak": 365.453125,
+                "samples": 7
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 359.44419642857144,
+                "last": 356.1796875,
+                "peak": 367.67578125,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-8j9fk": {
+                "average": 35.9609375,
+                "last": 35.9609375,
+                "peak": 35.9609375,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-8xhsn": {
+                "average": 36.9375,
+                "last": 36.9375,
+                "peak": 36.9375,
+                "samples": 7
+              },
+              "gateway-6b5c9d5f86-w7h5c": {
+                "average": 36.640625,
+                "last": 36.640625,
+                "peak": 36.640625,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 13267.549246629034,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 6710.50477489768,
+              "gateway-655ff8fcb-b9sw2": 6557.044471731354
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 223.68349249658934,
+              "gateway-655ff8fcb-b9sw2": 218.5681490577118
+            },
+            "per_second": 442.25164155430116
+          },
+          "network_transmit_bytes": {
+            "increase": 39207.93737836242,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 19738.608458390176,
+              "gateway-655ff8fcb-b9sw2": 19469.32891997224
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 657.9536152796725,
+              "gateway-655ff8fcb-b9sw2": 648.9776306657412
+            },
+            "per_second": 1306.9312459454138
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "gateway-655ff8fcb-9zdj5": 0.0,
+              "gateway-655ff8fcb-b9sw2": 0.0,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "periods": 39.34240804257023,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "load_generator": {
+          "cpu": {
+            "average_cores": 0.0,
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_smoothed_30s": {
+              "k6-668465f7cd-d82kw": {
+                "average": 0.6269201294235273,
+                "last": 0.0,
+                "peak": 1.1177138247526195,
+                "samples": 7
+              }
+            },
+            "per_second": 0.0,
+            "smoothed_30s": {
+              "average": 0.6269201294235273,
+              "last": 0.0,
+              "peak": 1.1177138247526195,
+              "samples": 7
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 285.03683035714283,
+              "last": 12.28125,
+              "peak": 648.7109375,
+              "samples": 7
+            },
+            "per_pod": {
+              "k6-668465f7cd-d82kw": {
+                "average": 285.03683035714283,
+                "last": 12.28125,
+                "peak": 648.7109375,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_second": 0.0
+          },
+          "network_transmit_bytes": {
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_second": 0.0
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "periods": 0.0,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "mysql": {
+          "cpu": {
+            "average_cores": 0.04231197958635522,
+            "increase": 1.2693593875906566,
+            "per_pod_increase": {
+              "mysql-0": 1.2693593875906566
+            },
+            "per_pod_per_second": {
+              "mysql-0": 0.04231197958635522
+            },
+            "per_pod_smoothed_30s": {
+              "mysql-0": {
+                "average": 1.349128377580931,
+                "last": 0.04231197958635522,
+                "peak": 1.8141944824095158,
+                "samples": 4
+              }
+            },
+            "per_second": 0.04231197958635522,
+            "smoothed_30s": {
+              "average": 1.349128377580931,
+              "last": 0.04231197958635522,
+              "peak": 1.8141944824095158,
+              "samples": 4
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1131.0630580357142,
+              "last": 1134.88671875,
+              "peak": 1136.4921875,
+              "samples": 7
+            },
+            "per_pod": {
+              "mysql-0": {
+                "average": 1131.0630580357142,
+                "last": 1134.88671875,
+                "peak": 1136.4921875,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 18393137.9385487,
+            "per_pod_increase": {
+              "mysql-0": 18393137.9385487
+            },
+            "per_pod_per_second": {
+              "mysql-0": 613104.5979516233
+            },
+            "per_second": 613104.5979516233
+          },
+          "network_transmit_bytes": {
+            "increase": 4311762.911309653,
+            "per_pod_increase": {
+              "mysql-0": 4311762.911309653
+            },
+            "per_pod_per_second": {
+              "mysql-0": 143725.43037698843
+            },
+            "per_second": 143725.43037698843
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "mysql-0": 0.0
+            },
+            "periods": 271.9580983078163,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "redis": {
+          "cpu": {
+            "average_cores": 0.3643508708491536,
+            "increase": 10.930526125474607,
+            "per_pod_increase": {
+              "redis-0": 10.930526125474607
+            },
+            "per_pod_per_second": {
+              "redis-0": 0.3643508708491536
+            },
+            "per_pod_smoothed_30s": {
+              "redis-0": {
+                "average": 0.5890937193572293,
+                "last": 0.3643508708491536,
+                "peak": 0.8060701011002076,
+                "samples": 7
+              }
+            },
+            "per_second": 0.3643508708491536,
+            "smoothed_30s": {
+              "average": 0.5890937193572293,
+              "last": 0.3643508708491536,
+              "peak": 0.8060701011002076,
+              "samples": 7
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {
+            "network_receive_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_receive_bytes_total{namespace=\"benkz\",pod=~\"redis-.*\"}[30s]))",
+            "network_transmit_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_transmit_bytes_total{namespace=\"benkz\",pod=~\"redis-.*\"}[30s]))"
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 75.06417410714286,
+              "last": 51.26171875,
+              "peak": 98.85546875,
+              "samples": 7
+            },
+            "per_pod": {
+              "redis-0": {
+                "average": 75.06417410714286,
+                "last": 51.26171875,
+                "peak": 98.85546875,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": null,
+          "network_transmit_bytes": null,
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "redis-0": 0.0
+            },
+            "periods": 298.31856807087325,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "social": {
+          "container_cpu_cross_check": null,
+          "cpu": {
+            "average_cores": 0.0,
+            "increase": 0.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "per_pod_smoothed_30s": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 0.22371428571428573,
+                "last": 0.0,
+                "peak": 0.48333333333333345,
+                "samples": 7
+              }
+            },
+            "per_second": 0.0,
+            "smoothed_30s": {
+              "average": 0.22371428571428573,
+              "last": 0.0,
+              "peak": 0.48333333333333345,
+              "samples": 7
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {
+            "container_cpu_cross_check": "Prometheus query returned no finite samples: sum(increase(container_cpu_usage_seconds_total{namespace=\"benkz\",container=\"social\",pod=~\"social-.*\"}[30s]))",
+            "network_receive_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_receive_bytes_total{namespace=\"benkz\",pod=~\"social-.*\"}[30s]))",
+            "network_transmit_bytes": "Prometheus query returned no finite samples: sum(increase(container_network_transmit_bytes_total{namespace=\"benkz\",pod=~\"social-.*\"}[30s]))",
+            "throttling": "Prometheus query returned no finite samples: sum(increase(container_cpu_cfs_throttled_seconds_total{namespace=\"benkz\",container=\"social\",pod=~\"social-.*\"}[30s]))"
+          },
+          "go_allocated_bytes": {
+            "increase": 2164800.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 2164800.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 72160.0
+            },
+            "per_second": 72160.0
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 119.40848214285714,
+              "last": 118.171875,
+              "peak": 120.3359375,
+              "samples": 7
+            },
+            "per_pod": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 78.65066964285714,
+                "last": 77.4140625,
+                "peak": 79.578125,
+                "samples": 7
+              },
+              "social-bb56ffb49-9pcf2": {
+                "average": 40.7578125,
+                "last": 40.7578125,
+                "peak": 40.7578125,
+                "samples": 7
+              }
+            }
+          },
+          "network_receive_bytes": null,
+          "network_transmit_bytes": null,
+          "throttling": null
+        }
+      },
+      "start_unix_seconds": 1786809572.204,
+      "system_metrics": {
+        "counters": {
+          "farm_barrier_timeouts": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_requests": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_appends": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_batches": {
+            "increase": 11266.0,
+            "per_second": 375.53333333333336
+          },
+          "farm_projection_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_records": {
+            "increase": 59310.0,
+            "per_second": 1977.0
+          },
+          "farm_stream_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_write_admission_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "gateway_rate_limited": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "mysql_questions": {
+            "increase": 386.0,
+            "per_second": 12.866666666666667
+          },
+          "mysql_row_lock_waits": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_commands": {
+            "increase": 416674.0,
+            "per_second": 13889.133333333333
+          },
+          "redis_failed_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_connections": {
+            "increase": 0.0,
+            "per_second": 0.0
+          }
+        },
+        "errors": {},
+        "gauges": {
+          "farm_actor_mailbox_depth_p99": {
+            "average": 0.99,
+            "last": 0.99,
+            "peak": 0.9900000000000001,
+            "samples": 5
+          },
+          "farm_actor_resident": {
+            "average": 15000.0,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 7
+          },
+          "farm_barrier_waiters": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_projection_active": {
+            "average": 4.285714285714286,
+            "last": 0.0,
+            "peak": 8.0,
+            "samples": 7
+          },
+          "farm_projection_duration_p99_ms": {
+            "average": 24.362872635093083,
+            "last": 24.001732673267327,
+            "peak": 24.625365408038988,
+            "samples": 7
+          },
+          "farm_stream_in_flight": {
+            "average": 2.857142857142857,
+            "last": 0.0,
+            "peak": 10.0,
+            "samples": 7
+          },
+          "farm_stream_queue_depth": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 7
+          },
+          "farm_targeted_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_write_admission_limit": {
+            "average": 408.0,
+            "last": 512.0,
+            "peak": 512.0,
+            "samples": 7
+          },
+          "farm_write_lag": {
+            "average": 21105.85714285714,
+            "last": 0.0,
+            "peak": 49362.0,
+            "samples": 7
+          },
+          "farm_write_pending": {
+            "average": 11406.42857142857,
+            "last": 0.0,
+            "peak": 17479.0,
+            "samples": 7
+          },
+          "gateway_ws_connections": {
+            "average": 5000.0,
+            "last": 0.0,
+            "peak": 15000.0,
+            "samples": 7
+          },
+          "mysql_threads_connected": {
+            "average": 24.428571428571427,
+            "last": 24.0,
+            "peak": 25.0,
+            "samples": 7
+          },
+          "mysql_threads_running": {
+            "average": 2.4285714285714284,
+            "last": 2.0,
+            "peak": 3.0,
+            "samples": 7
+          },
+          "redis_connected_clients": {
+            "average": 663.1428571428571,
+            "last": 668.0,
+            "peak": 668.0,
+            "samples": 7
+          },
+          "redis_dataset_memory_mib": {
+            "average": 30.21492603846959,
+            "last": 13.850116729736328,
+            "peak": 44.55101013183594,
+            "samples": 7
+          },
+          "redis_rss_memory_mib": {
+            "average": 76.83426339285714,
+            "last": 51.02734375,
+            "peak": 90.44140625,
+            "samples": 7
+          },
+          "redis_used_memory_mib": {
+            "average": 47.15611812046596,
+            "last": 29.44135284423828,
+            "peak": 63.74967956542969,
+            "samples": 7
+          }
+        }
+      }
+    },
+    "D_recovery": {
+      "duration_seconds": 60.0,
+      "end_unix_seconds": 1786809632.204,
+      "name": "D_recovery",
+      "node": {
+        "cpu": {
+          "average_used_cores": 1.095535304791767,
+          "average_utilization_ratio": 0.03423547827474272,
+          "increase": 65.73211828750603,
+          "machine_cores": 32.0,
+          "per_second": 1.095535304791767,
+          "smoothed_30s": {
+            "average": 2.3439759808873664,
+            "last": 0.4431684945151372,
+            "peak": 7.487661398872221,
+            "samples": 13
+          }
+        },
+        "errors": {},
+        "memory": {
+          "machine_mib": 63029.66796875,
+          "working_set_mib": {
+            "average": 22855.634014423078,
+            "last": 22816.25390625,
+            "peak": 23229.578125,
+            "samples": 13
+          }
+        }
+      },
+      "services": {
+        "farm": {
+          "container_cpu_cross_check": {
+            "increase": 8.404914320029167,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 8.404914320029167
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.14008190533381945
+            },
+            "per_second": 0.14008190533381945
+          },
+          "cpu": {
+            "average_cores": 0.0964444444444442,
+            "increase": 5.786666666666652,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 5.786666666666652
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 0.0964444444444442
+            },
+            "per_pod_smoothed_30s": {
+              "farm-657cbb6659-v7k4g": {
+                "average": 0.8209230769230769,
+                "last": 0.016666666666666666,
+                "peak": 2.3313333333333333,
+                "samples": 13
+              }
+            },
+            "per_second": 0.0964444444444442,
+            "smoothed_30s": {
+              "average": 0.8209230769230769,
+              "last": 0.016666666666666666,
+              "peak": 2.3313333333333333,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 366564629.3333333,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 366564629.3333333
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 6109410.488888889
+            },
+            "per_second": 6109410.488888889
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 675.5513822115385,
+              "last": 679.41015625,
+              "peak": 680.86328125,
+              "samples": 13
+            },
+            "per_pod": {
+              "farm-569bfd6797-rbkp2": {
+                "average": 102.6875,
+                "last": 102.6875,
+                "peak": 102.6875,
+                "samples": 13
+              },
+              "farm-657cbb6659-v7k4g": {
+                "average": 572.8638822115385,
+                "last": 576.72265625,
+                "peak": 578.17578125,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 4240180.796481798,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 4240180.796481798
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 70669.67994136331
+            },
+            "per_second": 70669.67994136331
+          },
+          "network_transmit_bytes": {
+            "increase": 5750288.297092597,
+            "per_pod_increase": {
+              "farm-657cbb6659-v7k4g": 5750288.297092597
+            },
+            "per_pod_per_second": {
+              "farm-657cbb6659-v7k4g": 95838.13828487662
+            },
+            "per_second": 95838.13828487662
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "farm-657cbb6659-v7k4g": 0.0
+            },
+            "periods": 594.5053295301005,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "gateway": {
+          "container_cpu_cross_check": {
+            "increase": 0.09435442059451635,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.02952869904507268,
+              "gateway-655ff8fcb-b9sw2": 0.032711957956370524,
+              "gateway-655ff8fcb-jkm2t": 0.032113763593073136
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.0004921449840845447,
+              "gateway-655ff8fcb-b9sw2": 0.0005451992992728421,
+              "gateway-655ff8fcb-jkm2t": 0.0005352293932178856
+            },
+            "per_second": 0.0015725736765752724
+          },
+          "cpu": {
+            "average_cores": 0.0013333333333333049,
+            "increase": 0.0799999999999983,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 0.026666666666666096,
+              "gateway-655ff8fcb-b9sw2": 0.026666666666666096,
+              "gateway-655ff8fcb-jkm2t": 0.026666666666666096
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 0.0004444444444444349,
+              "gateway-655ff8fcb-b9sw2": 0.0004444444444444349,
+              "gateway-655ff8fcb-jkm2t": 0.0004444444444444349
+            },
+            "per_pod_smoothed_30s": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 0.2088205128205128,
+                "last": 0.0,
+                "peak": 0.7546666666666667,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 0.18835897435897436,
+                "last": 0.0006666666666667708,
+                "peak": 0.6933333333333332,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 0.2191282051282051,
+                "last": 0.0006666666666667708,
+                "peak": 0.7146666666666666,
+                "samples": 13
+              }
+            },
+            "per_second": 0.0013333333333333049,
+            "smoothed_30s": {
+              "average": 0.6163076923076922,
+              "last": 0.0013333333333335417,
+              "peak": 2.1626666666666665,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 7124160.0,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 2318378.6666666665,
+              "gateway-655ff8fcb-b9sw2": 2385877.333333333,
+              "gateway-655ff8fcb-jkm2t": 2419904.0
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 38639.64444444444,
+              "gateway-655ff8fcb-b9sw2": 39764.62222222222,
+              "gateway-655ff8fcb-jkm2t": 40331.73333333333
+            },
+            "per_second": 118736.0
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1185.6826923076924,
+              "last": 1182.05859375,
+              "peak": 1210.828125,
+              "samples": 13
+            },
+            "per_pod": {
+              "gateway-655ff8fcb-9zdj5": {
+                "average": 358.8545673076923,
+                "last": 357.06640625,
+                "peak": 368.16015625,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-b9sw2": {
+                "average": 359.34134615384613,
+                "last": 358.98828125,
+                "peak": 365.453125,
+                "samples": 13
+              },
+              "gateway-655ff8fcb-jkm2t": {
+                "average": 357.94771634615387,
+                "last": 356.46484375,
+                "peak": 367.67578125,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-8j9fk": {
+                "average": 35.9609375,
+                "last": 35.9609375,
+                "peak": 35.9609375,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-8xhsn": {
+                "average": 36.9375,
+                "last": 36.9375,
+                "peak": 36.9375,
+                "samples": 13
+              },
+              "gateway-6b5c9d5f86-w7h5c": {
+                "average": 36.640625,
+                "last": 36.640625,
+                "peak": 36.640625,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 40043.771188324,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 14144.807794249366,
+              "gateway-655ff8fcb-b9sw2": 11081.514102604779,
+              "gateway-655ff8fcb-jkm2t": 14817.449291469853
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 235.74679657082277,
+              "gateway-655ff8fcb-b9sw2": 184.69190171007963,
+              "gateway-655ff8fcb-jkm2t": 246.95748819116423
+            },
+            "per_second": 667.3961864720666
+          },
+          "network_transmit_bytes": {
+            "increase": 116521.69861848533,
+            "per_pod_increase": {
+              "gateway-655ff8fcb-9zdj5": 40679.62052388177,
+              "gateway-655ff8fcb-b9sw2": 33717.04336273359,
+              "gateway-655ff8fcb-jkm2t": 42125.034731869964
+            },
+            "per_pod_per_second": {
+              "gateway-655ff8fcb-9zdj5": 677.9936753980295,
+              "gateway-655ff8fcb-b9sw2": 561.9507227122265,
+              "gateway-655ff8fcb-jkm2t": 702.0839121978328
+            },
+            "per_second": 1942.0283103080887
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "gateway-655ff8fcb-9zdj5": 0.0,
+              "gateway-655ff8fcb-b9sw2": 0.0,
+              "gateway-655ff8fcb-jkm2t": 0.0
+            },
+            "periods": 119.82199525209633,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "load_generator": {
+          "cpu": {
+            "average_cores": 0.0,
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_smoothed_30s": {
+              "k6-668465f7cd-d82kw": {
+                "average": 0.48760454510718787,
+                "last": 0.0,
+                "peak": 1.1177138247526195,
+                "samples": 9
+              }
+            },
+            "per_second": 0.0,
+            "smoothed_30s": {
+              "average": 0.48760454510718787,
+              "last": 0.0,
+              "peak": 1.1177138247526195,
+              "samples": 9
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 159.14963942307693,
+              "last": 12.28125,
+              "peak": 648.7109375,
+              "samples": 13
+            },
+            "per_pod": {
+              "k6-668465f7cd-d82kw": {
+                "average": 159.14963942307693,
+                "last": 12.28125,
+                "peak": 648.7109375,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_second": 0.0
+          },
+          "network_transmit_bytes": {
+            "increase": 0.0,
+            "per_pod_increase": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_pod_per_second": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "per_second": 0.0
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "k6-668465f7cd-d82kw": 0.0
+            },
+            "periods": 0.0,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "mysql": {
+          "cpu": {
+            "average_cores": 0.024302301160596874,
+            "increase": 1.4581380696358124,
+            "per_pod_increase": {
+              "mysql-0": 1.4581380696358124
+            },
+            "per_pod_per_second": {
+              "mysql-0": 0.024302301160596874
+            },
+            "per_pod_smoothed_30s": {
+              "mysql-0": {
+                "average": 0.614877129352325,
+                "last": 0.01758556489149691,
+                "peak": 1.8141944824095158,
+                "samples": 9
+              }
+            },
+            "per_second": 0.024302301160596874,
+            "smoothed_30s": {
+              "average": 0.614877129352325,
+              "last": 0.01758556489149691,
+              "peak": 1.8141944824095158,
+              "samples": 9
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 1133.33984375,
+              "last": 1136.55078125,
+              "peak": 1136.55078125,
+              "samples": 13
+            },
+            "per_pod": {
+              "mysql-0": {
+                "average": 1133.33984375,
+                "last": 1136.55078125,
+                "peak": 1136.55078125,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 14961004.419622244,
+            "per_pod_increase": {
+              "mysql-0": 14961004.419622244
+            },
+            "per_pod_per_second": {
+              "mysql-0": 249350.07366037075
+            },
+            "per_second": 249350.07366037075
+          },
+          "network_transmit_bytes": {
+            "increase": 3684996.591833594,
+            "per_pod_increase": {
+              "mysql-0": 3684996.591833594
+            },
+            "per_pod_per_second": {
+              "mysql-0": 61416.60986389323
+            },
+            "per_second": 61416.60986389323
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "mysql-0": 0.0
+            },
+            "periods": 452.7848099252426,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "redis": {
+          "cpu": {
+            "average_cores": 0.14673769205622747,
+            "increase": 8.804261523373649,
+            "per_pod_increase": {
+              "redis-0": 8.804261523373649
+            },
+            "per_pod_per_second": {
+              "redis-0": 0.14673769205622747
+            },
+            "per_pod_smoothed_30s": {
+              "redis-0": {
+                "average": 0.5890937193572293,
+                "last": 0.3643508708491536,
+                "peak": 0.8060701011002076,
+                "samples": 7
+              }
+            },
+            "per_second": 0.14673769205622747,
+            "smoothed_30s": {
+              "average": 0.5890937193572293,
+              "last": 0.3643508708491536,
+              "peak": 0.8060701011002076,
+              "samples": 7
+            },
+            "source": "container_cpu_usage_seconds_total"
+          },
+          "errors": {},
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 63.44020432692308,
+              "last": 48.49609375,
+              "peak": 98.85546875,
+              "samples": 13
+            },
+            "per_pod": {
+              "redis-0": {
+                "average": 63.44020432692308,
+                "last": 48.49609375,
+                "peak": 98.85546875,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 5676932.906753782,
+            "per_pod_increase": {
+              "redis-0": 5539963.024472785,
+              "redis-exporter-7bdbb8c876-nrhb6": 136969.88228099677
+            },
+            "per_pod_per_second": {
+              "redis-0": 92332.71707454642,
+              "redis-exporter-7bdbb8c876-nrhb6": 2282.831371349946
+            },
+            "per_second": 94615.54844589638
+          },
+          "network_transmit_bytes": {
+            "increase": 4235922.355416938,
+            "per_pod_increase": {
+              "redis-0": 4175771.0024128095,
+              "redis-exporter-7bdbb8c876-nrhb6": 60151.353004127806
+            },
+            "per_pod_per_second": {
+              "redis-0": 69596.18337354682,
+              "redis-exporter-7bdbb8c876-nrhb6": 1002.5225500687968
+            },
+            "per_second": 70598.70592361563
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "redis-0": 0.0
+            },
+            "periods": 598.888525661981,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        },
+        "social": {
+          "container_cpu_cross_check": {
+            "increase": 0.02757837368580993,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.02757837368580993
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0004596395614301655
+            },
+            "per_second": 0.0004596395614301655
+          },
+          "cpu": {
+            "average_cores": 0.0004444444444444349,
+            "increase": 0.026666666666666096,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 0.026666666666666096
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 0.0004444444444444349
+            },
+            "per_pod_smoothed_30s": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 0.12066666666666669,
+                "last": 0.000666666666666534,
+                "peak": 0.48333333333333345,
+                "samples": 13
+              }
+            },
+            "per_second": 0.0004444444444444349,
+            "smoothed_30s": {
+              "average": 0.12066666666666669,
+              "last": 0.000666666666666534,
+              "peak": 0.48333333333333345,
+              "samples": 13
+            },
+            "source": "process_cpu_seconds_total"
+          },
+          "errors": {},
+          "go_allocated_bytes": {
+            "increase": 2309344.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 2309344.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 38489.066666666666
+            },
+            "per_second": 38489.066666666666
+          },
+          "memory_working_set_mib": {
+            "aggregate": {
+              "average": 118.99098557692308,
+              "last": 118.4296875,
+              "peak": 120.3359375,
+              "samples": 13
+            },
+            "per_pod": {
+              "social-687d54bd5f-k7cmq": {
+                "average": 78.23317307692308,
+                "last": 77.671875,
+                "peak": 79.578125,
+                "samples": 13
+              },
+              "social-bb56ffb49-9pcf2": {
+                "average": 40.7578125,
+                "last": 40.7578125,
+                "peak": 40.7578125,
+                "samples": 13
+              }
+            }
+          },
+          "network_receive_bytes": {
+            "increase": 8952.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 8952.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 149.2
+            },
+            "per_second": 149.2
+          },
+          "network_transmit_bytes": {
+            "increase": 22338.0,
+            "per_pod_increase": {
+              "social-687d54bd5f-k7cmq": 22338.0
+            },
+            "per_pod_per_second": {
+              "social-687d54bd5f-k7cmq": 372.3
+            },
+            "per_second": 372.3
+          },
+          "throttling": {
+            "per_pod_throttled_seconds": {
+              "social-687d54bd5f-k7cmq": 0.0
+            },
+            "periods": 31.838694194728024,
+            "throttled_core_ratio": 0.0,
+            "throttled_period_ratio": 0.0,
+            "throttled_periods": 0.0,
+            "throttled_seconds": 0.0
+          }
+        }
+      },
+      "start_unix_seconds": 1786809572.204,
+      "system_metrics": {
+        "counters": {
+          "farm_barrier_timeouts": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_batches": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_committer_requests": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_append_records": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_journal_appends": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_batches": {
+            "increase": 7510.666666666666,
+            "per_second": 125.17777777777776
+          },
+          "farm_projection_errors": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_projection_records": {
+            "increase": 39540.0,
+            "per_second": 659.0
+          },
+          "farm_stream_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "farm_write_admission_rejected": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "gateway_rate_limited": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "mysql_questions": {
+            "increase": 776.0,
+            "per_second": 12.933333333333334
+          },
+          "mysql_row_lock_waits": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_commands": {
+            "increase": 296682.6666666666,
+            "per_second": 4944.711111111111
+          },
+          "redis_failed_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_commands": {
+            "increase": 0.0,
+            "per_second": 0.0
+          },
+          "redis_rejected_connections": {
+            "increase": 0.0,
+            "per_second": 0.0
+          }
+        },
+        "errors": {},
+        "gauges": {
+          "farm_actor_mailbox_depth_p99": {
+            "average": 0.99,
+            "last": 0.99,
+            "peak": 0.9900000000000001,
+            "samples": 5
+          },
+          "farm_actor_resident": {
+            "average": 15000.0,
+            "last": 15000.0,
+            "peak": 15000.0,
+            "samples": 13
+          },
+          "farm_barrier_waiters": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_projection_active": {
+            "average": 2.3076923076923075,
+            "last": 0.0,
+            "peak": 8.0,
+            "samples": 13
+          },
+          "farm_projection_duration_p99_ms": {
+            "average": 24.317730139864864,
+            "last": 24.001732673267327,
+            "peak": 24.625365408038988,
+            "samples": 8
+          },
+          "farm_stream_in_flight": {
+            "average": 1.5384615384615385,
+            "last": 0.0,
+            "peak": 10.0,
+            "samples": 13
+          },
+          "farm_stream_queue_depth": {
+            "average": 0.0,
+            "last": 0.0,
+            "peak": 0.0,
+            "samples": 13
+          },
+          "farm_targeted_projection_duration_p99_ms": {
+            "average": null,
+            "last": null,
+            "peak": null,
+            "samples": 0
+          },
+          "farm_write_admission_limit": {
+            "average": 456.0,
+            "last": 512.0,
+            "peak": 512.0,
+            "samples": 13
+          },
+          "farm_write_lag": {
+            "average": 11364.692307692309,
+            "last": 0.0,
+            "peak": 49362.0,
+            "samples": 13
+          },
+          "farm_write_pending": {
+            "average": 6141.923076923077,
+            "last": 0.0,
+            "peak": 17479.0,
+            "samples": 13
+          },
+          "gateway_ws_connections": {
+            "average": 2692.3076923076924,
+            "last": 0.0,
+            "peak": 15000.0,
+            "samples": 13
+          },
+          "mysql_threads_connected": {
+            "average": 23.923076923076923,
+            "last": 20.0,
+            "peak": 25.0,
+            "samples": 13
+          },
+          "mysql_threads_running": {
+            "average": 2.230769230769231,
+            "last": 2.0,
+            "peak": 3.0,
+            "samples": 13
+          },
+          "redis_connected_clients": {
+            "average": 665.3846153846154,
+            "last": 668.0,
+            "peak": 668.0,
+            "samples": 13
+          },
+          "redis_dataset_memory_mib": {
+            "average": 22.64840903648963,
+            "last": 13.79150390625,
+            "peak": 44.55101013183594,
+            "samples": 13
+          },
+          "redis_rss_memory_mib": {
+            "average": 64.00991586538461,
+            "last": 48.65234375,
+            "peak": 90.44140625,
+            "samples": 13
+          },
+          "redis_used_memory_mib": {
+            "average": 38.98456573486328,
+            "last": 29.441307067871094,
+            "peak": 63.74967956542969,
+            "samples": 13
+          }
+        }
+      }
+    }
+  }
+}

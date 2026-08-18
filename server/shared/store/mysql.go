@@ -139,6 +139,24 @@ func (s *Store) GetAccountByUsername(ctx context.Context, username string) (uint
 	return uid, passwordHash, nil
 }
 
+// UpdatePasswordHash atomically replaces the hash only when it has not changed
+// since authentication read it. This keeps opportunistic bcrypt migrations
+// from overwriting a concurrent password update or another login's migration.
+func (s *Store) UpdatePasswordHash(ctx context.Context, uid uint64, previousHash, passwordHash string) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE account SET password_hash = ? WHERE uid = ? AND password_hash = ?`,
+		passwordHash, uid, previousHash,
+	)
+	if err != nil {
+		return false, fmt.Errorf("store: update account password hash: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: inspect password hash update: %w", err)
+	}
+	return rows == 1, nil
+}
+
 // loadFarmFromMySQL 读取 player + farm_plot 组装聚合；未找到返回 ErrFarmNotFound。
 func (s *Store) loadFarmFromMySQL(ctx context.Context, uid uint64) (*farm.Aggregate, error) {
 	agg := &farm.Aggregate{UID: uid}

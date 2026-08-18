@@ -24,10 +24,15 @@ func (s *Store) MaterializeFarmMutations(ctx context.Context, mutations []*farmv
 	}
 	mutations = append([]*farmv1.FarmWriteMutation(nil), mutations...)
 	sort.Slice(mutations, func(left, right int) bool { return mutations[left].Uid < mutations[right].Uid })
-	for _, mutation := range mutations {
-		if mutation == nil || mutation.Uid == 0 || mutation.PlayerMask == 0 {
-			return errors.New("store: invalid farm mutation")
-		}
+	hasFarmRows, err := validateFarmMutations(mutations)
+	if err != nil {
+		return err
+	}
+	// Task/mail-only records deliberately carry no farm rows. Their dedicated
+	// projector transaction below is the sole MySQL commit, avoiding an empty
+	// transaction and a second fsync for MailRead/MailDelete.
+	if !hasFarmRows {
+		return nil
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -58,7 +63,55 @@ func (s *Store) MaterializeFarmMutations(ctx context.Context, mutations []*farmv
 	return nil
 }
 
+func validateFarmMutations(mutations []*farmv1.FarmWriteMutation) (bool, error) {
+	hasFarmRows := false
+	for _, mutation := range mutations {
+		if mutation == nil {
+			return false, errors.New("store: invalid farm mutation")
+		}
+		hasRows := mutation.PlayerMask != 0 || len(mutation.Plots) != 0 || len(mutation.Items) != 0 ||
+			len(mutation.Codex) != 0 || len(mutation.Outbox) != 0
+		if mutation.Uid == 0 || hasRows && mutation.FarmSeq == 0 && !isLegacyZeroSequenceCrossVisitor(mutation) {
+			return false, fmt.Errorf(
+				"store: invalid farm mutation: uid=%d farm_seq=%d has_farm_rows=%t",
+				mutation.Uid,
+				mutation.FarmSeq,
+				hasRows,
+			)
+		}
+		if hasRows {
+			hasFarmRows = true
+		}
+	}
+	return hasFarmRows, nil
+}
+
+// Early cross-farm maintenance records changed only absolute visitor fields
+// before that path began advancing FarmSeq. They are safe to replay only onto
+// an equally unsequenced player row; all other farm-row mutations still
+// require a positive sequence.
+func isLegacyZeroSequenceCrossVisitor(mutation *farmv1.FarmWriteMutation) bool {
+	const legacyMask = outbox.PlayerEconomy | outbox.PlayerDaily | outbox.PlayerCrossPending
+	return mutation != nil &&
+		mutation.FarmSeq == 0 &&
+		mutation.PlayerMask == legacyMask &&
+		len(mutation.Plots) == 0 &&
+		len(mutation.Items) == 0 &&
+		len(mutation.Codex) == 0 &&
+		len(mutation.Outbox) == 0
+}
+
 func materializeMutationPlayers(ctx context.Context, tx *sql.Tx, mutations []*farmv1.FarmWriteMutation, now int64) error {
+	filtered := mutations[:0]
+	for _, mutation := range mutations {
+		if mutation.PlayerMask != 0 {
+			filtered = append(filtered, mutation)
+		}
+	}
+	mutations = filtered
+	if len(mutations) == 0 {
+		return nil
+	}
 	aliases := []string{"uid", "player_mask", "nickname", "unlocked_plots", "level_value", "exp_value", "coin",
 		"codex_bitmap", "daily_blob", "pet_blob", "cross_blob", "cross_receipt_blob", "farm_seq", "updated_at"}
 	rows := make([]string, 0, len(mutations))
@@ -94,7 +147,13 @@ func materializeMutationPlayers(ctx context.Context, tx *sql.Tx, mutations []*fa
 		fmt.Sprintf("p.cross_receipt_blob = IF((v.player_mask & %d) != 0, v.cross_receipt_blob, p.cross_receipt_blob)", outbox.PlayerCrossReceipts),
 		"p.farm_seq = v.farm_seq", "p.updated_at = v.updated_at",
 	}
-	query := "UPDATE player AS p JOIN (" + strings.Join(rows, " UNION ALL ") + ") AS v ON p.uid = v.uid SET " + strings.Join(sets, ", ")
+	// Targeted claim projection may materialize a UID ahead of the ordinary
+	// shard consumer. The consumer can subsequently replay the same absolute
+	// mutation from an already-read batch; only a strictly newer FarmSeq may
+	// replace player economy after a direct reward transaction.
+	query := "UPDATE player AS p JOIN (" + strings.Join(rows, " UNION ALL ") + ") AS v ON p.uid = v.uid SET " +
+		strings.Join(sets, ", ") +
+		" WHERE v.farm_seq > p.farm_seq OR (v.farm_seq = 0 AND p.farm_seq = 0)"
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("store: batch update mutation players: %w", err)
 	}

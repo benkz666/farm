@@ -3,12 +3,14 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"time"
 
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/rpcerr"
 	"farm/server/shared/store"
@@ -16,6 +18,13 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	socialStreamWorkerCount            = 64
+	socialStreamWorkerQueue            = 64
+	socialStreamBatchMax               = 64
+	socialStreamResponseCoalesceWindow = 50 * time.Microsecond
 )
 
 type invalidationHub struct {
@@ -81,6 +90,7 @@ type GRPCServer struct {
 	notifier     SocialNotifier
 	revoker      FarmAccessRevoker
 	hub          *invalidationHub
+	friendLists  *friendResponseCache
 }
 
 // SocialNotifier emits advisory refresh hints after social mutations.
@@ -123,7 +133,7 @@ func WithClock(now func() int64) ServerOption {
 // NewGRPCServer constructs Social's typed application boundary.
 func NewGRPCServer(friendStore store.FriendStore, options ...ServerOption) *GRPCServer {
 	server := &GRPCServer{
-		store: friendStore, hub: newInvalidationHub(),
+		store: friendStore, hub: newInvalidationHub(), friendLists: newFriendResponseCache(),
 		now: func() int64 { return time.Now().UnixMilli() },
 	}
 	for _, option := range options {
@@ -154,33 +164,19 @@ func (server *GRPCServer) ExecuteClientCommand(ctx context.Context, request *far
 		return socialError(request, errcode.BadRequest), nil
 	}
 	response := &publicv3.CommandResponse{}
+	var preparedPayload []byte
 	code := errcode.OK
 
 	switch envelope.Cmd {
 	case 400: // FriendList
-		rows, err := server.store.ListFriends(ctx, request.Uid)
+		cached, err := server.friendLists.get(ctx, request.Uid, func() (*cachedCommandResponse, error) {
+			return server.loadFriendListResponse(ctx, request.Uid)
+		})
 		if err != nil {
 			code = errcode.Internal
 			break
 		}
-		uids := make([]uint64, 0, len(rows))
-		for _, row := range rows {
-			uids = append(uids, row.UID)
-		}
-		hints := map[uint64]bool{}
-		if server.stealHints != nil && len(uids) != 0 {
-			hints, err = server.stealHints.GetStealHints(ctx, uids)
-			if err != nil {
-				code = errcode.Internal
-				break
-			}
-		}
-		response.Friends = make([]*publicv3.Friend, 0, len(rows))
-		for _, row := range rows {
-			response.Friends = append(response.Friends, &publicv3.Friend{
-				Uid: row.UID, Nickname: row.Nickname, HasStealable: hints[row.UID],
-			})
-		}
+		response, preparedPayload = cached.message, cached.prepared
 	case 402: // GenShareLink
 		if len(server.inviteSecret) == 0 {
 			code = errcode.Internal
@@ -220,7 +216,7 @@ func (server *GRPCServer) ExecuteClientCommand(ctx context.Context, request *far
 			code = errcode.Internal
 			break
 		}
-		server.hub.broadcast(request.Uid, peerUID)
+		server.broadcastFriendChange(request.Uid, peerUID)
 		if server.revoker != nil {
 			_ = server.revoker.RevokeFarmAccess(context.Background(), request.Uid, peerUID)
 			_ = server.revoker.RevokeFarmAccess(context.Background(), peerUID, request.Uid)
@@ -286,7 +282,140 @@ func (server *GRPCServer) ExecuteClientCommand(ctx context.Context, request *far
 		code = errcode.BadRequest
 	}
 
+	if request.PreferPrepared && code == errcode.OK {
+		if len(preparedPayload) == 0 {
+			if prepared, err := prepareCommandResponse(response); err == nil {
+				preparedPayload = prepared.prepared
+			}
+		}
+		if len(preparedPayload) != 0 {
+			return &farmv1.ClientCommandResponse{
+				Envelope: &publicv3.WireEnvelope{
+					Cmd: envelope.Cmd, ClientSeq: envelope.ClientSeq, Err: int32(errcode.OK),
+				},
+				PreparedPayload: preparedPayload,
+				PreparedField:   clientwire.PreparedCommandResponse,
+			}, nil
+		}
+	}
 	return &farmv1.ClientCommandResponse{Envelope: socialResponse(envelope, code, response)}, nil
+}
+
+// ExecuteBatchStream is the Gateway hot path for social commands. Requests
+// are partitioned by UID so mutations for one player retain order, while
+// unrelated users can execute concurrently and share one HTTP/2 stream.
+func (server *GRPCServer) ExecuteBatchStream(stream farmv1.SocialService_ExecuteBatchStreamServer) error {
+	type workItem struct{ request *farmv1.StreamExecuteRequest }
+	workers := make([]chan workItem, socialStreamWorkerCount)
+	completed := make(chan *farmv1.StreamExecuteResponse, socialStreamWorkerCount*2)
+	done := make(chan struct{})
+	var workersWG sync.WaitGroup
+	for index := range workers {
+		workers[index] = make(chan workItem, socialStreamWorkerQueue)
+		workersWG.Add(1)
+		go func(queue <-chan workItem) {
+			defer workersWG.Done()
+			for item := range queue {
+				request := item.request
+				response := &farmv1.StreamExecuteResponse{RequestId: request.GetRequestId()}
+				if request == nil || request.RequestId == 0 || request.Request == nil {
+					response.Response = socialError(request.GetRequest(), errcode.BadRequest)
+				} else {
+					result, err := server.ExecuteClientCommand(stream.Context(), request.Request)
+					if err != nil {
+						result = socialError(request.Request, errcode.Internal)
+					}
+					response.Response = result
+				}
+				select {
+				case completed <- response:
+				case <-done:
+					return
+				case <-stream.Context().Done():
+					return
+				}
+			}
+		}(workers[index])
+	}
+
+	sendErr := make(chan error, 1)
+	go func() {
+		defer close(done)
+		for {
+			first, ok := <-completed
+			if !ok {
+				sendErr <- nil
+				return
+			}
+			responses := []*farmv1.StreamExecuteResponse{first}
+			timer := time.NewTimer(socialStreamResponseCoalesceWindow)
+		collect:
+			for len(responses) < socialStreamBatchMax {
+				select {
+				case response, open := <-completed:
+					if !open {
+						break collect
+					}
+					responses = append(responses, response)
+				case <-timer.C:
+					break collect
+				case <-stream.Context().Done():
+					sendErr <- stream.Context().Err()
+					return
+				}
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			if err := stream.Send(&farmv1.StreamExecuteBatchResponse{Responses: responses}); err != nil {
+				sendErr <- err
+				return
+			}
+		}
+	}()
+
+	var receiveErr error
+receive:
+	for {
+		batch, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			receiveErr = err
+			break
+		}
+		if batch == nil || len(batch.Requests) == 0 || len(batch.Requests) > socialStreamBatchMax {
+			receiveErr = status.Error(codes.InvalidArgument, "bad_batch")
+			break
+		}
+		for _, request := range batch.Requests {
+			index := 0
+			if request != nil && request.Request != nil {
+				index = int(request.Request.Uid % uint64(len(workers)))
+			}
+			select {
+			case workers[index] <- workItem{request: request}:
+			case <-done:
+				break receive
+			case <-stream.Context().Done():
+				receiveErr = stream.Context().Err()
+				break receive
+			}
+		}
+	}
+	for _, worker := range workers {
+		close(worker)
+	}
+	workersWG.Wait()
+	close(completed)
+	if send := <-sendErr; receiveErr == nil {
+		receiveErr = send
+	}
+	return receiveErr
 }
 
 func socialError(request *farmv1.ClientCommandRequest, code errcode.Code) *farmv1.ClientCommandResponse {
@@ -314,6 +443,36 @@ func (server *GRPCServer) notify(uid uint64, kind string) {
 	}
 }
 
+func (server *GRPCServer) loadFriendListResponse(ctx context.Context, uid uint64) (*cachedCommandResponse, error) {
+	rows, err := server.store.ListFriends(ctx, uid)
+	if err != nil {
+		return nil, err
+	}
+	uids := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		uids = append(uids, row.UID)
+	}
+	hints := map[uint64]bool{}
+	if server.stealHints != nil && len(uids) != 0 {
+		hints, err = server.stealHints.GetStealHints(ctx, uids)
+		if err != nil {
+			return nil, err
+		}
+	}
+	response := &publicv3.CommandResponse{Friends: make([]*publicv3.Friend, 0, len(rows))}
+	for _, row := range rows {
+		response.Friends = append(response.Friends, &publicv3.Friend{
+			Uid: row.UID, Nickname: row.Nickname, HasStealable: hints[row.UID],
+		})
+	}
+	return prepareCommandResponse(response)
+}
+
+func (server *GRPCServer) broadcastFriendChange(uid, peerUID uint64) {
+	server.friendLists.invalidate(uid, peerUID)
+	server.hub.broadcast(uid, peerUID)
+}
+
 func (server *GRPCServer) addFriends(ctx context.Context, uid, peerUID uint64) errcode.Code {
 	if uid == 0 || peerUID == 0 {
 		return errcode.BadRequest
@@ -335,7 +494,7 @@ func (server *GRPCServer) addFriends(ctx context.Context, uid, peerUID uint64) e
 			return errcode.Internal
 		}
 	}
-	server.hub.broadcast(uid, peerUID)
+	server.broadcastFriendChange(uid, peerUID)
 	return errcode.OK
 }
 
@@ -364,7 +523,7 @@ func (server *GRPCServer) createFriendRequest(ctx context.Context, uid, peerUID 
 			return errcode.Internal
 		}
 	}
-	server.hub.broadcast(uid, peerUID)
+	server.broadcastFriendChange(uid, peerUID)
 	return errcode.OK
 }
 
@@ -388,7 +547,7 @@ func (server *GRPCServer) acceptFriendRequest(ctx context.Context, uid, fromUID 
 			return errcode.Internal
 		}
 	}
-	server.hub.broadcast(uid, fromUID)
+	server.broadcastFriendChange(uid, fromUID)
 	return errcode.OK
 }
 
@@ -399,7 +558,7 @@ func (server *GRPCServer) StartDistributedInvalidations(ctx context.Context) {
 	if !ok {
 		return
 	}
-	go source.WatchFriendInvalidations(ctx, server.hub.broadcast)
+	go source.WatchFriendInvalidations(ctx, server.broadcastFriendChange)
 }
 
 func (server *GRPCServer) AreFriends(ctx context.Context, request *farmv1.AreFriendsRequest) (*farmv1.AreFriendsResponse, error) {
@@ -416,7 +575,7 @@ func (server *GRPCServer) AreFriends(ctx context.Context, request *farmv1.AreFri
 func (server *GRPCServer) AddFriends(ctx context.Context, request *farmv1.PairRequest) (*farmv1.Empty, error) {
 	resp, err := server.pairMutation(ctx, request, server.store.AddFriends)
 	if err == nil {
-		server.hub.broadcast(request.Uid, request.PeerUid)
+		server.broadcastFriendChange(request.Uid, request.PeerUid)
 	}
 	return resp, err
 }
@@ -424,7 +583,7 @@ func (server *GRPCServer) AddFriends(ctx context.Context, request *farmv1.PairRe
 func (server *GRPCServer) RemoveFriends(ctx context.Context, request *farmv1.PairRequest) (*farmv1.Empty, error) {
 	resp, err := server.pairMutation(ctx, request, server.store.RemoveFriends)
 	if err == nil {
-		server.hub.broadcast(request.Uid, request.PeerUid)
+		server.broadcastFriendChange(request.Uid, request.PeerUid)
 	}
 	return resp, err
 }
@@ -471,7 +630,7 @@ func (server *GRPCServer) CreateFriendRequest(ctx context.Context, request *farm
 	if err == nil {
 		// A reverse pending request implicitly accepts and creates the relation.
 		// Broadcasting for the ordinary pending case is a harmless invalidation.
-		server.hub.broadcast(request.Uid, request.PeerUid)
+		server.broadcastFriendChange(request.Uid, request.PeerUid)
 	}
 	return resp, err
 }
@@ -498,7 +657,7 @@ func (server *GRPCServer) ListIncomingFriendRequests(ctx context.Context, reques
 func (server *GRPCServer) AcceptFriendRequest(ctx context.Context, request *farmv1.PairRequest) (*farmv1.Empty, error) {
 	resp, err := server.pairMutation(ctx, request, server.store.AcceptFriendRequest)
 	if err == nil {
-		server.hub.broadcast(request.Uid, request.PeerUid)
+		server.broadcastFriendChange(request.Uid, request.PeerUid)
 	}
 	return resp, err
 }

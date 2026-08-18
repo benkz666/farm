@@ -17,6 +17,7 @@ import (
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/clientjson"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/grpcx"
@@ -268,8 +269,7 @@ func (g *Gateway) executeFarmRPC(ctx context.Context, routeUID uint64, request *
 	if err != nil {
 		return nil, err
 	}
-	if response == nil || response.Envelope == nil || response.Envelope.Cmd != request.Envelope.Cmd ||
-		response.Envelope.ClientSeq != request.Envelope.ClientSeq {
+	if !validDownstreamResponse(request, response) {
 		return nil, errors.New("gateway: malformed Farm response")
 	}
 	return response, nil
@@ -283,16 +283,31 @@ func (g *Gateway) executeSocialRPC(ctx context.Context, request *farmv1.ClientCo
 	if err != nil {
 		return nil, err
 	}
-	if response == nil || response.Envelope == nil || response.Envelope.Cmd != request.Envelope.Cmd ||
-		response.Envelope.ClientSeq != request.Envelope.ClientSeq {
+	if !validDownstreamResponse(request, response) {
 		return nil, errors.New("gateway: malformed Social response")
 	}
 	return response, nil
 }
 
+func validDownstreamResponse(request *farmv1.ClientCommandRequest, response *farmv1.ClientCommandResponse) bool {
+	if request == nil || request.Envelope == nil || response == nil || response.Envelope == nil ||
+		response.Envelope.Cmd != request.Envelope.Cmd ||
+		response.Envelope.ClientSeq != request.Envelope.ClientSeq {
+		return false
+	}
+	hasPrepared := len(response.PreparedPayload) != 0 || response.PreparedField != 0
+	if !hasPrepared {
+		return response.Envelope.Payload != nil
+	}
+	return request.PreferPrepared && response.Envelope.Err == int32(errcode.OK) &&
+		response.Envelope.Payload == nil && len(response.PreparedPayload) != 0 &&
+		clientwire.IsPreparedResponseFieldForCommand(response.PreparedField, response.Envelope.Cmd)
+}
+
 func (g *Gateway) clientCommandRequest(connection *wsConnection, envelope *publicv3.WireEnvelope, routeUID uint64) *farmv1.ClientCommandRequest {
 	request := &farmv1.ClientCommandRequest{
 		Uid: connection.uid, RouteUid: routeUID, ActiveFarmUid: connection.currentRoom(), Envelope: envelope,
+		PreferPrepared: true,
 	}
 	if connection.id != 0 && g.gatewayID != "" {
 		request.Originator = &farmv1.ConnRef{ConnId: connection.id, GatewayId: g.gatewayID}

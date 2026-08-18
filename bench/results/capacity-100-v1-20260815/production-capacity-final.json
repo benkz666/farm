@@ -1,0 +1,246 @@
+{
+  "baseline": {
+    "note": "MySQL/Redis counts are writable primary shards; no disaster-recovery replicas are included.",
+    "requested_cpu_cores": 1519.0,
+    "requested_memory_gib": 2159.0,
+    "services": {
+      "farm": {
+        "baseline_instances_or_primary_shards": 431,
+        "binding_constraints": [
+          "actors"
+        ],
+        "constraints": {
+          "actors": 431,
+          "cpu": 290,
+          "memory": 114,
+          "validated_business_density": 23
+        },
+        "cross_topology_cpu_cores_per_1000_qps": 0.5275621636049,
+        "fixed_cpu_cores_per_instance": 0.0166655556439279,
+        "fixed_memory_mib_per_instance": 25.3984375,
+        "horizontal_efficiency": 0.9,
+        "instance_spec": {
+          "cpu_cores": 1,
+          "memory_gib": 2
+        },
+        "measured_cpu_cores_per_1000_qps": 0.37759777355971647,
+        "planning_cpu_cores_per_1000_qps": 0.5275621636049,
+        "planning_memory_mib_per_1000_qps": 32.09765625,
+        "requested_cpu_cores": 431.0,
+        "requested_memory_gib": 862.0,
+        "state_cpu_cores_per_unit": 3.7669425095510427e-07,
+        "state_memory_mib_per_unit": 0.02458828125,
+        "state_units": 5419999.999999996,
+        "usable_variable_cpu_cores_per_instance": 0.6150009999204649,
+        "usable_variable_memory_mib_per_instance": 1267.38140625,
+        "validated_business_qps_density_per_instance": 15000.0,
+        "variable_cpu_cores": 177.89573737514334,
+        "variable_memory_mib": 143967.7031249999
+      },
+      "gateway": {
+        "baseline_instances_or_primary_shards": 353,
+        "binding_constraints": [
+          "connections"
+        ],
+        "constraints": {
+          "connections": 353,
+          "cpu": 114,
+          "memory": 163,
+          "validated_business_density": 67
+        },
+        "cross_topology_cpu_cores_per_1000_qps": 0.3611594161892515,
+        "fixed_cpu_cores_per_instance": 0.0005925530895618808,
+        "fixed_memory_mib_per_instance": 8.963541666666666,
+        "horizontal_efficiency": 0.9,
+        "instance_spec": {
+          "cpu_cores": 2,
+          "memory_gib": 2
+        },
+        "measured_cpu_cores_per_1000_qps": 0.41011727436793893,
+        "planning_cpu_cores_per_1000_qps": 0.41011727436793893,
+        "planning_memory_mib_per_1000_qps": 68.19010416666667,
+        "requested_cpu_cores": 706.0,
+        "requested_memory_gib": 706.0,
+        "state_cpu_cores_per_unit": 1.5024868535504264e-06,
+        "state_memory_mib_per_unit": 0.04632578125,
+        "state_units": 4000000.0,
+        "usable_variable_cpu_cores_per_instance": 1.2594667022193944,
+        "usable_variable_memory_mib_per_instance": 1282.1728125,
+        "validated_business_qps_density_per_instance": 5000.0,
+        "variable_cpu_cores": 142.71570553684802,
+        "variable_memory_mib": 208033.15972222222
+      },
+      "mysql": {
+        "baseline_instances_or_primary_shards": 29,
+        "binding_constraints": [
+          "cpu"
+        ],
+        "constraints": {
+          "cpu": 29,
+          "disk": 1,
+          "memory": 1,
+          "validated_business_density": 23
+        },
+        "cross_topology_cpu_cores_per_1000_qps": 0.3999681302788193,
+        "fixed_cpu_cores_per_instance": 0.017111490733753648,
+        "fixed_memory_mib_per_instance": 10240.0,
+        "horizontal_efficiency": 0.85,
+        "instance_spec": {
+          "buffer_pool_gib": 8,
+          "cpu_cores": 8,
+          "memory_gib": 16,
+          "usable_disk_gib": 1024
+        },
+        "measured_cpu_cores_per_1000_qps": 0.32706380011102415,
+        "planning_cpu_cores_per_1000_qps": 0.3999681302788193,
+        "planning_memory_mib_per_1000_qps": 1.3140625,
+        "requested_cpu_cores": 232.0,
+        "requested_memory_gib": 464.0,
+        "state_cpu_cores_per_unit": 0.0,
+        "state_memory_mib_per_unit": 0.0,
+        "state_units": 0.0,
+        "usable_variable_cpu_cores_per_instance": 4.745455232876309,
+        "usable_variable_memory_mib_per_instance": 1044.4799999999993,
+        "validated_business_qps_density_per_instance": 15000.0,
+        "variable_cpu_cores": 133.32271009293976,
+        "variable_memory_mib": 438.02083333333326
+      },
+      "redis": {
+        "baseline_instances_or_primary_shards": 26,
+        "binding_constraints": [
+          "cpu"
+        ],
+        "constraints": {
+          "cpu": 26,
+          "dataset": 2,
+          "memory": 3,
+          "validated_business_density": 23
+        },
+        "cross_topology_cpu_cores_per_1000_qps": 0.16887149384585842,
+        "fixed_cpu_cores_per_instance": 0.018527351114292188,
+        "fixed_memory_mib_per_instance": 79.14453125,
+        "horizontal_efficiency": 0.85,
+        "instance_spec": {
+          "cpu_cores": 4,
+          "maxmemory_gib": 2,
+          "memory_gib": 4
+        },
+        "measured_cpu_cores_per_1000_qps": 0.17537726660563357,
+        "planning_cpu_cores_per_1000_qps": 0.17537726660563357,
+        "planning_memory_mib_per_1000_qps": 4.71875,
+        "requested_cpu_cores": 104.0,
+        "requested_memory_gib": 104.0,
+        "state_cpu_cores_per_unit": 1.6191568703749596e-07,
+        "state_memory_mib_per_unit": 0.0002390625,
+        "state_units": 4000000.0,
+        "usable_variable_cpu_cores_per_instance": 2.3642517515528514,
+        "usable_variable_memory_mib_per_instance": 2369.8471484375,
+        "validated_business_qps_density_per_instance": 15000.0,
+        "variable_cpu_cores": 59.1067516166945,
+        "variable_memory_mib": 4815.922278857097
+      },
+      "social": {
+        "baseline_instances_or_primary_shards": 23,
+        "binding_constraints": [
+          "cpu",
+          "validated_business_density"
+        ],
+        "constraints": {
+          "cpu": 23,
+          "memory": 2,
+          "validated_business_density": 23
+        },
+        "cross_topology_cpu_cores_per_1000_qps": 0.08422233472947104,
+        "fixed_cpu_cores_per_instance": 0.0008888296343428212,
+        "fixed_memory_mib_per_instance": 32.47265625,
+        "horizontal_efficiency": 0.9,
+        "instance_spec": {
+          "cpu_cores": 2,
+          "memory_gib": 1
+        },
+        "measured_cpu_cores_per_1000_qps": 0.07216605636560036,
+        "planning_cpu_cores_per_1000_qps": 0.08422233472947104,
+        "planning_memory_mib_per_1000_qps": 2.4713541666666665,
+        "requested_cpu_cores": 46.0,
+        "requested_memory_gib": 23.0,
+        "state_cpu_cores_per_unit": 0.0,
+        "state_memory_mib_per_unit": 0.0,
+        "state_units": 0.0,
+        "usable_variable_cpu_cores_per_instance": 1.2592000533290915,
+        "usable_variable_memory_mib_per_instance": 615.894609375,
+        "validated_business_qps_density_per_instance": 15000.0,
+        "variable_cpu_cores": 28.074111576490342,
+        "variable_memory_mib": 823.7847222222222
+      }
+    }
+  },
+  "disaster_recovery": {
+    "failure_model": "three availability zones, continue carrying baseline peak after any one zone is lost",
+    "requested_cpu_cores": 2785.0,
+    "requested_memory_gib": 4093.0,
+    "services": {
+      "farm": {
+        "baseline_instances_or_primary_shards": 431,
+        "disaster_recovery_instances": 647,
+        "interpretation": "three-zone placement with one-zone-loss capacity",
+        "requested_cpu_cores": 647.0,
+        "requested_memory_gib": 1294.0
+      },
+      "gateway": {
+        "baseline_instances_or_primary_shards": 353,
+        "disaster_recovery_instances": 530,
+        "interpretation": "three-zone placement with one-zone-loss capacity",
+        "requested_cpu_cores": 1060.0,
+        "requested_memory_gib": 1060.0
+      },
+      "mysql": {
+        "baseline_instances_or_primary_shards": 29,
+        "disaster_recovery_instances": 87,
+        "interpretation": "29 primary shards x 3 copies",
+        "requested_cpu_cores": 696.0,
+        "requested_memory_gib": 1392.0
+      },
+      "redis": {
+        "baseline_instances_or_primary_shards": 26,
+        "disaster_recovery_instances": 78,
+        "interpretation": "26 primary shards x 3 copies",
+        "requested_cpu_cores": 312.0,
+        "requested_memory_gib": 312.0
+      },
+      "social": {
+        "baseline_instances_or_primary_shards": 23,
+        "disaster_recovery_instances": 35,
+        "interpretation": "three-zone placement with one-zone-loss capacity",
+        "requested_cpu_cores": 70.0,
+        "requested_memory_gib": 35.0
+      }
+    }
+  },
+  "limitations": [
+    "三千万注册账号只是用DAU要求代入的磁盘下界，正式规划必须替换为实际注册账号预测。",
+    "Gateway单实例18000连接是已验证下界，不是破坏性连接上限。",
+    "当前没有数百实例环境，水平扩展效率是公开的保守假设。",
+    "MySQL和Redis数量代表可写主分片，普通副本不能增加主节点写容量。",
+    "候选档采用一轮30秒接口认证，低权重接口与偶发长尾的统计置信度低于多轮认证。"
+  ],
+  "method": "independent CPU, memory, connection/Actor, validated-density and data constraints",
+  "sensitivity": {
+    "mysql_disk_bytes_per_additional_registered_account_before_expansion": 5828.950900741787,
+    "redis_dataset_bytes_per_additional_active_account_before_expansion": 340.31181561285763
+  },
+  "sources": {
+    "cost_summary": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/capacity-cost-summary-final.json",
+    "dataset_summary": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/static-dataset-summary-final.json",
+    "plan": "/data/workspace/farm/bench/model/capacity-production-plan-v1.json",
+    "topology_comparison": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-comparison-final.json"
+  },
+  "workload": {
+    "farm_actor_working_set": 5419999.999999996,
+    "mysql_disk_bytes_with_expansion": 349737054044.50726,
+    "peak_business_qps": 333333.3333333333,
+    "peak_connections": 4000000.0,
+    "redis_active_account_upper_bound": 5419999.999999996,
+    "redis_dataset_bytes_with_expansion": 2397837052.808193,
+    "registered_accounts_lower_bound": 30000000.0
+  }
+}

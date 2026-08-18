@@ -41,6 +41,10 @@ spec:
           imagePullPolicy: Never
           command: ["/bin/sh", "-c"]
           args: ["while true; do sleep 3600; done"]
+          env:
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
           securityContext:
             runAsUser: 0
             runAsGroup: 0

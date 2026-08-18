@@ -1,0 +1,761 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "screening",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.024056666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 27.278116,
+          "p99_ms": 54.940581,
+          "pass": true,
+          "sent": 7217,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7217,
+      "succeeded": 7217,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.278116,
+      "worst_p99_ms": 54.940581
+    },
+    "clear": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02598,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 26.296881,
+          "p99_ms": 55.517637,
+          "pass": true,
+          "sent": 7794,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7794,
+      "succeeded": 7794,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 26.296881,
+      "worst_p99_ms": 55.517637
+    },
+    "codex-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02208,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 1.720127,
+          "p99_ms": 28.876616,
+          "pass": true,
+          "sent": 6624,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6624,
+      "succeeded": 6624,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.720127,
+      "worst_p99_ms": 28.876616
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05056,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 1.924162,
+          "p99_ms": 28.235041,
+          "pass": true,
+          "sent": 15168,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 15168,
+      "succeeded": 15168,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.924162,
+      "worst_p99_ms": 28.235041
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.010136666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 1.916232,
+          "p99_ms": 27.023122,
+          "pass": true,
+          "sent": 3041,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3041,
+      "succeeded": 3041,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.916232,
+      "worst_p99_ms": 27.023122
+    },
+    "fertilize": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03142333333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.031,
+          "p90_ms": 27.272657,
+          "p99_ms": 57.582914,
+          "pass": true,
+          "sent": 9427,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 9427,
+      "succeeded": 9427,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.272657,
+      "worst_p99_ms": 57.582914
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.055683333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 17.282747,
+          "p99_ms": 41.07188,
+          "pass": true,
+          "sent": 16705,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 16705,
+      "succeeded": 16705,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 17.282747,
+      "worst_p99_ms": 41.07188
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.012793333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.489183,
+          "p99_ms": 25.95088,
+          "pass": true,
+          "sent": 3838,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3838,
+      "succeeded": 3838,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.489183,
+      "worst_p99_ms": 25.95088
+    },
+    "harvest": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05018333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.05,
+          "p90_ms": 26.636962,
+          "p99_ms": 56.511192,
+          "pass": true,
+          "sent": 15055,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 15055,
+      "succeeded": 15055,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 26.636962,
+      "worst_p99_ms": 56.511192
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04646,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 1.912402,
+          "p99_ms": 23.946209,
+          "pass": true,
+          "sent": 13938,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 13938,
+      "succeeded": 13938,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.912402,
+      "worst_p99_ms": 23.946209
+    },
+    "mail-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.011966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 31.276746,
+          "p99_ms": 67.653813,
+          "pass": true,
+          "sent": 3590,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 3590,
+      "succeeded": 3590,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 31.276746,
+      "worst_p99_ms": 67.653813
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0019733333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 32.770357,
+          "p99_ms": 72.788943,
+          "pass": true,
+          "sent": 592,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 592,
+      "succeeded": 592,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 32.770357,
+      "worst_p99_ms": 72.788943
+    },
+    "mail-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04521666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 27.454671,
+          "p99_ms": 58.730256,
+          "pass": true,
+          "sent": 13565,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 13565,
+      "succeeded": 13565,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.454671,
+      "worst_p99_ms": 58.730256
+    },
+    "mail-read": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.020773333333333335,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 28.896955,
+          "p99_ms": 65.006039,
+          "pass": true,
+          "sent": 6232,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6232,
+      "succeeded": 6232,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 28.896955,
+      "worst_p99_ms": 65.006039
+    },
+    "pest-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01687666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.017,
+          "p90_ms": 36.615371,
+          "p99_ms": 77.505795,
+          "pass": true,
+          "sent": 5063,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5063,
+      "succeeded": 5063,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 36.615371,
+      "worst_p99_ms": 77.505795
+    },
+    "pest-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.026533333333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 25.622387,
+          "p99_ms": 56.791185,
+          "pass": true,
+          "sent": 7960,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7960,
+      "succeeded": 7960,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 25.622387,
+      "worst_p99_ms": 56.791185
+    },
+    "pet-activate": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.00198,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 28.007297,
+          "p99_ms": 50.725407,
+          "pass": true,
+          "sent": 594,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 594,
+      "succeeded": 594,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 28.007297,
+      "worst_p99_ms": 50.725407
+    },
+    "pet-feed": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.019146666666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 27.299046,
+          "p99_ms": 55.920187,
+          "pass": true,
+          "sent": 5744,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5744,
+      "succeeded": 5744,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.299046,
+      "worst_p99_ms": 55.920187
+    },
+    "pet-status": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023966666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 1.754086,
+          "p99_ms": 24.451956,
+          "pass": true,
+          "sent": 7190,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7190,
+      "succeeded": 7190,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.754086,
+      "worst_p99_ms": 24.451956
+    },
+    "plant": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04248,
+          "error_rate": 0.0,
+          "expected_weight": 0.043,
+          "p90_ms": 26.681781,
+          "p99_ms": 54.440133,
+          "pass": true,
+          "sent": 12744,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12744,
+      "succeeded": 12744,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 26.681781,
+      "worst_p99_ms": 54.440133
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.027183333333333334,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 1.915423,
+          "p99_ms": 25.484341,
+          "pass": true,
+          "sent": 8155,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 8155,
+      "succeeded": 8155,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.915423,
+      "worst_p99_ms": 25.484341
+    },
+    "sell": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01894,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 27.206357,
+          "p99_ms": 55.416269,
+          "pass": true,
+          "sent": 5682,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5682,
+      "succeeded": 5682,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.206357,
+      "worst_p99_ms": 55.416269
+    },
+    "steal": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04238,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 38.599841,
+          "p99_ms": 78.668566,
+          "pass": true,
+          "sent": 12714,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12714,
+      "succeeded": 12714,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 38.599841,
+      "worst_p99_ms": 78.668566
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.038446666666666664,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 4.621784,
+          "p99_ms": 36.395027,
+          "pass": true,
+          "sent": 11534,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 11534,
+      "succeeded": 11534,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 4.621784,
+      "worst_p99_ms": 36.395027
+    },
+    "task-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02375,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 27.243237,
+          "p99_ms": 55.296063,
+          "pass": true,
+          "sent": 7125,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7125,
+      "succeeded": 7125,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.243237,
+      "worst_p99_ms": 55.296063
+    },
+    "task-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.09593666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 1.826904,
+          "p99_ms": 24.050186,
+          "pass": true,
+          "sent": 28781,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 28781,
+      "succeeded": 28781,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.826904,
+      "worst_p99_ms": 24.050186
+    },
+    "till": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02629,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 27.224688,
+          "p99_ms": 54.367046,
+          "pass": true,
+          "sent": 7887,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7887,
+      "succeeded": 7887,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.224688,
+      "worst_p99_ms": 54.367046
+    },
+    "water-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04247,
+          "error_rate": 0.0,
+          "expected_weight": 0.042,
+          "p90_ms": 38.60797,
+          "p99_ms": 78.552258,
+          "pass": true,
+          "sent": 12741,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12741,
+      "succeeded": 12741,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 38.60797,
+      "worst_p99_ms": 78.552258
+    },
+    "water-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.08513666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.085,
+          "p90_ms": 25.923929,
+          "p99_ms": 55.291383,
+          "pass": true,
+          "sent": 25541,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 25541,
+      "succeeded": 25541,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 25.923929,
+      "worst_p99_ms": 55.291383
+    },
+    "weed-cross": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02606,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 38.728358,
+          "p99_ms": 81.420698,
+          "pass": true,
+          "sent": 7818,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 7818,
+      "succeeded": 7818,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 38.728358,
+      "worst_p99_ms": 81.420698
+    },
+    "weed-local": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03313666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.033,
+          "p90_ms": 27.252676,
+          "p99_ms": 54.852963,
+          "pass": true,
+          "sent": 9941,
+          "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 9941,
+      "succeeded": 9941,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 27.252676,
+      "worst_p99_ms": 54.852963
+    }
+  },
+  "per_shard_target_qps": null,
+  "rounds": [
+    {
+      "client_drain_milliseconds": 107,
+      "connection_keepalive_failures": 0,
+      "delivery_ratio": 1.0,
+      "failed_operations": [],
+      "missing_operations": [],
+      "pass": true,
+      "resident_actor_refresh_failures": 0,
+      "source": "/data/workspace/farm/bench/results/actor-async-v1-10000.json",
+      "target_qps": 10000,
+      "technical_error_rate": 0.0,
+      "unexpected_operations": []
+    }
+  ],
+  "shards": 1,
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 500,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 10000,
+  "verdict": "pass"
+}

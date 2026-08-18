@@ -11,13 +11,55 @@ import (
 )
 
 func TestValidFixtureProfile(t *testing.T) {
-	for _, profile := range []string{"default", "water", "water-visitor", "harvest", "sell", "hot-economy", "steal"} {
+	for _, profile := range []string{"default", "water", "water-visitor", "harvest", "sell", "hot-economy", "steal", "mixed"} {
 		if !validFixtureProfile(profile) {
 			t.Fatalf("profile %q should be valid", profile)
 		}
 	}
 	if validFixtureProfile("unknown") {
 		t.Fatal("unknown profile should be rejected")
+	}
+}
+
+func TestAssignMixedPeersKeepsMutationPoolsDisjoint(t *testing.T) {
+	fixtures := make([]fixture, 10)
+	for index := range fixtures {
+		fixtures[index].UID = string(rune('a' + index))
+		fixtures[index].Username = string(rune('A' + index))
+	}
+	assignMixedPeers(fixtures)
+	localEnd := len(fixtures) * 3 / 5
+	for index, item := range fixtures {
+		peerIndex := -1
+		for candidate := range fixtures {
+			if fixtures[candidate].UID == item.PeerUID {
+				peerIndex = candidate
+				break
+			}
+		}
+		if peerIndex < 0 {
+			t.Fatalf("fixture %d has unknown peer %q", index, item.PeerUID)
+		}
+		if (index < localEnd) != (peerIndex < localEnd) {
+			t.Fatalf("fixture %d crosses local/visitor pools to %d", index, peerIndex)
+		}
+		if peerIndex == index {
+			t.Fatalf("fixture %d points to itself", index)
+		}
+	}
+}
+
+func TestApplyMixedAuxiliaryMetadataRefreshesReusableFixture(t *testing.T) {
+	item := fixture{TaskID: 99, TaskIDs: []int{99}, MailID: "legacy"}
+	applyMixedAuxiliaryMetadata(&item, []int{4, 7, 9}, "101", "102", "103")
+	if item.TaskID != 4 || len(item.TaskIDs) != 3 || item.TaskIDs[1] != 7 {
+		t.Fatalf("task metadata = id:%d ids:%v", item.TaskID, item.TaskIDs)
+	}
+	if item.MailReadID != "101" || item.MailClaimID != "102" || item.MailDeleteID != "103" {
+		t.Fatalf("mail metadata = read:%q claim:%q delete:%q", item.MailReadID, item.MailClaimID, item.MailDeleteID)
+	}
+	if item.MailID != "legacy" {
+		t.Fatalf("legacy mail id = %q, want preserved", item.MailID)
 	}
 }
 

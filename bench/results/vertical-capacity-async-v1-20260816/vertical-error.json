@@ -1,0 +1,362 @@
+{
+  "method": {
+    "cpu": "compare C-A at 1x with (C-A)/2 at 2x",
+    "memory": "compare C-A at 1x with (C-A)/2 at 2x using P95 working set",
+    "planning": "take max(r1,r2) only after the error threshold passes",
+    "relative_error": "abs(r1-r2)/max(r1,r2)"
+  },
+  "next_step_allowed": false,
+  "resource_linearity_pass": false,
+  "services": {
+    "farm": {
+      "cpu": {
+        "metric": "cpu_cores",
+        "one_unit": {
+          "business": 0.8675740605716877,
+          "state": 0.000617748757205985,
+          "total_variable": 0.8681918093288937
+        },
+        "pass": true,
+        "planned_unit_cost": 0.9440486855583532,
+        "relative_error": 0.08035271632690667,
+        "relative_error_percent": 8.035271632690668,
+        "threshold_percent": 15.0,
+        "two_unit_normalized": {
+          "business": 0.9379435010768704,
+          "state": 0.006105184481482805,
+          "total_variable": 0.9440486855583532
+        }
+      },
+      "memory": {
+        "metric": "memory_mib",
+        "one_unit": {
+          "business": 376.3515625,
+          "state": 1127.87109375,
+          "total_variable": 1504.22265625
+        },
+        "pass": true,
+        "planned_unit_cost": 1514.373046875,
+        "relative_error": 0.006702701587264738,
+        "relative_error_percent": 0.6702701587264738,
+        "threshold_percent": 20.0,
+        "two_unit_normalized": {
+          "business": 414.451171875,
+          "state": 1099.921875,
+          "total_variable": 1514.373046875
+        }
+      },
+      "raw_windows": {
+        "one_unit": {
+          "A": {
+            "cpu_cores": 0.009998666861582307,
+            "memory_mib": 16.30078125
+          },
+          "B": {
+            "cpu_cores": 0.010616415618788292,
+            "memory_mib": 1144.171875
+          },
+          "C": {
+            "cpu_cores": 0.8781904761904761,
+            "memory_mib": 1520.5234375
+          }
+        },
+        "two_unit": {
+          "A": {
+            "cpu_cores": 0.015997866978531696,
+            "memory_mib": 23.78515625
+          },
+          "B": {
+            "cpu_cores": 0.028208235941497305,
+            "memory_mib": 2223.62890625
+          },
+          "C": {
+            "cpu_cores": 1.904095238095238,
+            "memory_mib": 3052.53125
+          }
+        }
+      }
+    },
+    "gateway": {
+      "cpu": {
+        "metric": "cpu_cores",
+        "one_unit": {
+          "business": 0.7532434920622549,
+          "state": 0.11113754919459197,
+          "total_variable": 0.8643810412568469
+        },
+        "pass": true,
+        "planned_unit_cost": 0.9297142857142859,
+        "relative_error": 0.07027238955164002,
+        "relative_error_percent": 7.027238955164002,
+        "threshold_percent": 15.0,
+        "two_unit_normalized": {
+          "business": 0.775841124166746,
+          "state": 0.15387316154753988,
+          "total_variable": 0.9297142857142859
+        }
+      },
+      "memory": {
+        "metric": "memory_mib",
+        "one_unit": {
+          "business": 662.11328125,
+          "state": 2000.4765625,
+          "total_variable": 2662.58984375
+        },
+        "pass": true,
+        "planned_unit_cost": 2662.58984375,
+        "relative_error": 0.0843912250613609,
+        "relative_error_percent": 8.43912250613609,
+        "threshold_percent": 20.0,
+        "two_unit_normalized": {
+          "business": 517.83984375,
+          "state": 1920.05078125,
+          "total_variable": 2437.890625
+        }
+      },
+      "raw_windows": {
+        "one_unit": {
+          "A": {
+            "cpu_cores": 0.0006665777907721533,
+            "memory_mib": 8.04296875
+          },
+          "B": {
+            "cpu_cores": 0.11180412698536413,
+            "memory_mib": 2008.51953125
+          },
+          "C": {
+            "cpu_cores": 0.8650476190476191,
+            "memory_mib": 2670.6328125
+          }
+        },
+        "two_unit": {
+          "A": {
+            "cpu_cores": 0.0,
+            "memory_mib": 11.1640625
+          },
+          "B": {
+            "cpu_cores": 0.30774632309507977,
+            "memory_mib": 3851.265625
+          },
+          "C": {
+            "cpu_cores": 1.8594285714285719,
+            "memory_mib": 4886.9453125
+          }
+        }
+      }
+    },
+    "mysql": {
+      "cpu": {
+        "metric": "cpu_cores",
+        "one_unit": {
+          "business": 0.3281254046538565,
+          "state": 0.0,
+          "total_variable": 0.32760963863375064
+        },
+        "pass": true,
+        "planned_unit_cost": 0.32805001236742987,
+        "relative_error": 0.0013423981621009213,
+        "relative_error_percent": 0.13423981621009212,
+        "threshold_percent": 15.0,
+        "two_unit_normalized": {
+          "business": 0.32701736813174853,
+          "state": 0.001032644235681314,
+          "total_variable": 0.32805001236742987
+        }
+      },
+      "memory": {
+        "metric": "memory_mib",
+        "one_unit": {
+          "business": 22.78515625,
+          "state": 4.83203125,
+          "total_variable": 27.6171875
+        },
+        "pass": false,
+        "planned_unit_cost": 110.083984375,
+        "relative_error": 0.7491261998119334,
+        "relative_error_percent": 74.91261998119334,
+        "threshold_percent": 20.0,
+        "two_unit_normalized": {
+          "business": 105.375,
+          "state": 4.708984375,
+          "total_variable": 110.083984375
+        }
+      },
+      "raw_windows": {
+        "one_unit": {
+          "A": {
+            "cpu_cores": 0.01738448904007598,
+            "memory_mib": 2191.7890625
+          },
+          "B": {
+            "cpu_cores": 0.016868723019970163,
+            "memory_mib": 2196.62109375
+          },
+          "C": {
+            "cpu_cores": 0.34499412767382664,
+            "memory_mib": 2219.40625
+          }
+        },
+        "two_unit": {
+          "A": {
+            "cpu_cores": 0.014794016267233655,
+            "memory_mib": 1616.6171875
+          },
+          "B": {
+            "cpu_cores": 0.016859304738596283,
+            "memory_mib": 1626.03515625
+          },
+          "C": {
+            "cpu_cores": 0.6708940410020934,
+            "memory_mib": 1836.78515625
+          }
+        }
+      }
+    },
+    "redis": {
+      "cpu": {
+        "metric": "cpu_cores",
+        "one_unit": {
+          "business": 0.3601296709322751,
+          "state": 0.03093006003873016,
+          "total_variable": 0.39105973097100527
+        },
+        "pass": true,
+        "planned_unit_cost": 0.44270598196931765,
+        "relative_error": 0.11666038658111423,
+        "relative_error_percent": 11.666038658111423,
+        "threshold_percent": 15.0,
+        "two_unit_normalized": {
+          "business": 0.37880634383812156,
+          "state": 0.06389963813119608,
+          "total_variable": 0.44270598196931765
+        }
+      },
+      "memory": {
+        "metric": "memory_mib",
+        "one_unit": {
+          "business": 30.2265625,
+          "state": 8.6015625,
+          "total_variable": 38.828125
+        },
+        "pass": false,
+        "planned_unit_cost": 38.828125,
+        "relative_error": 0.4543762575452716,
+        "relative_error_percent": 45.43762575452716,
+        "threshold_percent": 20.0,
+        "two_unit_normalized": {
+          "business": 0.0,
+          "state": 26.3984375,
+          "total_variable": 21.185546875
+        }
+      },
+      "raw_windows": {
+        "one_unit": {
+          "A": {
+            "cpu_cores": 0.011165739895640335,
+            "memory_mib": 178.80859375
+          },
+          "B": {
+            "cpu_cores": 0.042095799934370494,
+            "memory_mib": 187.41015625
+          },
+          "C": {
+            "cpu_cores": 0.4022254708666456,
+            "memory_mib": 217.63671875
+          }
+        },
+        "two_unit": {
+          "A": {
+            "cpu_cores": 0.013223954681427277,
+            "memory_mib": 205.046875
+          },
+          "B": {
+            "cpu_cores": 0.14102323094381944,
+            "memory_mib": 257.84375
+          },
+          "C": {
+            "cpu_cores": 0.8986359186200625,
+            "memory_mib": 247.41796875
+          }
+        }
+      }
+    },
+    "social": {
+      "cpu": {
+        "metric": "cpu_cores",
+        "one_unit": {
+          "business": 0.12762218830954,
+          "state": 0.0,
+          "total_variable": 0.12761913649494214
+        },
+        "pass": false,
+        "planned_unit_cost": 0.17614285714285716,
+        "relative_error": 0.27547935485434316,
+        "relative_error_percent": 27.547935485434316,
+        "threshold_percent": 15.0,
+        "two_unit_normalized": {
+          "business": 0.17581099554354543,
+          "state": 0.0003318615993117254,
+          "total_variable": 0.17614285714285716
+        }
+      },
+      "memory": {
+        "metric": "memory_mib",
+        "one_unit": {
+          "business": 25.31640625,
+          "state": 34.875,
+          "total_variable": 60.19140625
+        },
+        "pass": false,
+        "planned_unit_cost": 60.19140625,
+        "relative_error": 0.46505289116749954,
+        "relative_error_percent": 46.50528911674996,
+        "threshold_percent": 20.0,
+        "two_unit_normalized": {
+          "business": 17.34375,
+          "state": 14.85546875,
+          "total_variable": 32.19921875
+        }
+      },
+      "raw_windows": {
+        "one_unit": {
+          "A": {
+            "cpu_cores": 0.0006665777907721533,
+            "memory_mib": 28.31640625
+          },
+          "B": {
+            "cpu_cores": 0.0006635259761742683,
+            "memory_mib": 63.19140625
+          },
+          "C": {
+            "cpu_cores": 0.12828571428571428,
+            "memory_mib": 88.5078125
+          }
+        },
+        "two_unit": {
+          "A": {
+            "cpu_cores": 0.0,
+            "memory_mib": 28.84765625
+          },
+          "B": {
+            "cpu_cores": 0.0006637231986234508,
+            "memory_mib": 58.55859375
+          },
+          "C": {
+            "cpu_cores": 0.3522857142857143,
+            "memory_mib": 93.24609375
+          }
+        }
+      }
+    }
+  },
+  "slo": {
+    "one_unit": "pass",
+    "two_unit": "pass"
+  },
+  "slo_pass": true,
+  "thresholds": {
+    "cpu_relative_error": 0.15,
+    "memory_relative_error": 0.2
+  },
+  "verdict": "fail"
+}

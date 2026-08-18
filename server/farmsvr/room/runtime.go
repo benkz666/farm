@@ -52,6 +52,12 @@ var (
 	requestResultPool = sync.Pool{New: func() any {
 		return make(chan error, 1)
 	}}
+	// Runtime.Do is on every Farm command path. Creating a fresh time.Timer for
+	// each mailbox admission used to account for tens of megabytes of garbage in
+	// a short SyncFarm run. Timers are single-owner while checked out and are
+	// always stopped/drained before being returned, so reuse does not weaken the
+	// existing callTimeout guarantee.
+	callTimerPool        sync.Pool
 	pairActorRequestPool = sync.Pool{New: func() any {
 		return &pairActorRequest{
 			ready:    make(chan pairActorReady, 1),
@@ -316,8 +322,8 @@ func (r *Runtime) Do(uid uint64, fn func(*FarmActor) error) error {
 	}
 	defer requestResultPool.Put(resultCh)
 	req := request{fn: fn, result: resultCh}
-	deadline := time.NewTimer(r.callTimeout)
-	defer deadline.Stop()
+	deadline := acquireCallTimer(r.callTimeout)
+	defer releaseCallTimer(deadline)
 
 	for {
 		resident, err := r.getOrStartActor(uid)
@@ -453,8 +459,8 @@ func recyclePairActorRequest(pair *pairActorRequest) {
 }
 
 func (r *Runtime) sendPairActorRequest(uid uint64, pair *pairActorRequest) error {
-	deadline := time.NewTimer(r.callTimeout)
-	defer deadline.Stop()
+	deadline := acquireCallTimer(r.callTimeout)
+	defer releaseCallTimer(deadline)
 	for {
 		resident, err := r.getOrStartActor(uid)
 		if err != nil {
@@ -607,14 +613,36 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 
 	idle := time.NewTimer(r.idleTTL)
 	defer idle.Stop()
-	flush := time.NewTicker(r.flushInterval)
-	defer flush.Stop()
 
 	var actor FarmActor
 	var generation uint64
 	var committedGen uint64
 	var enqueuedGen uint64
 	commitAcks := make(chan commitAck, 16)
+
+	// Most production mutations request an immediate journal append, so a
+	// continuously running ticker per resident Actor only wakes idle goroutines.
+	// With ten thousand online farms that used to mean roughly ten thousand
+	// scheduler wake-ups per second. Lazily arm one timer only while a dirty
+	// generation has not yet been handed to a committer.
+	var flushTimer *time.Timer
+	var flushC <-chan time.Time
+	armFlush := func() {
+		if committedGen >= generation || enqueuedGen >= generation || flushC != nil {
+			return
+		}
+		if flushTimer == nil {
+			flushTimer = time.NewTimer(r.flushInterval)
+		} else {
+			resetTimer(flushTimer, r.flushInterval)
+		}
+		flushC = flushTimer.C
+	}
+	defer func() {
+		if flushTimer != nil {
+			flushTimer.Stop()
+		}
+	}()
 
 	for {
 		select {
@@ -660,9 +688,10 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 					actor.ackSideEffects(committedGen)
 					actor.ackPersistPlan(committedGen)
 				} else if dirty {
-					// The final mutation remains stamped and the ordinary flush ticker
-					// will retry it; do not claim this generation was enqueued.
+					// The final mutation remains stamped. Keep it pending and arm a
+					// one-shot retry instead of keeping every resident Actor on a ticker.
 					enqueuedGen = committedGen
+					armFlush()
 				}
 				req.pair.done <- struct{}{}
 				resetTimer(idle, r.idleTTL)
@@ -689,18 +718,27 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				actor.syncFlush = false
 				if r.finishRequestAfterDurable(uid, &actor, generation, err, req.result, commitAcks) {
 					enqueuedGen = generation
+				} else {
+					armFlush()
 				}
 			} else {
 				req.result <- err
+				armFlush()
 			}
 			resetTimer(idle, r.idleTTL)
 
-		case <-flush.C:
+		case <-flushC:
+			// Disable the select arm before attempting the enqueue. A transient
+			// failure below creates a fresh retry window; a successful enqueue is
+			// completed by commitAcks and needs no periodic polling.
+			flushC = nil
 			if committedGen >= generation {
 				continue
 			}
 			if enqueuedGen < generation && r.enqueueWriteBehind(uid, &actor, generation, commitAcks) {
 				enqueuedGen = generation
+			} else {
+				armFlush()
 			}
 
 		case ack := <-commitAcks:
@@ -712,6 +750,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 					"uid", uid,
 					"err", ack.err.Error(),
 				)
+				armFlush()
 				continue
 			}
 			if ack.generation > committedGen {
@@ -720,6 +759,7 @@ func (r *Runtime) run(uid uint64, resident *residentActor) {
 				actor.ackSideEffects(committedGen)
 				actor.ackPersistPlan(committedGen)
 			}
+			armFlush()
 
 		case <-idle.C:
 			if committedGen >= generation {
@@ -1065,4 +1105,26 @@ func resetTimer(timer *time.Timer, ttl time.Duration) {
 		}
 	}
 	timer.Reset(ttl)
+}
+
+func acquireCallTimer(timeout time.Duration) *time.Timer {
+	if pooled := callTimerPool.Get(); pooled != nil {
+		timer := pooled.(*time.Timer)
+		timer.Reset(timeout)
+		return timer
+	}
+	return time.NewTimer(timeout)
+}
+
+func releaseCallTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	callTimerPool.Put(timer)
 }

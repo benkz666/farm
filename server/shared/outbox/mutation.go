@@ -36,6 +36,8 @@ func NewFarmWriteMutation(
 	events []Event,
 	tasks []TaskAdvance,
 	rewards []CodexReward,
+	claims []TaskClaim,
+	mailMutations []MailMutation,
 ) (*farmv1.FarmWriteMutation, error) {
 	if agg == nil || agg.UID == 0 {
 		return nil, errors.New("outbox: invalid farm mutation aggregate")
@@ -79,7 +81,7 @@ func NewFarmWriteMutation(
 		if modes&PersistModeMask(PersistCrossOwner) != 0 {
 			mutation.PlayerMask |= PlayerEconomy | PlayerPet | PlayerCrossReceipts
 		}
-		if mutation.PlayerMask == 0 {
+		if mutation.PlayerMask == 0 && modes&PersistModeMask(PersistSideEffects) == 0 {
 			return nil, errors.New("outbox: unsupported farm mutation plan")
 		}
 	}
@@ -168,6 +170,27 @@ func NewFarmWriteMutation(
 	for _, reward := range rewards {
 		mutation.CodexRewards = append(mutation.CodexRewards, &farmv1.FarmWriteCodexReward{
 			CropId: uint32(reward.Progress.CropID), HarvestCount: reward.Progress.HarvestCount,
+		})
+	}
+	mutation.TaskClaims = make([]*farmv1.FarmWriteTaskClaim, 0, len(claims))
+	for _, claim := range claims {
+		mutation.TaskClaims = append(mutation.TaskClaims, &farmv1.FarmWriteTaskClaim{
+			DayKey: claim.DayKey, TaskId: claim.TaskID, ClaimedAt: claim.ClaimedAt,
+		})
+	}
+	mutation.MailMutations = make([]*farmv1.FarmWriteMailMutation, 0, len(mailMutations))
+	for _, item := range mailMutations {
+		kind := farmv1.FarmWriteMailMutationKind_FARM_WRITE_MAIL_MUTATION_KIND_UNSPECIFIED
+		switch item.Kind {
+		case MailRead:
+			kind = farmv1.FarmWriteMailMutationKind_FARM_WRITE_MAIL_MUTATION_KIND_READ
+		case MailClaim:
+			kind = farmv1.FarmWriteMailMutationKind_FARM_WRITE_MAIL_MUTATION_KIND_CLAIM
+		case MailDelete:
+			kind = farmv1.FarmWriteMailMutationKind_FARM_WRITE_MAIL_MUTATION_KIND_DELETE
+		}
+		mutation.MailMutations = append(mutation.MailMutations, &farmv1.FarmWriteMailMutation{
+			MailId: item.MailID, Kind: kind, OccurredAt: item.OccurredAt,
 		})
 	}
 	return mutation, nil

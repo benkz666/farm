@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 暂停 scripts/run.sh 启动的服务，不删除容器实例或持久化数据。
+# 停止本地源码开发环境；保留 Docker 容器、数据库卷与数据，不影响 k3s。
 # 支持用户以 `sh scripts/stop.sh` 或在 scripts 目录中执行 `sh stop.sh`。
 if [ -z "${BASH_VERSION:-}" ]; then
   exec bash "$0" "$@"
@@ -34,61 +34,27 @@ stop_pid_file() {
   rm -f "$pid_file"
 }
 
-stop_local_business() {
+stop_source_processes() {
   stop_pid_file "$RUN_DIR/vite.pid" "Vite"
   for service in gateway farm social; do
     stop_pid_file "$RUN_DIR/${service}.pid" "$service"
   done
 }
 
-stop_compose_business() {
+stop_compose_services() {
   if ! command -v docker >/dev/null 2>&1; then
-    warn "未安装 Docker，已仅关闭本地业务进程"
+    warn "未找到 Docker；源码进程已停止，中间件未处理"
     return 0
   fi
-  info "停止 Docker Compose 业务容器（保留 MySQL/Redis）"
-  docker compose -f "$ROOT/deploy/compose.yml" --profile app \
-    stop web gateway farm social >/dev/null 2>&1 || true
-}
-
-close_business() {
-  info "关闭业务服务"
-  stop_local_business
-  stop_compose_business
-  info "业务服务已关闭；MySQL/Redis 保持运行"
-}
-
-pause_all() {
-  command -v docker >/dev/null 2>&1 || die "关闭全部服务需要 Docker"
-  close_business
-  info "暂停全部 Docker Compose 服务（保留实例和数据）"
+  info "停止本项目的 Docker Compose 服务（保留容器和数据）"
   docker compose -f "$ROOT/deploy/compose.yml" --profile app stop
-  info "全部服务已暂停；容器实例和数据仍然保留"
 }
 
-choose_mode() {
-  local choice="${1:-}"
-  case "$choice" in
-    1|business|service) printf 'business' ;;
-    2|all|compose|--compose|-c) printf 'all' ;;
-    '')
-      [[ -t 0 ]] || die "非交互环境请显式指定模式：$0 [1|2]（1=关闭业务服务，2=关闭全部服务）"
-      printf '\n请选择关闭范围：\n' >&2
-      printf '  1) 关闭业务服务（前端、Gateway、Farm、Social；保留 MySQL/Redis）\n' >&2
-      printf '  2) 暂停全部服务（保留业务容器、MySQL/Redis 实例及数据）\n' >&2
-      read -r -p '输入 1 或 2: ' choice
-      choose_mode "$choice"
-      ;;
-    *) die "无效模式：${choice}（可选 1/business 或 2/all）" ;;
-  esac
-}
-
-if [[ $# -gt 1 ]]; then
-  die "usage: $0 [1|2]"
+if [[ $# -ne 0 ]]; then
+  die "usage: $0（无需参数；仅停止本地源码开发环境）"
 fi
 
-mode="$(choose_mode "${1:-}")"
-case "$mode" in
-  business) close_business ;;
-  all) pause_all ;;
-esac
+info "停止本地源码开发环境（不影响 k3s）"
+stop_source_processes
+stop_compose_services
+info "已停止；Docker 容器和数据库数据均已保留"

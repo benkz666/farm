@@ -1,0 +1,125 @@
+{
+  "method": "read-only information_schema and Redis INFO sample",
+  "mysql": {
+    "data_plus_index_bytes": 264028160,
+    "data_plus_index_bytes_per_account": 5828.950900741787,
+    "note": "Used pages divided by test accounts; production disk must separately add growth, binlog, temporary space and backup headroom.",
+    "tables": [
+      {
+        "data_bytes": 7880704,
+        "estimated_rows": 38259,
+        "free_bytes": 4194304,
+        "index_bytes": 3686400,
+        "table": "account",
+        "used_bytes": 11567104
+      },
+      {
+        "data_bytes": 16384,
+        "estimated_rows": 2,
+        "free_bytes": 0,
+        "index_bytes": 0,
+        "table": "daily_login",
+        "used_bytes": 16384
+      },
+      {
+        "data_bytes": 16384,
+        "estimated_rows": 8,
+        "free_bytes": 0,
+        "index_bytes": 32768,
+        "table": "farm_outbox",
+        "used_bytes": 49152
+      },
+      {
+        "data_bytes": 168574976,
+        "estimated_rows": 727227,
+        "free_bytes": 7340032,
+        "index_bytes": 0,
+        "table": "farm_plot",
+        "used_bytes": 168574976
+      },
+      {
+        "data_bytes": 16384,
+        "estimated_rows": 0,
+        "free_bytes": 0,
+        "index_bytes": 32768,
+        "table": "friend_request",
+        "used_bytes": 49152
+      },
+      {
+        "data_bytes": 1589248,
+        "estimated_rows": 13029,
+        "free_bytes": 4194304,
+        "index_bytes": 3178496,
+        "table": "friendship",
+        "used_bytes": 4767744
+      },
+      {
+        "data_bytes": 9617408,
+        "estimated_rows": 62248,
+        "free_bytes": 4194304,
+        "index_bytes": 0,
+        "table": "item",
+        "used_bytes": 9617408
+      },
+      {
+        "data_bytes": 5259264,
+        "estimated_rows": 43767,
+        "free_bytes": 4194304,
+        "index_bytes": 7684096,
+        "table": "mail",
+        "used_bytes": 12943360
+      },
+      {
+        "data_bytes": 31703040,
+        "estimated_rows": 46747,
+        "free_bytes": 6291456,
+        "index_bytes": 0,
+        "table": "player",
+        "used_bytes": 31703040
+      },
+      {
+        "data_bytes": 1589248,
+        "estimated_rows": 9010,
+        "free_bytes": 4194304,
+        "index_bytes": 0,
+        "table": "player_codex",
+        "used_bytes": 1589248
+      },
+      {
+        "data_bytes": 23134208,
+        "estimated_rows": 173993,
+        "free_bytes": 5242880,
+        "index_bytes": 0,
+        "table": "player_task",
+        "used_bytes": 23134208
+      },
+      {
+        "data_bytes": 16384,
+        "estimated_rows": 18,
+        "free_bytes": 0,
+        "index_bytes": 0,
+        "table": "schema_migrations",
+        "used_bytes": 16384
+      }
+    ]
+  },
+  "redis": {
+    "dataset_bytes_per_active_test_account_upper_bound": 340.31181561285763,
+    "key_patterns": {
+      "farm:[0-9]*": 0,
+      "farm:connreg:*": 0,
+      "farm:gateway:*": 3,
+      "farm:write:*": 32,
+      "friend:*": 8314,
+      "mail:*": 22171,
+      "session:*": 90052,
+      "steal_hint:*": 15002
+    },
+    "note": "This is an upper bound for the active Redis working set because it includes TTL caches, sessions and journal metadata; scale it by active cached accounts/Actors, not all registered accounts.",
+    "used_memory_bytes": 31811880,
+    "used_memory_dataset_bytes": 15414764,
+    "used_memory_rss_bytes": 55574528
+  },
+  "sample_dir": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/static-dataset-final",
+  "test_accounts": 45296
+}

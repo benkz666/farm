@@ -123,7 +123,7 @@ func run() error {
 	journal, closeJournalRedis, err := store.OpenFarmWriteJournal(
 		ctx,
 		storage,
-		config.RedisAddr,
+		servicehost.Getenv("FARM_EVENT_REDIS_ADDR", config.RedisAddr),
 		journalConfig,
 	)
 	if err != nil {
@@ -249,7 +249,6 @@ func run() error {
 				"component", "write_journal", "uid", uid, "err", err.Error())
 		}
 	})
-	directStore := journal.WrapDirectStore(storage)
 	socialClient := socialapi.NewGRPCClient(grpcPool, socialTarget)
 	friends := friendauth.NewCache(socialClient)
 	go startFriendInvalidationWatch(ctx, friends, socialClient)
@@ -275,9 +274,6 @@ func run() error {
 		farmrpc.WithStealHintWriter(stealHints),
 		farmrpc.WithTaskMailStore(storage),
 		farmrpc.WithTaskProgressWriter(journal),
-		farmrpc.WithTaskClaimer(directStore),
-		farmrpc.WithDailyLoginClaimer(directStore),
-		farmrpc.WithMailClaimer(directStore),
 		farmrpc.WithCodexRewardStore(journal),
 		farmrpc.WithBundledJournalSideEffects(),
 		farmrpc.WithMailNotifyPublisher(mailNotifyPublisher),
@@ -305,7 +301,7 @@ func run() error {
 		GRPC: &servicehost.GRPC{
 			Addr: config.GRPCAddr,
 			Register: func(server *grpc.Server) {
-				farmrpc.RegisterCommandService(server, clientHandler, owns)
+				farmrpc.RegisterCommandService(server, clientHandler, owns, metrics)
 				crossfarm.RegisterCrossFarmService(server, crossServer)
 				if servicehost.Getenv("FARM_ALLOW_DEBUG_TIME", "0") == "1" {
 					farmv1.RegisterDebugServiceServer(server, farmrpc.NewDebugServer(clock.Advance, clock.Now, timeProfiles))

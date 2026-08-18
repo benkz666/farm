@@ -1,0 +1,43 @@
+{
+  "name": "capacity-experiment-baseline-v1",
+  "reasoning": [
+    "保留3个Gateway，因为当前Gateway到Farm每个副本建立独立长流；单Gateway会把流内并发变成额外瓶颈。",
+    "Farm、Social、MySQL和Redis各保留1个实例，避免在单位资源成本实验中引入分片、跨实例Actor和数据库主分片变量。",
+    "所有容器CPU request等于limit，避免节点争抢时CPU shares改变结果；总申请CPU不超过32核节点。",
+    "资源用于制造至少三个低于60% CPU的非饱和成本档，不代表最终生产单实例规格。"
+  ],
+  "topology": {
+    "gateway": 3,
+    "farm": 1,
+    "social": 1,
+    "mysql": 1,
+    "redis": 1,
+    "load_generator": 1
+  },
+  "resources": {
+    "gateway": {"cpu_per_instance": 2, "memory_gib_per_instance": 2, "gomaxprocs": 2, "gomemlimit": "1536MiB"},
+    "farm": {"cpu_per_instance": 4, "memory_gib_per_instance": 4, "gomaxprocs": 4, "gomemlimit": "3GiB", "journal_shards": 32, "journal_projectors": 12},
+    "social": {"cpu_per_instance": 2, "memory_gib_per_instance": 2, "gomaxprocs": 2, "gomemlimit": "1536MiB"},
+    "mysql": {"cpu_per_instance": 4, "memory_gib_per_instance": 6, "innodb_buffer_pool": "3G"},
+    "redis": {"cpu_per_instance": 2, "memory_gib_per_instance": 3},
+    "load_generator": {"cpu_per_instance": 12, "memory_gib_per_instance": 12}
+  },
+  "aggregate_service_ratio": {
+    "cpu_gateway_farm_social_mysql_redis": "6:4:2:4:2",
+    "memory_gateway_farm_social_mysql_redis": "6:4:2:6:3"
+  },
+  "experiment": {
+    "connections": 15000,
+    "actor_limit": 20000,
+    "post_restart_settle_seconds": 30,
+    "idle_window_seconds": 60,
+    "state_window_seconds": 45,
+    "measurement_window_seconds": 30,
+    "recovery_window_seconds": 60,
+    "cost_qps_steps": [3000, 5000, 7000],
+    "stable_search_step_qps": 1000,
+    "screening_duration_seconds": 30,
+    "candidate_minimum_samples_per_operation": 500,
+    "sustainable_soak_seconds": 600
+  }
+}

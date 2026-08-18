@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sync"
 	"time"
 
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
+	"farm/server/shared/presence"
+	"farm/server/shared/telemetry"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,8 +19,6 @@ import (
 )
 
 const (
-	streamWorkerCount            = 64
-	streamWorkerQueue            = 64
 	streamBatchMax               = 64
 	streamResponseCoalesceWindow = 50 * time.Microsecond
 )
@@ -26,6 +26,10 @@ const (
 // ClientExecutor owns command validation and all Farm business behavior.
 type ClientExecutor interface {
 	ExecuteClient(context.Context, *farmv1.ClientCommandRequest) *farmv1.ClientCommandResponse
+}
+
+type preparedSelfSyncExecutor interface {
+	ExecutePreparedSelfSync(context.Context, uint64, presence.ConnRef, uint64) CommandResponse
 }
 
 // TaskAdvancer is implemented by Farm's application handler for cross-shard
@@ -38,13 +42,24 @@ type TaskAdvancer interface {
 type CommandServer struct {
 	farmv1.UnimplementedFarmCommandServiceServer
 	executor ClientExecutor
+	fastSync preparedSelfSyncExecutor
 	tasks    TaskAdvancer
 	owns     func(uint64) bool
+	metrics  *telemetry.Metrics
 }
 
-func NewCommandServer(executor ClientExecutor, owns func(uint64) bool) *CommandServer {
+func NewCommandServer(
+	executor ClientExecutor,
+	owns func(uint64) bool,
+	metrics ...*telemetry.Metrics,
+) *CommandServer {
 	tasks, _ := executor.(TaskAdvancer)
-	return &CommandServer{executor: executor, tasks: tasks, owns: owns}
+	fastSync, _ := executor.(preparedSelfSyncExecutor)
+	server := &CommandServer{executor: executor, fastSync: fastSync, tasks: tasks, owns: owns}
+	if len(metrics) != 0 {
+		server.metrics = metrics[0]
+	}
+	return server
 }
 
 func (server *CommandServer) Execute(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
@@ -110,34 +125,10 @@ func (server *CommandServer) ExecuteStream(stream farmv1.FarmCommandService_Exec
 }
 
 func (server *CommandServer) ExecuteBatchStream(stream farmv1.FarmCommandService_ExecuteBatchStreamServer) error {
-	type workItem struct{ request *farmv1.StreamExecuteRequest }
-	workers := make([]chan workItem, streamWorkerCount)
-	completed := make(chan *farmv1.StreamExecuteResponse, streamWorkerCount*2)
+	sizing := currentStreamSchedulerSizing()
+	completed := make(chan *farmv1.StreamExecuteResponse, (sizing.normalConcurrency+sizing.barrierConcurrency)*2)
 	done := make(chan struct{})
-	var workersWG sync.WaitGroup
-	for index := range workers {
-		workers[index] = make(chan workItem, streamWorkerQueue)
-		workersWG.Add(1)
-		go func(queue <-chan workItem) {
-			defer workersWG.Done()
-			for item := range queue {
-				request := item.request
-				response := &farmv1.StreamExecuteResponse{RequestId: request.GetRequestId()}
-				if request == nil || request.RequestId == 0 || request.Request == nil {
-					response.Response = errorClientResponse(request.GetRequest(), errcode.BadRequest)
-				} else {
-					response.Response = server.execute(stream.Context(), request.Request)
-				}
-				select {
-				case completed <- response:
-				case <-done:
-					return
-				case <-stream.Context().Done():
-					return
-				}
-			}
-		}(workers[index])
-	}
+	scheduler := newStreamRequestSchedulerWithSizing(stream.Context(), server, completed, done, sizing)
 
 	sendErr := make(chan error, 1)
 	go func() {
@@ -194,24 +185,15 @@ receive:
 			break
 		}
 		for _, request := range batch.Requests {
-			index := 0
-			if request != nil && request.Request != nil {
-				index = int(request.Request.RouteUid % uint64(len(workers)))
-			}
-			select {
-			case workers[index] <- workItem{request: request}:
-			case <-done:
-				break receive
-			case <-stream.Context().Done():
-				receiveErr = stream.Context().Err()
+			if !scheduler.Submit(request) {
+				if err := stream.Context().Err(); err != nil {
+					receiveErr = err
+				}
 				break receive
 			}
 		}
 	}
-	for _, worker := range workers {
-		close(worker)
-	}
-	workersWG.Wait()
+	scheduler.Wait()
 	close(completed)
 	if send := <-sendErr; receiveErr == nil {
 		receiveErr = send
@@ -219,6 +201,59 @@ receive:
 	return receiveErr
 }
 
-func RegisterCommandService(server *grpc.Server, executor ClientExecutor, owns func(uint64) bool) {
-	farmv1.RegisterFarmCommandServiceServer(server, NewCommandServer(executor, owns))
+func (server *CommandServer) executeBatchRequest(
+	ctx context.Context,
+	request *farmv1.StreamExecuteRequest,
+) *farmv1.StreamExecuteResponse {
+	response := &farmv1.StreamExecuteResponse{RequestId: request.GetRequestId()}
+	if request == nil || request.RequestId == 0 {
+		response.Response = errorClientResponse(request.GetRequest(), errcode.BadRequest)
+		return response
+	}
+	if request.FastSyncUid == 0 {
+		if request.Request == nil {
+			response.Response = errorClientResponse(nil, errcode.BadRequest)
+		} else {
+			response.Response = server.execute(ctx, request.Request)
+		}
+		return response
+	}
+	if request.Request != nil || request.FastSyncClientSeq == 0 || server.fastSync == nil ||
+		server.owns != nil && !server.owns(request.FastSyncUid) {
+		response.Response = &farmv1.ClientCommandResponse{
+			Envelope: errorEnvelope(204, request.FastSyncClientSeq, errcode.BadRequest),
+		}
+		return response
+	}
+	result := server.fastSync.ExecutePreparedSelfSync(ctx, request.FastSyncUid, presence.ConnRef{
+		ConnID: request.FastSyncConnId, GatewayID: request.FastSyncGatewayId,
+	}, request.FastSyncFromSeq)
+	if result.Err != errcode.OK || result.PreparedField != clientwire.PreparedSyncFarmResponse ||
+		!result.SyncCaughtUp && len(result.PreparedPayload) == 0 {
+		code := result.Err
+		if code == errcode.OK {
+			code = errcode.Internal
+		}
+		response.Response = &farmv1.ClientCommandResponse{
+			Envelope: errorEnvelope(204, request.FastSyncClientSeq, code),
+		}
+		return response
+	}
+	response.FastSyncClientSeq = request.FastSyncClientSeq
+	response.FastSyncUid = request.FastSyncUid
+	response.FastSyncFarmSeq = result.FarmSeq
+	response.FastSyncPreparedPayload = result.PreparedPayload
+	response.FastSyncCaughtUp = result.SyncCaughtUp
+	response.FastSyncServerTime = result.SyncServerTime
+	response.FastSyncTimeProfile = result.SyncTimeProfile
+	return response
+}
+
+func RegisterCommandService(
+	server *grpc.Server,
+	executor ClientExecutor,
+	owns func(uint64) bool,
+	metrics ...*telemetry.Metrics,
+) {
+	farmv1.RegisterFarmCommandServiceServer(server, NewCommandServer(executor, owns, metrics...))
 }

@@ -9,7 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
+	"farm/server/shared/errcode"
 	"farm/server/shared/grpcx"
 
 	"google.golang.org/grpc"
@@ -77,9 +80,36 @@ func (client *FarmClient) Execute(ctx context.Context, farmID string, request *f
 			}
 			return nil, fmt.Errorf("gateway: Farm stream unsupported: %v; unary execute: %w", err, unaryErr)
 		}
+		if isReplaySafeFarmCommand(request.Envelope.Cmd) && ctx.Err() == nil {
+			replacement, createErr := client.streamFor(target, conn)
+			if createErr == nil {
+				response, retryErr := replacement.execute(ctx, request)
+				if retryErr == nil {
+					return response, nil
+				}
+				if !errors.Is(retryErr, context.Canceled) && !errors.Is(retryErr, context.DeadlineExceeded) {
+					client.discardStream(target, replacement)
+				}
+				return nil, fmt.Errorf("gateway: execute Farm command after stream recovery: %w", retryErr)
+			}
+			return nil, fmt.Errorf("gateway: recreate Farm stream after %v: %w", err, createErr)
+		}
 		return nil, fmt.Errorf("gateway: execute Farm command: %w", err)
 	}
 	return response, nil
+}
+
+// Only commands without externally visible duplicate side effects may be
+// replayed after a shared stream breaks. EnterFarm is intentionally excluded:
+// visiting a friend's farm can advance a daily task after the response is
+// produced, so an ambiguous delivery must not execute it twice.
+func isReplaySafeFarmCommand(command uint32) bool {
+	switch command {
+	case 204, 500, 600, 604, 612:
+		return true
+	default:
+		return false
+	}
 }
 
 func (client *FarmClient) streamFor(target string, conn grpc.ClientConnInterface) (*commandStream, error) {
@@ -88,7 +118,7 @@ func (client *FarmClient) streamFor(target string, conn grpc.ClientConnInterface
 	if current := client.streams[target]; current != nil && !current.failed() {
 		return current, nil
 	}
-	stream, err := newCommandStream(farmv1.NewFarmCommandServiceClient(conn))
+	stream, err := newFarmCommandStream(farmv1.NewFarmCommandServiceClient(conn))
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +166,16 @@ type streamSlot struct {
 	result     chan streamResult
 }
 
+type batchCommandClientStream interface {
+	Send(*farmv1.StreamExecuteBatchRequest) error
+	Recv() (*farmv1.StreamExecuteBatchResponse, error)
+}
+
 // commandStream owns one batch sender and one batch receiver. A fixed slot
 // table replaces the allocation-heavy per-request result channel and pending
 // map; the generation embedded in request_id rejects late responses after reuse.
 type commandStream struct {
-	stream farmv1.FarmCommandService_ExecuteBatchStreamClient
+	stream batchCommandClientStream
 	cancel context.CancelFunc
 	send   chan streamCall
 	free   chan uint32
@@ -151,13 +186,17 @@ type commandStream struct {
 	err    error
 }
 
-func newCommandStream(client farmv1.FarmCommandServiceClient) (*commandStream, error) {
+func newFarmCommandStream(client farmv1.FarmCommandServiceClient) (*commandStream, error) {
 	streamCtx, cancel := context.WithCancel(context.Background())
 	stream, err := client.ExecuteBatchStream(streamCtx)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
+	return newCommandStream(stream, cancel), nil
+}
+
+func newCommandStream(stream batchCommandClientStream, cancel context.CancelFunc) *commandStream {
 	commandStream := &commandStream{
 		stream: stream,
 		cancel: cancel,
@@ -172,7 +211,7 @@ func newCommandStream(client farmv1.FarmCommandServiceClient) (*commandStream, e
 	}
 	go commandStream.sendLoop()
 	go commandStream.receiveLoop()
-	return commandStream, nil
+	return commandStream
 }
 
 func (stream *commandStream) execute(ctx context.Context, request *farmv1.ClientCommandRequest) (*farmv1.ClientCommandResponse, error) {
@@ -257,7 +296,11 @@ func (stream *commandStream) sendLoop() {
 					stream.complete(call.id, streamResult{err: err})
 					continue
 				}
-				requests = append(requests, &farmv1.StreamExecuteRequest{RequestId: call.id, Request: call.request})
+				if fast, ok := preparedSelfSyncStreamRequest(call.id, call.request); ok {
+					requests = append(requests, fast)
+				} else {
+					requests = append(requests, &farmv1.StreamExecuteRequest{RequestId: call.id, Request: call.request})
+				}
 			}
 			if len(requests) == 0 {
 				continue
@@ -280,23 +323,81 @@ func (stream *commandStream) receiveLoop() {
 		batch, err := stream.stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				err = fmt.Errorf("gateway: Farm command stream closed")
+				err = fmt.Errorf("gateway: downstream command stream closed")
 			}
 			stream.stop(err)
 			return
 		}
 		if batch == nil || len(batch.Responses) == 0 || len(batch.Responses) > commandStreamBatchMax {
-			stream.stop(fmt.Errorf("gateway: malformed Farm stream response"))
+			stream.stop(fmt.Errorf("gateway: malformed downstream stream response"))
 			return
 		}
 		for _, response := range batch.Responses {
 			if response == nil || response.RequestId == 0 {
-				stream.stop(fmt.Errorf("gateway: malformed Farm stream response item"))
+				stream.stop(fmt.Errorf("gateway: malformed downstream stream response item"))
 				return
 			}
-			stream.complete(response.RequestId, streamResult{response: response.Response})
+			downstream, decodeErr := decodePreparedSelfSyncStreamResponse(response)
+			if decodeErr != nil {
+				stream.stop(decodeErr)
+				return
+			}
+			stream.complete(response.RequestId, streamResult{response: downstream})
 		}
 	}
+}
+
+func preparedSelfSyncStreamRequest(
+	requestID uint64,
+	request *farmv1.ClientCommandRequest,
+) (*farmv1.StreamExecuteRequest, bool) {
+	if request == nil || requestID == 0 || request.Uid == 0 || request.RouteUid != request.Uid ||
+		request.ActiveFarmUid != request.Uid || !request.PreferPrepared || request.Envelope == nil ||
+		request.Envelope.Cmd != 204 || request.Envelope.ClientSeq == 0 {
+		return nil, false
+	}
+	payload := request.Envelope.GetSyncFarmRequest()
+	if payload == nil || payload.OwnerUid != 0 && payload.OwnerUid != request.Uid {
+		return nil, false
+	}
+	fast := &farmv1.StreamExecuteRequest{
+		RequestId: requestID, FastSyncUid: request.Uid,
+		FastSyncClientSeq: request.Envelope.ClientSeq,
+		FastSyncFromSeq:   payload.FromSeq,
+	}
+	if request.Originator != nil {
+		fast.FastSyncConnId = request.Originator.ConnId
+		fast.FastSyncGatewayId = request.Originator.GatewayId
+	}
+	return fast, true
+}
+
+func decodePreparedSelfSyncStreamResponse(
+	response *farmv1.StreamExecuteResponse,
+) (*farmv1.ClientCommandResponse, error) {
+	if response.FastSyncClientSeq == 0 {
+		return response.Response, nil
+	}
+	if response.Response != nil || response.FastSyncUid == 0 || response.FastSyncFarmSeq == 0 ||
+		response.FastSyncCaughtUp == (len(response.FastSyncPreparedPayload) != 0) {
+		return nil, fmt.Errorf("gateway: malformed fast SyncFarm response")
+	}
+	payload := response.FastSyncPreparedPayload
+	if response.FastSyncCaughtUp {
+		payload = clientwire.MarshalSyncFarmCaughtUpPayload(
+			response.FastSyncFarmSeq,
+			response.FastSyncServerTime,
+			response.FastSyncTimeProfile,
+			false,
+		)
+	}
+	return &farmv1.ClientCommandResponse{
+		Envelope: &publicv3.WireEnvelope{
+			Cmd: 204, ClientSeq: response.FastSyncClientSeq, Err: int32(errcode.OK),
+		},
+		RoomUid: response.FastSyncUid, RoomSeq: response.FastSyncFarmSeq,
+		PreparedPayload: payload, PreparedField: clientwire.PreparedSyncFarmResponse,
+	}, nil
 }
 
 func (stream *commandStream) complete(id uint64, result streamResult) {
@@ -356,7 +457,7 @@ func (stream *commandStream) failure() error {
 	stream.errMu.Lock()
 	defer stream.errMu.Unlock()
 	if stream.err == nil {
-		return fmt.Errorf("gateway: Farm command stream unavailable")
+		return fmt.Errorf("gateway: downstream command stream unavailable")
 	}
 	return stream.err
 }

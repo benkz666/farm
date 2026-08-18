@@ -14,8 +14,12 @@ import (
 )
 
 const (
-	defaultCommitterWindow     = 2 * time.Millisecond
-	defaultForegroundWindow    = 250 * time.Microsecond
+	defaultCommitterWindow = 2 * time.Millisecond
+	// One millisecond is still negligible relative to the public latency SLO,
+	// but packs substantially more one-UID mutations into each Redis Lua append
+	// on a one-core Farm. The old 250us window emitted thousands of tiny appends
+	// per second and starved the background projector that admission protects.
+	defaultForegroundWindow    = time.Millisecond
 	defaultCommitterMaxBatch   = 512
 	defaultCommitterQueueCap   = 16384
 	defaultCommitterMinBackoff = 10 * time.Millisecond

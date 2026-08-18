@@ -1,0 +1,191 @@
+{
+  "acceptance": {
+    "ping_p90_ms_max": 300,
+    "ping_p99_ms_max": 500,
+    "planning_cpu_utilization_max": 0.7,
+    "planning_memory_utilization_max": 0.7,
+    "retention_ratio_min": 0.999,
+    "technical_error_rate_max": 0.001
+  },
+  "first_observed_failed_connections": null,
+  "gateway_resource_pool": {
+    "cpu_cores": 6.0,
+    "memory_gib": 6.0
+  },
+  "highest_observed_planning_connections": 90000,
+  "highest_observed_protocol_stable_connections": 120000,
+  "interpretation": [
+    "resource curve coefficients feed the aggregate CPU and memory pool calculation",
+    "the observed stable/failure bracket is only a nonlinear process/topology validation boundary",
+    "production instance count is selected after aggregate CPU and memory are known"
+  ],
+  "levels": [
+    {
+      "client": {
+        "actual_qps": 1997.3048604608466,
+        "average_ms": 0.24557282414583334,
+        "error_rate": 0.0,
+        "failed": 0,
+        "p90_ms_conservative_max_across_shards": 0.379291,
+        "p99_ms_conservative_max_across_shards": 0.665764,
+        "sent": 240000,
+        "shards": 2,
+        "succeeded": 240000
+      },
+      "gateway_pool": {
+        "closed_connections_delta": 0.0,
+        "cpu_cores_average": 0.5225000000000001,
+        "cpu_cores_p95": 0.9599999999999973,
+        "goroutines_p95": 180095.0,
+        "heap_bytes_p95": 1676222464.0,
+        "max_pod_connections": 20000.0,
+        "min_pod_connections": 20000.0,
+        "open_fds_p95": 60429.0,
+        "restart_delta": 0,
+        "rss_bytes_max": 3062353920.0,
+        "rss_bytes_p95": 3053965312.0
+      },
+      "load_generator": {
+        "cpu_cores_p95": 0.2694405,
+        "memory_bytes_max": 1284059136.0
+      },
+      "maximum_connections": 60000.0,
+      "measurement_samples": 53,
+      "minimum_retained_connections": 60000.0,
+      "planning_point": true,
+      "protocol_stable": true,
+      "retention_ratio": 1.0,
+      "target_connections": 60000
+    },
+    {
+      "client": {
+        "actual_qps": 2993.739100830408,
+        "average_ms": 0.2691702090777778,
+        "error_rate": 0.0,
+        "failed": 0,
+        "p90_ms_conservative_max_across_shards": 0.414998,
+        "p99_ms_conservative_max_across_shards": 0.716023,
+        "sent": 360000,
+        "shards": 2,
+        "succeeded": 360000
+      },
+      "gateway_pool": {
+        "closed_connections_delta": 0.0,
+        "cpu_cores_average": 0.750651328039055,
+        "cpu_cores_p95": 1.244999999999994,
+        "goroutines_p95": 270095.0,
+        "heap_bytes_p95": 2423783424.0,
+        "max_pod_connections": 30000.0,
+        "min_pod_connections": 30000.0,
+        "open_fds_p95": 90429.0,
+        "restart_delta": 0,
+        "rss_bytes_max": 4380930048.0,
+        "rss_bytes_p95": 4378832896.0
+      },
+      "load_generator": {
+        "cpu_cores_p95": 0.3359765,
+        "memory_bytes_max": 1757257728.0
+      },
+      "maximum_connections": 90000.0,
+      "measurement_samples": 53,
+      "minimum_retained_connections": 90000.0,
+      "planning_point": true,
+      "protocol_stable": true,
+      "retention_ratio": 1.0,
+      "target_connections": 90000
+    },
+    {
+      "client": {
+        "actual_qps": 3491.926174279316,
+        "average_ms": 0.558489163754762,
+        "error_rate": 0.0,
+        "failed": 0,
+        "p90_ms_conservative_max_across_shards": 0.425521,
+        "p99_ms_conservative_max_across_shards": 0.880649,
+        "sent": 420000,
+        "shards": 2,
+        "succeeded": 420000
+      },
+      "gateway_pool": {
+        "closed_connections_delta": 0.0,
+        "cpu_cores_average": 0.9252266490243941,
+        "cpu_cores_p95": 1.4100000000000037,
+        "goroutines_p95": 315095.0,
+        "heap_bytes_p95": 2491219968.0,
+        "max_pod_connections": 35000.0,
+        "min_pod_connections": 35000.0,
+        "open_fds_p95": 105429.0,
+        "restart_delta": 0,
+        "rss_bytes_max": 4654284800.0,
+        "rss_bytes_p95": 4654284800.0
+      },
+      "load_generator": {
+        "cpu_cores_p95": 0.37529,
+        "memory_bytes_max": 2139066368.0
+      },
+      "maximum_connections": 105000.0,
+      "measurement_samples": 53,
+      "minimum_retained_connections": 105000.0,
+      "planning_point": false,
+      "protocol_stable": true,
+      "retention_ratio": 1.0,
+      "target_connections": 105000
+    },
+    {
+      "client": {
+        "actual_qps": 3989.341294610012,
+        "average_ms": 3.3579786228937505,
+        "error_rate": 0.0,
+        "failed": 0,
+        "p90_ms_conservative_max_across_shards": 7.766905,
+        "p99_ms_conservative_max_across_shards": 54.882608,
+        "sent": 480000,
+        "shards": 2,
+        "succeeded": 480000
+      },
+      "gateway_pool": {
+        "closed_connections_delta": 0.0,
+        "cpu_cores_average": 5.984816853210315,
+        "cpu_cores_p95": 6.345000000000027,
+        "goroutines_p95": 360096.0,
+        "heap_bytes_p95": 2635612160.0,
+        "max_pod_connections": 40000.0,
+        "min_pod_connections": 40000.0,
+        "open_fds_p95": 120429.0,
+        "restart_delta": 0,
+        "rss_bytes_max": 5091917824.0,
+        "rss_bytes_p95": 5089869824.0
+      },
+      "load_generator": {
+        "cpu_cores_p95": 0.417193,
+        "memory_bytes_max": 2436792320.0
+      },
+      "maximum_connections": 120000.0,
+      "measurement_samples": 53,
+      "minimum_retained_connections": 120000.0,
+      "planning_point": false,
+      "protocol_stable": true,
+      "retention_ratio": 1.0,
+      "target_connections": 120000
+    }
+  ],
+  "method": "aggregate Gateway resource pool connection curve; instance count is not a capacity input",
+  "resource_curve": {
+    "cpu_cores": {
+      "intercept": 0.06619734392189025,
+      "r_squared": 1.0,
+      "slope": 7.605044267968496e-06
+    },
+    "fit_source": "planning points",
+    "memory_mib": {
+      "intercept": 385.50390625,
+      "r_squared": 1.0,
+      "slope": 0.04211640625
+    },
+    "open_fds": {
+      "intercept": 429.0,
+      "r_squared": 1.0,
+      "slope": 1.0
+    }
+  }
+}

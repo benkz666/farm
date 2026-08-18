@@ -10,6 +10,7 @@ import (
 	"farm/server/domain/farm"
 	farmv1 "farm/server/gen/farm/v1"
 	"farm/server/shared/outbox"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestWriteJournalRecordKeepsUIDMetadataAsDecimalStrings(t *testing.T) {
@@ -135,13 +136,46 @@ func TestProjectionLimiterAddsOnlyOneWorkerForConfirmedBacklog(t *testing.T) {
 		t.Fatalf("projector limit with foreground and full batch = %d, want 2", limit)
 	}
 
-	journal.backlogUntil.Store(time.Now().Add(-time.Millisecond).UnixNano())
+	journal.projectionBacklog.Store(0)
 	journal.adjustProjectionLimit()
 	journal.projectLimiter.mu.Lock()
 	limit = journal.projectLimiter.limit
 	journal.projectLimiter.mu.Unlock()
 	if limit != 1 {
 		t.Fatalf("projector limit after backlog pressure expires = %d, want 1", limit)
+	}
+}
+
+func TestProjectionLimiterScalesFromAggregateBacklog(t *testing.T) {
+	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 8, BatchSize: 8})
+	journal.foregroundQueue.Store(1)
+
+	journal.projectionBacklog.Store(8 * projectionMediumBatches)
+	journal.adjustProjectionLimit()
+	if limit := journal.projectLimiter.Limit(); limit != 4 {
+		t.Fatalf("projector limit at medium aggregate backlog = %d, want 4", limit)
+	}
+
+	journal.projectionBacklog.Store(8 * projectionHighBatches)
+	journal.adjustProjectionLimit()
+	if limit := journal.projectLimiter.Limit(); limit != 8 {
+		t.Fatalf("projector limit at high aggregate backlog = %d, want 8", limit)
+	}
+}
+
+func TestProjectionLimiterPrioritizesForegroundBarrier(t *testing.T) {
+	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 4, BatchSize: 8})
+	journal.foregroundQueue.Store(1)
+	journal.barrierWaiters.Store(1)
+	journal.adjustProjectionLimit()
+	if limit := journal.projectLimiter.Limit(); limit != 4 {
+		t.Fatalf("projector limit while a foreground barrier waits = %d, want 4", limit)
+	}
+
+	journal.barrierWaiters.Store(0)
+	journal.adjustProjectionLimit()
+	if limit := journal.projectLimiter.Limit(); limit != 1 {
+		t.Fatalf("projector limit after foreground barrier drains = %d, want 1", limit)
 	}
 }
 
@@ -200,9 +234,10 @@ func TestJournalStreamAndLatestKeysShareRedisClusterSlot(t *testing.T) {
 	shard := journal.shard(12345)
 	stream := journal.streamKey(shard)
 	latest := journal.latestKey(shard, 12345)
+	pending := journal.pendingUIDKey(shard, 12345)
 	tag := "{" + journal.streamTag(shard) + "}"
-	if !contains(stream, tag) || !contains(latest, tag) {
-		t.Fatalf("keys do not share hash tag: %q, %q", stream, latest)
+	if !contains(stream, tag) || !contains(latest, tag) || !contains(pending, tag) {
+		t.Fatalf("keys do not share hash tag: %q, %q, %q", stream, latest, pending)
 	}
 }
 
@@ -212,6 +247,45 @@ func TestNormalizeWriteJournalProjectorsDoesNotExceedShards(t *testing.T) {
 	})
 	if config.Projectors != 2 {
 		t.Fatalf("projectors = %d, want 2", config.Projectors)
+	}
+}
+
+func TestProjectionGroupsMovesACKsBehindStateAndJoinsFarmMutations(t *testing.T) {
+	kinds := []string{
+		writeJournalFarmCommit,
+		writeJournalOutboxAck,
+		writeJournalFarmCommit,
+		writeJournalTaskAdvance,
+		writeJournalOutboxAck,
+		writeJournalFarmCommit,
+	}
+	messages := make([]redis.XMessage, len(kinds))
+	records := make([]writeJournalRecord, len(kinds))
+	for index, kind := range kinds {
+		messages[index] = redis.XMessage{ID: string(rune('a' + index))}
+		records[index] = writeJournalRecord{Kind: kind}
+	}
+
+	groups := projectionGroups(messages, records)
+	if len(groups) != 4 {
+		t.Fatalf("projection groups = %d, want 4", len(groups))
+	}
+	wantKinds := []string{
+		writeJournalFarmCommit, writeJournalTaskAdvance,
+		writeJournalFarmCommit, writeJournalOutboxAck,
+	}
+	wantSizes := []int{2, 1, 1, 2}
+	for index := range wantKinds {
+		if groups[index].kind != wantKinds[index] || len(groups[index].records) != wantSizes[index] {
+			t.Fatalf("group %d = %q/%d, want %q/%d",
+				index, groups[index].kind, len(groups[index].records), wantKinds[index], wantSizes[index])
+		}
+	}
+	if groups[0].messages[0].ID != "a" || groups[0].messages[1].ID != "c" {
+		t.Fatalf("joined Farm message order = %#v", groups[0].messages)
+	}
+	if groups[3].messages[0].ID != "b" || groups[3].messages[1].ID != "e" {
+		t.Fatalf("batched ACK message order = %#v", groups[3].messages)
 	}
 }
 

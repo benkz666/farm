@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,56 @@ type channelDeltaPublisher chan uint64
 func (publisher channelDeltaPublisher) Publish(_ context.Context, delta farm.FarmDelta, _ presence.ConnRef) error {
 	publisher <- delta.FarmSeq
 	return nil
+}
+
+type recordingDeltaBatchPublisher struct {
+	mu      sync.Mutex
+	batches [][]uint64
+}
+
+func (publisher *recordingDeltaBatchPublisher) Publish(_ context.Context, delta farm.FarmDelta, _ presence.ConnRef) error {
+	publisher.mu.Lock()
+	publisher.batches = append(publisher.batches, []uint64{delta.FarmSeq})
+	publisher.mu.Unlock()
+	return nil
+}
+
+func (publisher *recordingDeltaBatchPublisher) PublishBatch(_ context.Context, jobs []queuedDelta) error {
+	sequences := make([]uint64, 0, len(jobs))
+	for _, job := range jobs {
+		sequences = append(sequences, job.delta.FarmSeq)
+	}
+	publisher.mu.Lock()
+	publisher.batches = append(publisher.batches, sequences)
+	publisher.mu.Unlock()
+	return nil
+}
+
+func TestAsyncDeltaPublisherCoalescesBurst(t *testing.T) {
+	inner := &recordingDeltaBatchPublisher{}
+	publisher := NewAsyncDeltaPublisher(inner, 1, 128)
+	for seq := uint64(1); seq <= 100; seq++ {
+		if err := publisher.Publish(t.Context(), farm.FarmDelta{OwnerUID: 42, FarmSeq: seq}, presence.ConnRef{}); err != nil {
+			t.Fatalf("Publish %d: %v", seq, err)
+		}
+	}
+	if err := publisher.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	inner.mu.Lock()
+	defer inner.mu.Unlock()
+	if len(inner.batches) >= 100 {
+		t.Fatalf("batch calls = %d, want fewer than one call per delta", len(inner.batches))
+	}
+	var got []uint64
+	for _, batch := range inner.batches {
+		got = append(got, batch...)
+	}
+	for index, sequence := range got {
+		if want := uint64(index + 1); sequence != want {
+			t.Fatalf("sequence[%d]=%d, want %d", index, sequence, want)
+		}
+	}
 }
 
 func TestAsyncDeltaPublisherPreservesPerFarmOrder(t *testing.T) {

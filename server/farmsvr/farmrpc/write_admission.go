@@ -12,7 +12,7 @@ import (
 	"farm/server/shared/telemetry"
 )
 
-const defaultAdmissionWait = 2 * time.Millisecond
+const defaultAdmissionWait = 5 * time.Millisecond
 
 // WriteBacklogSource exposes the local durable-journal pressure owned by Farm.
 type WriteBacklogSource interface {
@@ -79,13 +79,14 @@ type DynamicWriteAdmission struct {
 	source WriteBacklogSource
 	config WriteAdmissionConfig
 
-	limit    atomic.Int64
-	inFlight atomic.Int64
-	pending  atomic.Int64
-	lag      atomic.Int64
-	started  atomic.Bool
-	lastOK   atomic.Int64
-	released chan struct{}
+	limit     atomic.Int64
+	inFlight  atomic.Int64
+	pending   atomic.Int64
+	lag       atomic.Int64
+	started   atomic.Bool
+	lastOK    atomic.Int64
+	releaseMu sync.Mutex
+	released  chan struct{}
 
 	metricsMu sync.RWMutex
 	metrics   *telemetry.Metrics
@@ -98,7 +99,7 @@ func NewDynamicWriteAdmission(source WriteBacklogSource, config WriteAdmissionCo
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("invalid Farm write admission config: %w", err)
 	}
-	admission := &DynamicWriteAdmission{source: source, config: config, released: make(chan struct{}, 1)}
+	admission := &DynamicWriteAdmission{source: source, config: config, released: make(chan struct{})}
 	admission.limit.Store(int64(config.MaxLimit))
 	admission.lastOK.Store(time.Now().UnixNano())
 	return admission, nil
@@ -171,6 +172,9 @@ func (admission *DynamicWriteAdmission) applyBacklog(backlog int64) {
 		target = max(target, current-max(admission.config.RecoveryStep, current/4))
 	}
 	admission.limit.Store(int64(target))
+	if target > current {
+		admission.wakeWaiters()
+	}
 }
 
 func (admission *DynamicWriteAdmission) targetLimit(backlog int64) int {
@@ -210,8 +214,15 @@ func (admission *DynamicWriteAdmission) Acquire() bool {
 	timer := time.NewTimer(admission.config.AdmissionWait)
 	defer timer.Stop()
 	for {
+		released := admission.releaseSignal()
+		// A release can happen between the first tryAcquire and taking the
+		// generation snapshot. Recheck after the snapshot so that available
+		// capacity is never hidden behind a future wake-up.
+		if admission.tryAcquire() {
+			return true
+		}
 		select {
-		case <-admission.released:
+		case <-released:
 			if admission.tryAcquire() {
 				return true
 			}
@@ -241,10 +252,21 @@ func (admission *DynamicWriteAdmission) Release() {
 	if remaining := admission.inFlight.Add(-1); remaining < 0 {
 		admission.inFlight.Store(0)
 	}
-	select {
-	case admission.released <- struct{}{}:
-	default:
-	}
+	admission.wakeWaiters()
+}
+
+func (admission *DynamicWriteAdmission) releaseSignal() <-chan struct{} {
+	admission.releaseMu.Lock()
+	released := admission.released
+	admission.releaseMu.Unlock()
+	return released
+}
+
+func (admission *DynamicWriteAdmission) wakeWaiters() {
+	admission.releaseMu.Lock()
+	close(admission.released)
+	admission.released = make(chan struct{})
+	admission.releaseMu.Unlock()
 }
 
 func (admission *DynamicWriteAdmission) Limit() int {

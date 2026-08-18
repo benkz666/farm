@@ -2,7 +2,9 @@ package farmrpc
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
@@ -86,5 +88,66 @@ func TestClientHandlerAppliesAdmissionOnlyToDurableWrites(t *testing.T) {
 	}}
 	if response := handler.ExecuteClient(t.Context(), read); response.Envelope.GetErr() == int32(errcode.RateLimited) {
 		t.Fatal("read command passed through the write admission guard")
+	}
+}
+
+func TestJournalAdmissionExcludesDirectDatabaseWrites(t *testing.T) {
+	for _, command := range []uint32{602, 608, 610} {
+		if isJournalProducingWriteCommand(command) {
+			t.Fatalf("direct database command %d unexpectedly uses journal admission", command)
+		}
+	}
+	for _, command := range []uint32{206, 212, 614} {
+		if !isJournalProducingWriteCommand(command) {
+			t.Fatalf("journal-producing command %d bypasses journal admission", command)
+		}
+	}
+}
+
+func TestDynamicWriteAdmissionWakesAllWaitingWriters(t *testing.T) {
+	config := DefaultWriteAdmissionConfig(2)
+	config.MinLimit = 1
+	config.AdmissionWait = 200 * time.Millisecond
+	admission, err := NewDynamicWriteAdmission(staticWriteBacklogSource{}, config)
+	if err != nil {
+		t.Fatalf("NewDynamicWriteAdmission: %v", err)
+	}
+	if !admission.Acquire() || !admission.Acquire() {
+		t.Fatal("failed to fill admission capacity")
+	}
+
+	ready := make(chan struct{}, 2)
+	results := make(chan bool, 2)
+	var acquired sync.WaitGroup
+	acquired.Add(2)
+	for range 2 {
+		go func() {
+			ready <- struct{}{}
+			ok := admission.Acquire()
+			results <- ok
+			acquired.Done()
+		}()
+	}
+	<-ready
+	<-ready
+	// Give both goroutines a chance to subscribe to the current generation.
+	time.Sleep(10 * time.Millisecond)
+	admission.Release()
+	admission.Release()
+
+	done := make(chan struct{})
+	go func() {
+		acquired.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("waiting writers were not woken")
+	}
+	for range 2 {
+		if !<-results {
+			t.Fatal("writer timed out despite released capacity")
+		}
 	}
 }

@@ -1,0 +1,132 @@
+{
+  "name": "capacity-100-v1",
+  "description": "3000万DAU容量模型：10小时活跃窗口、峰值系数2、20分钟会话、每分钟5次有效业务交互，三类用户加权后100次业务请求/会话。",
+  "population": {
+    "dau": 30000000,
+    "sessions_per_dau": 2.0,
+    "average_session_minutes": 20.0,
+    "active_window_hours": 10.0,
+    "active_window_peak_factor": 2.0,
+    "peak_concurrent_users": 4000000,
+    "peak_session_arrivals_per_second": 3333.333333,
+    "business_requests_per_minute": 5.0,
+    "business_requests_per_session": 100.0,
+    "peak_business_qps": 333333.333333
+  },
+  "slo": {
+    "minimum_target_delivery_ratio": 0.98,
+    "maximum_technical_error_rate": 0.001,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "minimum_samples_per_operation": 500,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600,
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60
+  },
+  "personas": [
+    {
+      "name": "light",
+      "session_share": 0.30,
+      "session_minutes": 10,
+      "peak_online_share": 0.15,
+      "requests_per_session": 40,
+      "requests_per_minute": 4.0
+    },
+    {
+      "name": "routine",
+      "session_share": 0.50,
+      "session_minutes": 20,
+      "peak_online_share": 0.50,
+      "requests_per_session": 100,
+      "requests_per_minute": 5.0
+    },
+    {
+      "name": "social_heavy",
+      "session_share": 0.20,
+      "session_minutes": 35,
+      "peak_online_share": 0.35,
+      "requests_per_session": 190,
+      "requests_per_minute": 5.428571
+    }
+  ],
+  "groups": [
+    {
+      "name": "entry_and_sync",
+      "requests_per_session": 10,
+      "weight": 0.10,
+      "reference_qps": 33333.333333
+    },
+    {
+      "name": "local_farm",
+      "requests_per_session": 32,
+      "weight": 0.32,
+      "reference_qps": 106666.666667
+    },
+    {
+      "name": "friend_and_cross_farm",
+      "requests_per_session": 27,
+      "weight": 0.27,
+      "reference_qps": 90000.0
+    },
+    {
+      "name": "task",
+      "requests_per_session": 12,
+      "weight": 0.12,
+      "reference_qps": 40000.0
+    },
+    {
+      "name": "mail",
+      "requests_per_session": 8,
+      "weight": 0.08,
+      "reference_qps": 26666.666667
+    },
+    {
+      "name": "shop_pet_codex",
+      "requests_per_session": 11,
+      "weight": 0.11,
+      "reference_qps": 36666.666666
+    }
+  ],
+  "operations": [
+    {"name": "enter-self", "requests_per_session": 1.0, "weight": 0.010, "reference_qps": 3333.333333, "pool": "local", "enabled": true},
+    {"name": "enter-friend", "requests_per_session": 5.1, "weight": 0.051, "reference_qps": 17000.0, "pool": "visitor", "enabled": true},
+    {"name": "sync", "requests_per_session": 3.9, "weight": 0.039, "reference_qps": 13000.0, "pool": "local", "enabled": true},
+
+    {"name": "till", "requests_per_session": 2.6, "weight": 0.026, "reference_qps": 8666.666667, "pool": "local", "enabled": true},
+    {"name": "clear", "requests_per_session": 2.6, "weight": 0.026, "reference_qps": 8666.666667, "pool": "local", "enabled": true},
+    {"name": "plant", "requests_per_session": 4.3, "weight": 0.043, "reference_qps": 14333.333333, "pool": "local", "enabled": true},
+    {"name": "water-local", "requests_per_session": 8.5, "weight": 0.085, "reference_qps": 28333.333333, "pool": "local", "enabled": true},
+    {"name": "weed-local", "requests_per_session": 3.3, "weight": 0.033, "reference_qps": 11000.0, "pool": "local", "enabled": true},
+    {"name": "pest-local", "requests_per_session": 2.6, "weight": 0.026, "reference_qps": 8666.666667, "pool": "local", "enabled": true},
+    {"name": "fertilize", "requests_per_session": 3.1, "weight": 0.031, "reference_qps": 10333.333333, "pool": "local", "enabled": true},
+    {"name": "harvest", "requests_per_session": 5.0, "weight": 0.050, "reference_qps": 16666.666667, "pool": "local", "enabled": true},
+
+    {"name": "water-cross", "requests_per_session": 4.2, "weight": 0.042, "reference_qps": 14000.0, "pool": "visitor", "enabled": true},
+    {"name": "weed-cross", "requests_per_session": 2.6, "weight": 0.026, "reference_qps": 8666.666667, "pool": "visitor", "enabled": true},
+    {"name": "pest-cross", "requests_per_session": 1.7, "weight": 0.017, "reference_qps": 5666.666667, "pool": "visitor", "enabled": true},
+    {"name": "steal", "requests_per_session": 4.2, "weight": 0.042, "reference_qps": 14000.0, "pool": "visitor", "enabled": true},
+    {"name": "friend-list", "requests_per_session": 5.6, "weight": 0.056, "reference_qps": 18666.666667, "pool": "social", "enabled": true},
+    {"name": "gen-share", "requests_per_session": 1.3, "weight": 0.013, "reference_qps": 4333.333333, "pool": "social", "enabled": true},
+    {"name": "search-user", "requests_per_session": 2.7, "weight": 0.027, "reference_qps": 9000.0, "pool": "social", "enabled": true},
+    {"name": "list-friend-requests", "requests_per_session": 4.7, "weight": 0.047, "reference_qps": 15666.666667, "pool": "social", "enabled": true},
+
+    {"name": "task-list", "requests_per_session": 9.6, "weight": 0.096, "reference_qps": 32000.0, "pool": "local", "enabled": true},
+    {"name": "task-claim", "requests_per_session": 2.4, "weight": 0.024, "reference_qps": 8000.0, "pool": "local", "enabled": true},
+
+    {"name": "mail-list", "requests_per_session": 4.5, "weight": 0.045, "reference_qps": 15000.0, "pool": "local", "enabled": true},
+    {"name": "mail-read", "requests_per_session": 2.1, "weight": 0.021, "reference_qps": 7000.0, "pool": "local", "enabled": true},
+    {"name": "mail-claim", "requests_per_session": 1.2, "weight": 0.012, "reference_qps": 4000.0, "pool": "local", "enabled": true},
+    {"name": "mail-delete", "requests_per_session": 0.2, "weight": 0.002, "reference_qps": 666.666667, "pool": "local", "enabled": true},
+
+    {"name": "buy", "requests_per_session": 2.4, "weight": 0.024, "reference_qps": 8000.0, "pool": "local", "enabled": true},
+    {"name": "sell", "requests_per_session": 1.9, "weight": 0.019, "reference_qps": 6333.333333, "pool": "local", "enabled": true},
+    {"name": "pet-status", "requests_per_session": 2.4, "weight": 0.024, "reference_qps": 8000.0, "pool": "local", "enabled": true},
+    {"name": "pet-activate", "requests_per_session": 0.2, "weight": 0.002, "reference_qps": 666.666667, "pool": "local", "enabled": true},
+    {"name": "pet-feed", "requests_per_session": 1.9, "weight": 0.019, "reference_qps": 6333.333333, "pool": "local", "enabled": true},
+    {"name": "codex-list", "requests_per_session": 2.2, "weight": 0.022, "reference_qps": 7333.333333, "pool": "local", "enabled": true}
+  ],
+  "derived_reference_business_qps": {
+    "mixed_executable": 333333.333333
+  }
+}

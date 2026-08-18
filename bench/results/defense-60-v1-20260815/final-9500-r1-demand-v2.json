@@ -1,0 +1,69 @@
+{
+  "alloc_bytes_per_request": {
+    "farm": 13748.361987520093,
+    "gateway": 3752.927415788698,
+    "social": 491.04021225670147
+  },
+  "cpu_ms_per_request": {
+    "farm": 0.10170633611522509,
+    "gateway": 0.13244986628670138,
+    "social": 0.03109448371224622,
+    "total": 0.2652506861141727
+  },
+  "method": "prometheus increase over exact measurement window minus scaled idle baseline",
+  "mysql_operations_per_request": 0.2735612659596123,
+  "raw_window_counters": {
+    "farm_alloc_bytes": {
+      "business_increase": 3917430768.0,
+      "idle_increase": 16819136.0,
+      "idle_scaled": 16819136.0,
+      "load_increase": 3934249904.0
+    },
+    "farm_cpu_seconds": {
+      "business_increase": 28.980000000000004,
+      "idle_increase": 0.6800000000000006,
+      "idle_scaled": 0.6800000000000006,
+      "load_increase": 29.660000000000004
+    },
+    "gateway_alloc_bytes": {
+      "business_increase": 1069351632.0,
+      "idle_increase": 9038800.0,
+      "idle_scaled": 9038800.0,
+      "load_increase": 1078390432.0
+    },
+    "gateway_cpu_seconds": {
+      "business_increase": 37.74000000000012,
+      "idle_increase": 0.2199999999999136,
+      "idle_scaled": 0.2199999999999136,
+      "load_increase": 37.960000000000036
+    },
+    "mysql_operations": {
+      "business_increase": 77948.0,
+      "idle_increase": 556.0,
+      "idle_scaled": 556.0,
+      "load_increase": 78504.0
+    },
+    "redis_operations": {
+      "business_increase": 1158334.0,
+      "idle_increase": 14339.999999999998,
+      "idle_scaled": 14339.999999999998,
+      "load_increase": 1172674.0
+    },
+    "social_alloc_bytes": {
+      "business_increase": 139916016.0,
+      "idle_increase": 713376.0,
+      "idle_scaled": 713376.0,
+      "load_increase": 140629392.0
+    },
+    "social_cpu_seconds": {
+      "business_increase": 8.860000000000014,
+      "idle_increase": 0.01999999999998181,
+      "idle_scaled": 0.01999999999998181,
+      "load_increase": 8.879999999999995
+    }
+  },
+  "redis_operations_per_request": 4.065214186945932,
+  "source_idle_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/idle-1qps-30s.json",
+  "source_load_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/final-9500-r1.json",
+  "success_requests": 284938
+}

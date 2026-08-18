@@ -178,6 +178,9 @@ func TestMaintenanceReservationRollsBackOnOwnerRejection(t *testing.T) {
 	if aggregate.Daily.MaintainCnt != 1 {
 		t.Fatalf("maintenance count after reserve = %d, want 1", aggregate.Daily.MaintainCnt)
 	}
+	if aggregate.FarmSeq != 1 {
+		t.Fatalf("farm sequence after maintenance reserve = %d, want 1", aggregate.FarmSeq)
+	}
 
 	_, _, code := SettleVisitor(aggregate, CrossResult{
 		ReqID: 5, VisitorUID: 7, OwnerUID: 9, Code: errcode.AlreadyWatered,
@@ -191,6 +194,9 @@ func TestMaintenanceReservationRollsBackOnOwnerRejection(t *testing.T) {
 	}
 	if aggregate.Exp != 0 {
 		t.Fatalf("rejected action granted exp = %d", aggregate.Exp)
+	}
+	if aggregate.FarmSeq != 2 {
+		t.Fatalf("farm sequence after maintenance settlement = %d, want 2", aggregate.FarmSeq)
 	}
 }
 

@@ -101,6 +101,33 @@ func TestFarmClientPreservesTypedProtobufContract(t *testing.T) {
 	}
 }
 
+func TestPreparedSelfSyncUsesFlatStreamContract(t *testing.T) {
+	request := farmClientRequest(42, 204, 9)
+	request.ActiveFarmUid = 42
+	request.PreferPrepared = true
+	request.Originator = &farmv1.ConnRef{ConnId: 7, GatewayId: "gateway-1"}
+	request.Envelope.Payload = &publicv3.WireEnvelope_SyncFarmRequest{
+		SyncFarmRequest: &publicv3.SyncFarmRequest{OwnerUid: 42, FromSeq: 11},
+	}
+
+	streamRequest, ok := preparedSelfSyncStreamRequest(99, request)
+	if !ok || streamRequest.Request != nil || streamRequest.FastSyncUid != 42 ||
+		streamRequest.FastSyncClientSeq != 9 || streamRequest.FastSyncFromSeq != 11 ||
+		streamRequest.FastSyncConnId != 7 || streamRequest.FastSyncGatewayId != "gateway-1" {
+		t.Fatalf("flat request=%#v ok=%v", streamRequest, ok)
+	}
+
+	response, err := decodePreparedSelfSyncStreamResponse(&farmv1.StreamExecuteResponse{
+		RequestId: 99, FastSyncClientSeq: 9, FastSyncUid: 42,
+		FastSyncFarmSeq: 11, FastSyncCaughtUp: true,
+		FastSyncServerTime: 123, FastSyncTimeProfile: "demo",
+	})
+	if err != nil || !validDownstreamResponse(request, response) ||
+		response.RoomUid != 42 || response.RoomSeq != 11 || len(response.PreparedPayload) == 0 {
+		t.Fatalf("flat response=%#v err=%v", response, err)
+	}
+}
+
 func TestFarmClientCoalescesConcurrentCommands(t *testing.T) {
 	serverStub := &recordingFarmCommandServer{}
 	client := newTestFarmClient(t, serverStub)

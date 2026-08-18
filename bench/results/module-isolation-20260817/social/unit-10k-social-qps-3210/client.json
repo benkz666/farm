@@ -1,0 +1,83 @@
+{
+  "mode": "social-mixed-capacity-100-v1",
+  "state_ready_unix_ms": 1786906005152,
+  "state_window_millis": 29055,
+  "target_qps": 3210,
+  "sent": 192600,
+  "succeeded": 192600,
+  "failed": 0,
+  "actual_qps": 3210,
+  "completion_qps": 3209.977272718914,
+  "average_ms": 0.2835989889044652,
+  "p50_ms": 0.249094,
+  "p90_ms": 0.431759,
+  "p95_ms": 0.520687,
+  "p99_ms": 0.713091,
+  "max_ms": 6.681622,
+  "wall_millis": 60000,
+  "measurement_start_unix_ms": 1786906034208,
+  "measurement_end_unix_ms": 1786906094208,
+  "measurement_millis": 60000,
+  "steps": {
+    "are-friends": {
+      "target_qps": 1780.0000000033644,
+      "sent": 106440,
+      "succeeded": 106440,
+      "failed": 0,
+      "actual_qps": 1774,
+      "average_ms": 0.23202444870349492,
+      "p90_ms": 0.34844,
+      "p95_ms": 0.407601,
+      "p99_ms": 0.505777,
+      "max_ms": 6.681552
+    },
+    "friend-list": {
+      "target_qps": 560.0000000047664,
+      "sent": 33661,
+      "succeeded": 33661,
+      "failed": 0,
+      "actual_qps": 561.0166666666667,
+      "average_ms": 0.380618714595526,
+      "p90_ms": 0.638024,
+      "p95_ms": 0.696773,
+      "p99_ms": 0.902287,
+      "max_ms": 6.680292
+    },
+    "gen-share": {
+      "target_qps": 129.99999998878505,
+      "sent": 7702,
+      "succeeded": 7702,
+      "failed": 0,
+      "actual_qps": 128.36666666666667,
+      "average_ms": 0.2236870529732537,
+      "p90_ms": 0.277523,
+      "p95_ms": 0.292383,
+      "p99_ms": 0.328201,
+      "max_ms": 1.60083
+    },
+    "list-friend-requests": {
+      "target_qps": 470.0000000056075,
+      "sent": 28523,
+      "succeeded": 28523,
+      "failed": 0,
+      "actual_qps": 475.3833333333333,
+      "average_ms": 0.3772480971847281,
+      "p90_ms": 0.447738,
+      "p95_ms": 0.471368,
+      "p99_ms": 0.541847,
+      "max_ms": 5.675388
+    },
+    "search-user": {
+      "target_qps": 269.99999999747666,
+      "sent": 16274,
+      "succeeded": 16274,
+      "failed": 0,
+      "actual_qps": 271.23333333333335,
+      "average_ms": 0.2827857386014502,
+      "p90_ms": 0.41678,
+      "p95_ms": 0.44807,
+      "p99_ms": 0.892076,
+      "max_ms": 3.708547
+    }
+  }
+}

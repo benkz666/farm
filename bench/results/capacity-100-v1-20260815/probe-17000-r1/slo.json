@@ -1,0 +1,774 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "screening",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 31,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.02403921568627451,
+          "error_rate": 0.0025285481239804243,
+          "expected_weight": 0.024,
+          "p90_ms": 34.283057,
+          "p99_ms": 267.714824,
+          "pass": false,
+          "sent": 12260,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 12260,
+      "succeeded": 12229,
+      "technical_error_rate": 0.0025285481239804243,
+      "worst_p90_ms": 34.283057,
+      "worst_p99_ms": 267.714824
+    },
+    "clear": {
+      "failed": 30,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.025964705882352942,
+          "error_rate": 0.0022655188038060714,
+          "expected_weight": 0.026,
+          "p90_ms": 31.826849,
+          "p99_ms": 317.461643,
+          "pass": false,
+          "sent": 13242,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 13242,
+      "succeeded": 13212,
+      "technical_error_rate": 0.0022655188038060714,
+      "worst_p90_ms": 31.826849,
+      "worst_p99_ms": 317.461643
+    },
+    "codex-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.021962745098039214,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 16.721779,
+          "p99_ms": 259.808403,
+          "pass": true,
+          "sent": 11201,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 11201,
+      "succeeded": 11201,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 16.721779,
+      "worst_p99_ms": 259.808403
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05102549019607843,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 24.391877,
+          "p99_ms": 310.706953,
+          "pass": true,
+          "sent": 26023,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 26023,
+      "succeeded": 26023,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 24.391877,
+      "worst_p99_ms": 310.706953
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01028235294117647,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 17.154198,
+          "p99_ms": 366.984047,
+          "pass": true,
+          "sent": 5244,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5244,
+      "succeeded": 5244,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 17.154198,
+      "worst_p99_ms": 366.984047
+    },
+    "fertilize": {
+      "failed": 34,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.03132156862745098,
+          "error_rate": 0.0021284587454613747,
+          "expected_weight": 0.031,
+          "p90_ms": 31.645394,
+          "p99_ms": 320.520946,
+          "pass": false,
+          "sent": 15974,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 15974,
+      "succeeded": 15940,
+      "technical_error_rate": 0.0021284587454613747,
+      "worst_p90_ms": 31.645394,
+      "worst_p99_ms": 320.520946
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.055945098039215685,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 13.966059,
+          "p99_ms": 178.940089,
+          "pass": true,
+          "sent": 28532,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 28532,
+      "succeeded": 28532,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 13.966059,
+      "worst_p99_ms": 178.940089
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01287843137254902,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.786835,
+          "p99_ms": 145.256496,
+          "pass": true,
+          "sent": 6568,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6568,
+      "succeeded": 6568,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.786835,
+      "worst_p99_ms": 145.256496
+    },
+    "harvest": {
+      "failed": 72,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.05005686274509804,
+          "error_rate": 0.002820321986760155,
+          "expected_weight": 0.05,
+          "p90_ms": 32.168061,
+          "p99_ms": 549.017448,
+          "pass": false,
+          "sent": 25529,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 25529,
+      "succeeded": 25457,
+      "technical_error_rate": 0.002820321986760155,
+      "worst_p90_ms": 32.168061,
+      "worst_p99_ms": 549.017448
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.046713725490196076,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.323231,
+          "p99_ms": 147.845999,
+          "pass": true,
+          "sent": 23824,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 23824,
+      "succeeded": 23824,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.323231,
+      "worst_p99_ms": 147.845999
+    },
+    "mail-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.012070588235294118,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 22.941352,
+          "p99_ms": 78.924984,
+          "pass": true,
+          "sent": 6156,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6156,
+      "succeeded": 6156,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 22.941352,
+      "worst_p99_ms": 78.924984
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0019588235294117646,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 31.827239,
+          "p99_ms": 447.395255,
+          "pass": true,
+          "sent": 999,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 999,
+      "succeeded": 999,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 31.827239,
+      "worst_p99_ms": 447.395255
+    },
+    "mail-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04498823529411765,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 38.033473,
+          "p99_ms": 306.558798,
+          "pass": true,
+          "sent": 22944,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 22944,
+      "succeeded": 22944,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 38.033473,
+      "worst_p99_ms": 306.558798
+    },
+    "mail-read": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.020870588235294116,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 30.863904,
+          "p99_ms": 321.56187,
+          "pass": true,
+          "sent": 10644,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 10644,
+      "succeeded": 10644,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 30.863904,
+      "worst_p99_ms": 321.56187
+    },
+    "pest-cross": {
+      "failed": 22,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.016901960784313726,
+          "error_rate": 0.002552204176334107,
+          "expected_weight": 0.017,
+          "p90_ms": 46.829352,
+          "p99_ms": 352.659497,
+          "pass": false,
+          "sent": 8620,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 8620,
+      "succeeded": 8598,
+      "technical_error_rate": 0.002552204176334107,
+      "worst_p90_ms": 46.829352,
+      "worst_p99_ms": 352.659497
+    },
+    "pest-local": {
+      "failed": 41,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.026262745098039216,
+          "error_rate": 0.0030610721218456024,
+          "expected_weight": 0.026,
+          "p90_ms": 32.731656,
+          "p99_ms": 292.493041,
+          "pass": false,
+          "sent": 13394,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 13394,
+      "succeeded": 13353,
+      "technical_error_rate": 0.0030610721218456024,
+      "worst_p90_ms": 32.731656,
+      "worst_p99_ms": 292.493041
+    },
+    "pet-activate": {
+      "failed": 3,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.0019509803921568627,
+          "error_rate": 0.003015075376884422,
+          "expected_weight": 0.002,
+          "p90_ms": 34.011434,
+          "p99_ms": 468.394794,
+          "pass": false,
+          "sent": 995,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 995,
+      "succeeded": 992,
+      "technical_error_rate": 0.003015075376884422,
+      "worst_p90_ms": 34.011434,
+      "worst_p99_ms": 468.394794
+    },
+    "pet-feed": {
+      "failed": 17,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.018958823529411764,
+          "error_rate": 0.0017581962974454442,
+          "expected_weight": 0.019,
+          "p90_ms": 37.905636,
+          "p99_ms": 267.822092,
+          "pass": false,
+          "sent": 9669,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 9669,
+      "succeeded": 9652,
+      "technical_error_rate": 0.0017581962974454442,
+      "worst_p90_ms": 37.905636,
+      "worst_p99_ms": 267.822092
+    },
+    "pet-status": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023876470588235294,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 15.914029,
+          "p99_ms": 354.614869,
+          "pass": true,
+          "sent": 12177,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12177,
+      "succeeded": 12177,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 15.914029,
+      "worst_p99_ms": 354.614869
+    },
+    "plant": {
+      "failed": 44,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04255686274509804,
+          "error_rate": 0.002027276078142278,
+          "expected_weight": 0.043,
+          "p90_ms": 32.676268,
+          "p99_ms": 417.768438,
+          "pass": false,
+          "sent": 21704,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 21704,
+      "succeeded": 21660,
+      "technical_error_rate": 0.002027276078142278,
+      "worst_p90_ms": 32.676268,
+      "worst_p99_ms": 417.768438
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.027080392156862747,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.307381,
+          "p99_ms": 80.513775,
+          "pass": true,
+          "sent": 13811,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 13811,
+      "succeeded": 13811,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.307381,
+      "worst_p99_ms": 80.513775
+    },
+    "sell": {
+      "failed": 24,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.018850980392156862,
+          "error_rate": 0.00249635947576451,
+          "expected_weight": 0.019,
+          "p90_ms": 32.838684,
+          "p99_ms": 333.8923,
+          "pass": false,
+          "sent": 9614,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 9614,
+      "succeeded": 9590,
+      "technical_error_rate": 0.00249635947576451,
+      "worst_p90_ms": 32.838684,
+      "worst_p99_ms": 333.8923
+    },
+    "steal": {
+      "failed": 62,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.04191764705882353,
+          "error_rate": 0.002900177752830012,
+          "expected_weight": 0.042,
+          "p90_ms": 45.917955,
+          "p99_ms": 363.010678,
+          "pass": false,
+          "sent": 21378,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 21378,
+      "succeeded": 21316,
+      "technical_error_rate": 0.002900177752830012,
+      "worst_p90_ms": 45.917955,
+      "worst_p99_ms": 363.010678
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.038692156862745096,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 23.480209,
+          "p99_ms": 352.788575,
+          "pass": true,
+          "sent": 19733,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 19733,
+      "succeeded": 19733,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 23.480209,
+      "worst_p99_ms": 352.788575
+    },
+    "task-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02360980392156863,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 21.45052,
+          "p99_ms": 154.964541,
+          "pass": true,
+          "sent": 12041,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12041,
+      "succeeded": 12041,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 21.45052,
+      "worst_p99_ms": 154.964541
+    },
+    "task-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.09648235294117648,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 20.260749,
+          "p99_ms": 320.496167,
+          "pass": true,
+          "sent": 49206,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 49206,
+      "succeeded": 49206,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 20.260749,
+      "worst_p99_ms": 320.496167
+    },
+    "till": {
+      "failed": 32,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.025911764705882353,
+          "error_rate": 0.0024214907302307982,
+          "expected_weight": 0.026,
+          "p90_ms": 32.710406,
+          "p99_ms": 308.04944,
+          "pass": false,
+          "sent": 13215,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 13215,
+      "succeeded": 13183,
+      "technical_error_rate": 0.0024214907302307982,
+      "worst_p90_ms": 32.710406,
+      "worst_p99_ms": 308.04944
+    },
+    "water-cross": {
+      "failed": 64,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.042343137254901964,
+          "error_rate": 0.0029636489928224125,
+          "expected_weight": 0.042,
+          "p90_ms": 45.732799,
+          "p99_ms": 322.191433,
+          "pass": false,
+          "sent": 21595,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 21595,
+      "succeeded": 21531,
+      "technical_error_rate": 0.0029636489928224125,
+      "worst_p90_ms": 45.732799,
+      "worst_p99_ms": 322.191433
+    },
+    "water-local": {
+      "failed": 111,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.08556274509803921,
+          "error_rate": 0.002543712904186814,
+          "expected_weight": 0.085,
+          "p90_ms": 32.339816,
+          "p99_ms": 384.228664,
+          "pass": false,
+          "sent": 43637,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 43637,
+      "succeeded": 43526,
+      "technical_error_rate": 0.002543712904186814,
+      "worst_p90_ms": 32.339816,
+      "worst_p99_ms": 384.228664
+    },
+    "weed-cross": {
+      "failed": 29,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.026066666666666665,
+          "error_rate": 0.002181435233940123,
+          "expected_weight": 0.026,
+          "p90_ms": 44.802333,
+          "p99_ms": 344.434125,
+          "pass": false,
+          "sent": 13294,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 13294,
+      "succeeded": 13265,
+      "technical_error_rate": 0.002181435233940123,
+      "worst_p90_ms": 44.802333,
+      "worst_p99_ms": 344.434125
+    },
+    "weed-local": {
+      "failed": 57,
+      "minimum_samples_required": 0,
+      "pass": false,
+      "rounds": [
+        {
+          "actual_weight": 0.03289607843137255,
+          "error_rate": 0.0033975084937712344,
+          "expected_weight": 0.033,
+          "p90_ms": 32.076643,
+          "p99_ms": 326.653021,
+          "pass": false,
+          "sent": 16777,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 0,
+      "sent": 16777,
+      "succeeded": 16720,
+      "technical_error_rate": 0.0033975084937712344,
+      "worst_p90_ms": 32.076643,
+      "worst_p99_ms": 326.653021
+    }
+  },
+  "rounds": [
+    {
+      "client_drain_milliseconds": 56,
+      "delivery_ratio": 0.9986803921568628,
+      "failed_operations": [
+        "till",
+        "clear",
+        "plant",
+        "water-local",
+        "weed-local",
+        "pest-local",
+        "fertilize",
+        "harvest",
+        "water-cross",
+        "weed-cross",
+        "pest-cross",
+        "steal",
+        "buy",
+        "sell",
+        "pet-activate",
+        "pet-feed"
+      ],
+      "missing_operations": [],
+      "pass": false,
+      "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/probe-17000-r1/client.json",
+      "target_qps": 17000,
+      "technical_error_rate": 0.0013196078431372549,
+      "unexpected_operations": []
+    }
+  ],
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 10000,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 17000,
+  "verdict": "fail"
+}

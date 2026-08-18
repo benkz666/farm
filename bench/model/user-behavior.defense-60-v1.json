@@ -1,0 +1,65 @@
+{
+  "name": "defense-60-v1",
+  "description": "3000万DAU答辩容量模型：10小时活跃窗口、峰值系数2.0、20分钟会话、每分钟3次业务请求；六类行为合计60次/会话。",
+  "population": {
+    "dau": 30000000,
+    "sessions_per_dau": 2.0,
+    "average_session_minutes": 20.0,
+    "active_window_hours": 10.0,
+    "active_window_peak_factor": 2.0,
+    "peak_concurrent_users": 4000000,
+    "peak_session_arrivals_per_second": 3333.333333,
+    "business_requests_per_minute": 3.0,
+    "business_requests_per_session": 60.0,
+    "peak_business_qps": 200000.0
+  },
+  "groups": [
+    {"name": "entry_and_sync", "requests_per_session": 6, "reference_qps": 20000.0},
+    {"name": "local_farm", "requests_per_session": 19, "reference_qps": 63333.333333},
+    {"name": "friend_and_cross_farm", "requests_per_session": 16, "reference_qps": 53333.333333},
+    {"name": "task", "requests_per_session": 7, "reference_qps": 23333.333333},
+    {"name": "mail", "requests_per_session": 5, "reference_qps": 16666.666667},
+    {"name": "shop_pet_codex", "requests_per_session": 7, "reference_qps": 23333.333334}
+  ],
+  "operations": [
+    {"name": "enter-self", "reference_qps": 7952.548330, "pool": "local", "enabled": true},
+    {"name": "enter-friend", "reference_qps": 10061.511424, "pool": "visitor", "enabled": true},
+    {"name": "sync", "reference_qps": 1985.940246, "pool": "local", "enabled": true},
+
+    {"name": "till", "reference_qps": 5691.441441, "pool": "local", "enabled": true},
+    {"name": "clear", "reference_qps": 7060.810811, "pool": "local", "enabled": true},
+    {"name": "plant", "reference_qps": 8601.351351, "pool": "local", "enabled": true},
+    {"name": "water-local", "reference_qps": 19727.477478, "pool": "local", "enabled": true},
+    {"name": "weed-local", "reference_qps": 5006.756757, "pool": "local", "enabled": true},
+    {"name": "pest-local", "reference_qps": 3979.729730, "pool": "local", "enabled": true},
+    {"name": "fertilize", "reference_qps": 3851.351351, "pool": "local", "enabled": true},
+    {"name": "harvest", "reference_qps": 9414.414414, "pool": "local", "enabled": true},
+
+    {"name": "water-cross", "reference_qps": 7553.855203, "pool": "visitor", "enabled": true},
+    {"name": "weed-cross", "reference_qps": 4511.738419, "pool": "visitor", "enabled": true},
+    {"name": "pest-cross", "reference_qps": 3236.841651, "pool": "visitor", "enabled": true},
+    {"name": "steal", "reference_qps": 8725.878457, "pool": "visitor", "enabled": true},
+    {"name": "friend-list", "reference_qps": 12282.744915, "pool": "social", "enabled": true},
+    {"name": "gen-share", "reference_qps": 749.507034, "pool": "social", "enabled": true},
+    {"name": "search-user", "reference_qps": 1752.523800, "pool": "social", "enabled": true},
+    {"name": "list-friend-requests", "reference_qps": 14520.243854, "pool": "social", "enabled": true},
+
+    {"name": "task-list", "reference_qps": 18379.781421, "pool": "local", "enabled": true},
+    {"name": "task-claim", "reference_qps": 4953.551913, "pool": "local", "enabled": true},
+
+    {"name": "mail-list", "reference_qps": 13303.507309, "pool": "local", "enabled": true},
+    {"name": "mail-read", "reference_qps": 2360.907341, "pool": "local", "enabled": true},
+    {"name": "mail-claim", "reference_qps": 812.384399, "pool": "local", "enabled": true},
+    {"name": "mail-delete", "reference_qps": 189.867618, "pool": "local", "enabled": true},
+
+    {"name": "buy", "reference_qps": 5292.969982, "pool": "local", "enabled": true},
+    {"name": "sell", "reference_qps": 2614.895737, "pool": "local", "enabled": true},
+    {"name": "pet-status", "reference_qps": 11652.119428, "pool": "local", "enabled": true},
+    {"name": "pet-activate", "reference_qps": 115.467657, "pool": "local", "enabled": true},
+    {"name": "pet-feed", "reference_qps": 1108.320944, "pool": "local", "enabled": true},
+    {"name": "codex-list", "reference_qps": 2549.559585, "pool": "local", "enabled": true}
+  ],
+  "derived_reference_business_qps": {
+    "mixed_executable": 200000.0
+  }
+}

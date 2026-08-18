@@ -1,0 +1,411 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Node",
+            "metadata": {
+                "annotations": {
+                    "alpha.kubernetes.io/provided-node-ip": "21.130.218.62",
+                    "flannel.alpha.coreos.com/backend-data": "{\"VNI\":1,\"VtepMAC\":\"06:8d:02:30:6f:57\"}",
+                    "flannel.alpha.coreos.com/backend-type": "vxlan",
+                    "flannel.alpha.coreos.com/kube-subnet-manager": "true",
+                    "flannel.alpha.coreos.com/public-ip": "21.130.218.62",
+                    "k3s.io/hostname": "VM-218-62-tencentos",
+                    "k3s.io/internal-ip": "21.130.218.62",
+                    "k3s.io/node-args": "[\"server\",\"--disable\",\"traefik\",\"--disable\",\"servicelb\",\"--write-kubeconfig-mode\",\"644\"]",
+                    "k3s.io/node-config-hash": "265CDYBABZYQ6IA5I5IX74JEGT3FKYUDSVQZ2DZTPCJUUASLNIQQ====",
+                    "k3s.io/node-env": "{}",
+                    "node.alpha.kubernetes.io/ttl": "0",
+                    "volumes.kubernetes.io/controller-managed-attach-detach": "true"
+                },
+                "creationTimestamp": "2026-08-13T06:57:49Z",
+                "finalizers": [
+                    "wrangler.cattle.io/node"
+                ],
+                "labels": {
+                    "beta.kubernetes.io/arch": "amd64",
+                    "beta.kubernetes.io/instance-type": "k3s",
+                    "beta.kubernetes.io/os": "linux",
+                    "kubernetes.io/arch": "amd64",
+                    "kubernetes.io/hostname": "vm-218-62-tencentos",
+                    "kubernetes.io/os": "linux",
+                    "node-role.kubernetes.io/control-plane": "true",
+                    "node.kubernetes.io/instance-type": "k3s"
+                },
+                "name": "vm-218-62-tencentos",
+                "resourceVersion": "126518",
+                "uid": "f4ee5570-f591-4a82-8073-99aa09fea642"
+            },
+            "spec": {
+                "podCIDR": "10.42.0.0/24",
+                "podCIDRs": [
+                    "10.42.0.0/24"
+                ],
+                "providerID": "k3s://vm-218-62-tencentos"
+            },
+            "status": {
+                "addresses": [
+                    {
+                        "address": "21.130.218.62",
+                        "type": "InternalIP"
+                    },
+                    {
+                        "address": "VM-218-62-tencentos",
+                        "type": "Hostname"
+                    }
+                ],
+                "allocatable": {
+                    "cpu": "32",
+                    "ephemeral-storage": "101940704177",
+                    "hugepages-1Gi": "0",
+                    "hugepages-2Mi": "0",
+                    "memory": "64542380Ki",
+                    "pods": "110"
+                },
+                "capacity": {
+                    "cpu": "32",
+                    "ephemeral-storage": "104791020Ki",
+                    "hugepages-1Gi": "0",
+                    "hugepages-2Mi": "0",
+                    "memory": "64542380Ki",
+                    "pods": "110"
+                },
+                "conditions": [
+                    {
+                        "lastHeartbeatTime": "2026-08-16T01:42:20Z",
+                        "lastTransitionTime": "2026-08-13T06:57:49Z",
+                        "message": "kubelet has sufficient memory available",
+                        "reason": "KubeletHasSufficientMemory",
+                        "status": "False",
+                        "type": "MemoryPressure"
+                    },
+                    {
+                        "lastHeartbeatTime": "2026-08-16T01:42:20Z",
+                        "lastTransitionTime": "2026-08-13T06:57:49Z",
+                        "message": "kubelet has no disk pressure",
+                        "reason": "KubeletHasNoDiskPressure",
+                        "status": "False",
+                        "type": "DiskPressure"
+                    },
+                    {
+                        "lastHeartbeatTime": "2026-08-16T01:42:20Z",
+                        "lastTransitionTime": "2026-08-13T06:57:49Z",
+                        "message": "kubelet has sufficient PID available",
+                        "reason": "KubeletHasSufficientPID",
+                        "status": "False",
+                        "type": "PIDPressure"
+                    },
+                    {
+                        "lastHeartbeatTime": "2026-08-16T01:42:20Z",
+                        "lastTransitionTime": "2026-08-13T06:57:50Z",
+                        "message": "kubelet is posting ready status",
+                        "reason": "KubeletReady",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "daemonEndpoints": {
+                    "kubeletEndpoint": {
+                        "Port": 10250
+                    }
+                },
+                "declaredFeatures": [
+                    "ExtendWebSocketsToKubelet",
+                    "InPlacePodLevelResourcesVerticalScaling",
+                    "InPlacePodVerticalScalingInitContainers",
+                    "RestartAllContainersOnContainerExits"
+                ],
+                "features": {
+                    "supplementalGroupsPolicy": true
+                },
+                "images": [
+                    {
+                        "names": [
+                            "docker.io/benkz/migrate:k3s"
+                        ],
+                        "sizeBytes": 832259627
+                    },
+                    {
+                        "names": [
+                            "docker.io/library/mysql:8.4"
+                        ],
+                        "sizeBytes": 832215297
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/grafana:k3s"
+                        ],
+                        "sizeBytes": 486100718
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 486097653
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 486097134
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/prometheus:k3s"
+                        ],
+                        "sizeBytes": 276041166
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/gateway:k3s"
+                        ],
+                        "sizeBytes": 122414194
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 122407538
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 122403953
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 122323570
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/k6:capacity-100-v2"
+                        ],
+                        "sizeBytes": 119347164
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/k6:capacity-100-v1"
+                        ],
+                        "sizeBytes": 119347163
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/k6:k3s"
+                        ],
+                        "sizeBytes": 119346653
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 119317981
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 119291867
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 119291357
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 119191517
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117223535
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/farm:k3s"
+                        ],
+                        "sizeBytes": 117221490
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/farm:capacity-p90-v2"
+                        ],
+                        "sizeBytes": 117221489
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117215346
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117215346
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117214834
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117207154
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117206642
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117206640
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117199474
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117193842
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117191794
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117189234
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117182578
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117182578
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117182066
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117176945
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117154929
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117104754
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117098609
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117094512
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 117046385
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/social:k3s"
+                        ],
+                        "sizeBytes": 116054130
+                    },
+                    {
+                        "names": null,
+                        "sizeBytes": 115990129
+                    },
+                    {
+                        "names": [
+                            "docker.io/rancher/local-path-provisioner@sha256:1eba82e9c386038b4af6d69cca7519fac738c28c42735ed48ce70c882ad0d80f",
+                            "docker.io/rancher/local-path-provisioner:v0.0.36"
+                        ],
+                        "sizeBytes": 89390500
+                    },
+                    {
+                        "names": [
+                            "docker.io/benkz/web:k3s"
+                        ],
+                        "sizeBytes": 52496299
+                    },
+                    {
+                        "names": [
+                            "docker.io/library/redis:7-alpine"
+                        ],
+                        "sizeBytes": 39881908
+                    },
+                    {
+                        "names": [
+                            "docker.io/rancher/mirrored-coredns-coredns@sha256:900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea",
+                            "docker.io/rancher/mirrored-coredns-coredns:1.14.6"
+                        ],
+                        "sizeBytes": 23758055
+                    },
+                    {
+                        "names": [
+                            "docker.io/rancher/mirrored-metrics-server@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0",
+                            "docker.io/rancher/mirrored-metrics-server:v0.9.0"
+                        ],
+                        "sizeBytes": 23258428
+                    },
+                    {
+                        "names": [
+                            "docker.io/prom/mysqld-exporter:v0.14.0"
+                        ],
+                        "sizeBytes": 19237361
+                    },
+                    {
+                        "names": [
+                            "docker.io/oliver006/redis_exporter:v1.62.0"
+                        ],
+                        "sizeBytes": 8684316
+                    },
+                    {
+                        "names": [
+                            "docker.io/rancher/mirrored-library-busybox@sha256:101b4afd76732482eff9b95cae5f94bcf295e521fbec4e01b69c5421f3f3f3e5",
+                            "docker.io/rancher/mirrored-library-busybox:1.37.0"
+                        ],
+                        "sizeBytes": 2151353
+                    },
+                    {
+                        "names": [
+                            "docker.io/rancher/mirrored-pause@sha256:f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
+                            "docker.io/rancher/mirrored-pause:3.10.2"
+                        ],
+                        "sizeBytes": 320805
+                    }
+                ],
+                "nodeInfo": {
+                    "architecture": "amd64",
+                    "bootID": "04d4d89a-61eb-45b7-a373-4f8a75802194",
+                    "containerRuntimeVersion": "containerd://2.3.2-k3s2",
+                    "kernelVersion": "6.6.119-49.27.tl4.x86_64",
+                    "kubeProxyVersion": "",
+                    "kubeletVersion": "v1.36.3+k3s1",
+                    "machineID": "303d92818bb640cf87e60905bf621929",
+                    "operatingSystem": "linux",
+                    "osImage": "TencentOS Server 4.4",
+                    "systemUUID": "79dd600e-c3e2-404b-a54b-952198681bbb"
+                },
+                "runtimeHandlers": [
+                    {
+                        "features": {
+                            "recursiveReadOnlyMounts": true,
+                            "userNamespaces": true
+                        },
+                        "name": ""
+                    },
+                    {
+                        "features": {
+                            "recursiveReadOnlyMounts": true,
+                            "userNamespaces": true
+                        },
+                        "name": "runc"
+                    },
+                    {
+                        "features": {
+                            "recursiveReadOnlyMounts": false,
+                            "userNamespaces": false
+                        },
+                        "name": "runhcs-wcow-process"
+                    }
+                ]
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

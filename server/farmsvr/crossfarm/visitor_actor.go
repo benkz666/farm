@@ -74,16 +74,28 @@ func SettleVisitor(
 		return reward, nil, errcode.BadRequest
 	}
 
+	sequenceBefore := aggregate.FarmSeq
 	aggregate.ExpireCrossPending(now)
 	reservation, ok := aggregate.TakeCrossReservation(result.ReqID, result.OwnerUID)
 	if !ok {
 		return reward, nil, errcode.Timeout
 	}
 
+	var delta *farm.PlayerDelta
+	var code errcode.Code
 	if reservation.Steal {
-		return settleVisitorSteal(aggregate, result, reservation)
+		reward, delta, code = settleVisitorSteal(aggregate, result, reservation)
+	} else {
+		reward, delta, code = settleVisitorMaintenance(aggregate, result, reservation)
 	}
-	return settleVisitorMaintenance(aggregate, result, reservation)
+	if aggregate.FarmSeq == sequenceBefore {
+		aggregate.FarmSeq++
+	}
+	if delta != nil {
+		updated := aggregate.PlayerDelta()
+		delta = &updated
+	}
+	return reward, delta, code
 }
 
 func settleVisitorSteal(

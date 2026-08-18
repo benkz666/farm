@@ -1,0 +1,74 @@
+{
+  "acceptance": {
+    "ping_p90_ms_max": 300,
+    "ping_p99_ms_max": 500,
+    "planning_cpu_utilization_max": 0.7,
+    "planning_memory_utilization_max": 0.7,
+    "retention_ratio_min": 0.999,
+    "technical_error_rate_max": 0.001
+  },
+  "first_observed_failed_connections": 150000,
+  "gateway_resource_pool": {
+    "cpu_cores": 6.0,
+    "memory_gib": 6.0
+  },
+  "highest_observed_planning_connections": null,
+  "highest_observed_protocol_stable_connections": 135000,
+  "interpretation": [
+    "resource curve coefficients feed the aggregate CPU and memory pool calculation",
+    "the observed stable/failure bracket is only a nonlinear process/topology validation boundary",
+    "production instance count is selected after aggregate CPU and memory are known"
+  ],
+  "levels": [
+    {
+      "client": {
+        "actual_qps": 4478.601568825863,
+        "average_ms": 3.6234146818407407,
+        "error_rate": 0.0,
+        "failed": 0,
+        "p90_ms_conservative_max_across_shards": 7.586301,
+        "p99_ms_conservative_max_across_shards": 52.801229,
+        "sent": 540000,
+        "shards": 2,
+        "succeeded": 540000
+      },
+      "gateway_pool": {
+        "closed_connections_delta": 0.0,
+        "cpu_cores_average": 5.9780151122834475,
+        "cpu_cores_p95": 6.274999999999977,
+        "goroutines_p95": 405096.0,
+        "heap_bytes_p95": 2944442368.0,
+        "max_pod_connections": 45000.0,
+        "min_pod_connections": 45000.0,
+        "open_fds_p95": 135429.0,
+        "restart_delta": 0,
+        "rss_bytes_max": 5704065024.0,
+        "rss_bytes_p95": 5699137536.0
+      },
+      "load_generator": {
+        "cpu_cores_p95": 0.4531765,
+        "memory_bytes_max": 2518360064.0
+      },
+      "maximum_connections": 135000.0,
+      "measurement_samples": 53,
+      "minimum_retained_connections": 135000.0,
+      "planning_point": false,
+      "protocol_stable": true,
+      "retention_ratio": 1.0,
+      "target_connections": 135000
+    },
+    {
+      "failure": "client result or samples missing",
+      "planning_point": false,
+      "protocol_stable": false,
+      "target_connections": 150000
+    }
+  ],
+  "method": "aggregate Gateway resource pool connection curve; instance count is not a capacity input",
+  "resource_curve": {
+    "cpu_cores": null,
+    "fit_source": "protocol-stable points",
+    "memory_mib": null,
+    "open_fds": null
+  }
+}

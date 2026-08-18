@@ -40,8 +40,15 @@ const (
 
 const (
 	projectionForegroundHold = 50 * time.Millisecond
-	projectionBacklogHold    = time.Second
-	projectionForegroundMax  = 2
+	projectionClaimPollMin   = 500 * time.Millisecond
+	// Redis 会在第一条消息到达时立即唤醒每个 shard。高并发下若马上
+	// 开 MySQL 事务，即使 BatchSize 很大，实际也只有几条记录，最终把
+	// innodb_flush_log_at_trx_commit=1 的磁盘变成大量小事务。获取投影
+	// permit 后短暂等待新的同 shard 记录；此时没有占用 DB 连接或行锁，
+	// 但能显著提高每次事务的有效批量。
+	projectionCoalesceWindow = 50 * time.Millisecond
+	projectionMediumBatches  = 8
+	projectionHighBatches    = 64
 )
 
 const maxRetainedJournalProtoBuffer = 64 << 10
@@ -187,6 +194,22 @@ type journalCodexReward struct {
 	Progress farm.CodexProgress `json:"progress"`
 }
 
+type journalTaskClaimProjection struct {
+	uid                 uint64
+	dayKey              int64
+	taskID              uint32
+	claimedAt           int64
+	streamMS, streamSeq uint64
+}
+
+type journalMailMutationProjection struct {
+	uid                 uint64
+	mailID              uint64
+	kind                farmv1.FarmWriteMailMutationKind
+	occurredAt          int64
+	streamMS, streamSeq uint64
+}
+
 type journalOutboxAck struct {
 	EventID string `json:"event_id"`
 }
@@ -197,7 +220,10 @@ local stream_id = redis.call('XADD', KEYS[1], '*',
   'farm_seq', ARGV[4], 'body', ARGV[5])
 if ARGV[6] == '1' then
   redis.call('HSET', KEYS[2], 'event_id', ARGV[1], 'body', ARGV[5])
-  redis.call('PEXPIRE', KEYS[2], ARGV[7])
+  redis.call('PEXPIRE', KEYS[2], ARGV[8])
+end
+if ARGV[7] == '1' then
+  redis.call('RPUSH', KEYS[3], stream_id)
 end
 return stream_id
 `)
@@ -209,16 +235,19 @@ return stream_id
 var appendFarmWriteBatchScript = redis.NewScript(`
 local result = {}
 local arg = 1
-for key = 1, #KEYS, 2 do
+for key = 1, #KEYS, 3 do
   local stream_id = redis.call('XADD', KEYS[key], '*',
     'event_id', ARGV[arg], 'kind', ARGV[arg + 1], 'uid', ARGV[arg + 2],
     'farm_seq', ARGV[arg + 3], 'body', ARGV[arg + 4])
   if ARGV[arg + 5] == '1' then
     redis.call('HSET', KEYS[key + 1], 'event_id', ARGV[arg], 'body', ARGV[arg + 4])
-    redis.call('PEXPIRE', KEYS[key + 1], ARGV[arg + 6])
+    redis.call('PEXPIRE', KEYS[key + 1], ARGV[arg + 7])
+  end
+  if ARGV[arg + 6] == '1' then
+    redis.call('RPUSH', KEYS[key + 2], stream_id)
   end
   result[#result + 1] = stream_id
-  arg = arg + 7
+  arg = arg + 8
 end
 return result
 `)
@@ -233,6 +262,12 @@ return 0
 var acknowledgeWriteJournalScript = redis.NewScript(`
 local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], unpack(ARGV, 2))
 redis.call('XDEL', KEYS[1], unpack(ARGV, 2))
+for key = 2, #KEYS do
+  redis.call('LREM', KEYS[key], 1, ARGV[key])
+  if redis.call('LLEN', KEYS[key]) == 0 then
+    redis.call('DEL', KEYS[key])
+  end
+end
 return acknowledged
 `)
 
@@ -252,17 +287,20 @@ type FarmWriteJournal struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 
-	observerMu      sync.RWMutex
-	taskObserver    func(uint64, Task)
-	mailObserver    func(uint64)
-	consumerID      string
-	barrierMu       sync.Mutex
-	barriers        map[string]chan struct{}
-	projectLimiter  *adaptiveProjectionLimiter
-	appendInFlight  atomic.Int32
-	foregroundQueue atomic.Int64
-	lastForeground  atomic.Int64
-	backlogUntil    atomic.Int64
+	observerMu        sync.RWMutex
+	taskObserver      func(uint64, Task)
+	mailObserver      func(uint64)
+	consumerID        string
+	barrierMu         sync.Mutex
+	barriers          map[string]chan struct{}
+	projectLimiter    *adaptiveProjectionLimiter
+	barrierWaiters    atomic.Int64
+	appendInFlight    atomic.Int32
+	foregroundQueue   atomic.Int64
+	lastForeground    atomic.Int64
+	projectionBacklog atomic.Int64
+	targetedReady     atomic.Bool
+	targetedPermits   chan struct{}
 }
 
 // OpenFarmWriteJournal opens dedicated connection pools against the deployment's
@@ -326,6 +364,12 @@ func NewFarmWriteJournal(base *Store, client *redis.Client, config FarmWriteJour
 			strconv.FormatUint(journalEventCounter.Add(1), 36),
 		barriers:       make(map[string]chan struct{}),
 		projectLimiter: newAdaptiveProjectionLimiter(config.Projectors),
+		// Claim projection is foreground I/O. It shares MySQL with background
+		// projectors but must absorb short task/mail bursts without building a
+		// seconds-long gRPC barrier queue. Two slots per configured projector kept
+		// the 10k mixed tier below the DB's CPU capacity while preserving a hard
+		// bound on direct projection concurrency.
+		targetedPermits: make(chan struct{}, max(config.Projectors*2, 8)),
 	}
 }
 
@@ -362,6 +406,23 @@ func (journal *FarmWriteJournal) Start(ctx context.Context) error {
 			return fmt.Errorf("store: create write journal group shard %d: %w", shard, err)
 		}
 	}
+	// The per-UID pending index did not exist in the original stream format.
+	// Enable targeted projection only when this process starts with empty logs;
+	// otherwise an older, unindexed record could be skipped during a rolling
+	// deployment. A process that drains legacy backlog safely keeps the old
+	// shard barrier until its next restart.
+	targetedReady := true
+	for shard := 0; shard < journal.config.Shards; shard++ {
+		length, err := journal.rdb.XLen(ctx, journal.streamKey(shard)).Result()
+		if err != nil {
+			journal.started.Store(false)
+			return fmt.Errorf("store: inspect write journal shard %d: %w", shard, err)
+		}
+		if length != 0 {
+			targetedReady = false
+		}
+	}
+	journal.targetedReady.Store(targetedReady)
 	journal.ctx, journal.cancel = context.WithCancel(context.Background())
 	for shard := 0; shard < journal.config.Shards; shard++ {
 		journal.wg.Add(1)
@@ -398,7 +459,10 @@ func (journal *FarmWriteJournal) WrapOutboxStore(base OutboxStore) OutboxStore {
 // older asynchronous farm snapshots for the UID have been projected so an
 // old snapshot cannot overwrite a newly claimed reward.
 func (journal *FarmWriteJournal) WrapDirectStore(base *Store) *JournalDirectStore {
-	return &JournalDirectStore{Store: base, journal: journal}
+	return &JournalDirectStore{
+		Store: base, journal: journal,
+		directWrites: newDirectWriteBatcher(journal.ctx, base.db),
+	}
 }
 
 type journalFarmStore struct {
@@ -463,7 +527,7 @@ func (store *journalFarmStore) LoadFarms(ctx context.Context, uids []uint64) (ma
 	// Barriers are rare on cold EnterFarm. Keep them ordered and explicit so a
 	// reload can never observe a partially projected sequence for the same UID.
 	for _, uid := range pending {
-		if err := store.journal.WaitUIDProjected(ctx, uid); err != nil {
+		if err := store.journal.WaitUIDProjected(ctx, uid, "actor_load"); err != nil {
 			return nil, err
 		}
 	}
@@ -518,22 +582,63 @@ type journalOutboxStore struct {
 
 type JournalDirectStore struct {
 	*Store
-	journal *FarmWriteJournal
+	journal      *FarmWriteJournal
+	directWrites *directWriteBatcher
 }
 
 func (store *JournalDirectStore) ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (TaskReward, error) {
 	barrierCtx, cancel := store.journal.directWriteContext(ctx)
 	defer cancel()
-	if err := store.journal.WaitUIDProjected(barrierCtx, uid); err != nil {
+	if err := store.journal.WaitUIDProjected(barrierCtx, uid, "task_claim"); err != nil {
 		return TaskReward{}, err
 	}
 	return store.Store.ClaimTask(ctx, uid, dayKey, taskID)
 }
 
+// ClaimTaskAtState keeps the common claim path off the full-UID projection
+// barrier. Most task rows are already complete in MySQL, so the first atomic
+// claim succeeds immediately. If only an asynchronous task advancement is
+// missing, project that task's high-water events and retry without
+// materializing unrelated farm plots, inventory, codex or outbox records.
+func (store *JournalDirectStore) ClaimTaskAtState(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	taskID uint32,
+	state DirectClaimState,
+) (TaskReward, error) {
+	if state.NextFarmSeq == 0 {
+		return TaskReward{}, errors.New("store: direct task claim has invalid next farm sequence")
+	}
+	reward, err := store.Store.claimTaskWithExecer(
+		ctx, uid, dayKey, taskID, &state,
+		directUIDExecer{batcher: store.directWrites, uid: uid},
+	)
+	if !errors.Is(err, ErrTaskNotComplete) {
+		if err == nil && store.journal.metrics != nil {
+			store.journal.metrics.ObserveWriteJournalBarrierFastPath("task_claim")
+		}
+		return reward, err
+	}
+	projectionCtx, cancel := store.journal.directWriteContext(ctx)
+	defer cancel()
+	started := time.Now()
+	err = store.journal.projectTaskThrough(projectionCtx, uid, dayKey, taskID)
+	if store.journal.metrics != nil {
+		store.journal.metrics.ObserveWriteJournalTargetedProjection(
+			"task_claim", time.Since(started), err,
+		)
+	}
+	if err != nil {
+		return TaskReward{}, err
+	}
+	return store.Store.ClaimTaskAtState(ctx, uid, dayKey, taskID, state)
+}
+
 func (store *JournalDirectStore) ClaimDailyLogin(ctx context.Context, uid uint64, dayKey int64) (TaskReward, error) {
 	barrierCtx, cancel := store.journal.directWriteContext(ctx)
 	defer cancel()
-	if err := store.journal.WaitUIDProjected(barrierCtx, uid); err != nil {
+	if err := store.journal.WaitUIDProjected(barrierCtx, uid, "daily_login_claim"); err != nil {
 		return TaskReward{}, err
 	}
 	return store.Store.ClaimDailyLogin(ctx, uid, dayKey)
@@ -542,10 +647,53 @@ func (store *JournalDirectStore) ClaimDailyLogin(ctx context.Context, uid uint64
 func (store *JournalDirectStore) ClaimMail(ctx context.Context, uid, mailID uint64) (Mail, error) {
 	barrierCtx, cancel := store.journal.directWriteContext(ctx)
 	defer cancel()
-	if err := store.journal.WaitUIDProjected(barrierCtx, uid); err != nil {
+	if err := store.journal.WaitUIDProjected(barrierCtx, uid, "mail_claim"); err != nil {
 		return Mail{}, err
 	}
 	return store.Store.ClaimMail(ctx, uid, mailID)
+}
+
+// ClaimMailAtState needs no projection barrier: the requested mail ID already
+// names a durable MySQL row, while the fenced absolute economy update prevents
+// older pending Farm mutations from overwriting the credited attachment.
+func (store *JournalDirectStore) ClaimMailAtState(
+	ctx context.Context,
+	uid, mailID uint64,
+	state DirectClaimState,
+) (Mail, error) {
+	if state.NextFarmSeq == 0 {
+		return Mail{}, errors.New("store: direct mail claim has invalid next farm sequence")
+	}
+	mail, err := store.Store.claimMailWithExecer(
+		ctx, uid, mailID, &state,
+		directUIDExecer{batcher: store.directWrites, uid: uid},
+	)
+	if err == nil && store.journal.metrics != nil {
+		store.journal.metrics.ObserveWriteJournalBarrierFastPath("mail_claim")
+	}
+	return mail, err
+}
+
+func (store *JournalDirectStore) MarkMailsRead(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+) (int64, error) {
+	return store.Store.markMailsRead(
+		ctx, uid, mailID,
+		directUIDExecer{batcher: store.directWrites, uid: uid},
+	)
+}
+
+func (store *JournalDirectStore) DeleteMails(
+	ctx context.Context,
+	uid uint64,
+	mailID uint64,
+) (int64, error) {
+	return store.Store.deleteMails(
+		ctx, uid, mailID,
+		directUIDExecer{batcher: store.directWrites, uid: uid},
+	)
 }
 
 func (journal *FarmWriteJournal) directWriteContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -597,6 +745,7 @@ func (journal *FarmWriteJournal) AppendFarmCommits(ctx context.Context, commits 
 			mutation, err = outbox.NewFarmWriteMutation(
 				commit.Snapshot, commit.Plan, nil, nil, nil,
 				commit.Outbox, commit.TaskAdvances, commit.CodexRewards,
+				commit.TaskClaims, commit.MailMutations,
 			)
 			if err != nil {
 				return fmt.Errorf("store: build journal farm mutation: %w", err)
@@ -626,14 +775,14 @@ func (journal *FarmWriteJournal) AppendFarmCommits(ctx context.Context, commits 
 	started := time.Now()
 	connection := journal.appendRDB.Conn()
 	defer connection.Close()
-	keys := make([]string, 0, len(encoded)*2)
-	args := make([]any, 0, len(encoded)*7)
+	keys := make([]string, 0, len(encoded)*3)
+	args := make([]any, 0, len(encoded)*8)
 	for _, item := range encoded {
 		uid, _ := strconv.ParseUint(item.record.UID, 10, 64)
 		shard := journal.shard(uid)
-		keys = append(keys, journal.streamKey(shard), journal.latestKey(shard, uid))
+		keys = append(keys, journal.streamKey(shard), journal.latestKey(shard, uid), journal.pendingUIDKey(shard, uid))
 		args = append(args, item.record.EventID, item.record.Kind, item.record.UID, item.record.FarmSeq,
-			item.body, "1", journal.config.LatestTTL.Milliseconds())
+			item.body, "1", "1", journal.config.LatestTTL.Milliseconds())
 	}
 	_, err := appendFarmWriteBatchScript.Eval(ctx, connection, keys, args...).Result()
 	journal.observeAppend(started, len(encoded), err)
@@ -661,7 +810,7 @@ func (journal *FarmWriteJournal) AdvanceTask(
 		UID:     strconv.FormatUint(uid, 10),
 		Task:    &journalTaskAdvance{DayKey: dayKey, TaskID: taskID, Amount: amount},
 	}
-	if err := journal.appendRecord(ctx, uid, record, false); err != nil {
+	if err := journal.appendRecord(ctx, uid, record, false, true); err != nil {
 		return TaskAdvanceResult{}, err
 	}
 	return TaskAdvanceResult{}, nil
@@ -686,7 +835,7 @@ func (journal *FarmWriteJournal) IssueCodexRewards(
 	}
 	identity, _ := json.Marshal(record)
 	record.EventID = deterministicJournalID(writeJournalCodexReward, identity)
-	if err := journal.appendRecord(ctx, uid, record, false); err != nil {
+	if err := journal.appendRecord(ctx, uid, record, false, true); err != nil {
 		return nil, err
 	}
 	return eligibleCodexRewardNotices(progress), nil
@@ -724,7 +873,7 @@ func (journal *FarmWriteJournal) AppendOutboxAck(ctx context.Context, eventID st
 		Ack:     &journalOutboxAck{EventID: eventID},
 	}
 	record.EventID = deterministicJournalID(writeJournalOutboxAck, []byte(eventID))
-	return journal.appendRecord(ctx, ownerUID, record, false)
+	return journal.appendRecord(ctx, ownerUID, record, false, false)
 }
 
 // AppendOutboxAcks writes a group of independent ACK records with one Redis
@@ -776,9 +925,9 @@ func (journal *FarmWriteJournal) AppendOutboxAcks(ctx context.Context, eventIDs 
 	for _, item := range encoded {
 		shard := journal.shard(item.ownerUID)
 		appendWriteJournalScript.Eval(ctx, pipe, []string{
-			journal.streamKey(shard), journal.latestKey(shard, item.ownerUID),
+			journal.streamKey(shard), journal.latestKey(shard, item.ownerUID), journal.pendingUIDKey(shard, item.ownerUID),
 		}, item.record.EventID, item.record.Kind, item.record.UID, item.record.FarmSeq,
-			item.body, "0", journal.config.LatestTTL.Milliseconds())
+			item.body, "0", "0", journal.config.LatestTTL.Milliseconds())
 	}
 	_, err := pipe.Exec(ctx)
 	journal.observeAppend(started, len(encoded), err)
@@ -788,9 +937,53 @@ func (journal *FarmWriteJournal) AppendOutboxAcks(ctx context.Context, eventIDs 
 	return journal.waitForReplicas(ctx, connection)
 }
 
-func (journal *FarmWriteJournal) WaitUIDProjected(ctx context.Context, uid uint64) error {
+func (journal *FarmWriteJournal) WaitUIDProjected(ctx context.Context, uid uint64, reasons ...string) (err error) {
 	if uid == 0 {
 		return errors.New("store: invalid write journal barrier UID")
+	}
+	reason := "other"
+	if len(reasons) != 0 {
+		reason = reasons[0]
+	}
+	started := time.Now()
+	journal.barrierWaiters.Add(1)
+	if journal.metrics != nil {
+		journal.metrics.AddWriteJournalBarrierWaiter(reason, 1)
+	}
+	journal.adjustProjectionLimit()
+	defer func() {
+		journal.barrierWaiters.Add(-1)
+		journal.adjustProjectionLimit()
+		if journal.metrics != nil {
+			journal.metrics.AddWriteJournalBarrierWaiter(reason, -1)
+			journal.metrics.ObserveWriteJournalBarrier(reason, time.Since(started), err)
+		}
+	}()
+	if journal.targetedReady.Load() {
+		var cutoff string
+		cutoff, err = journal.projectionCutoff(ctx, uid)
+		if err != nil {
+			return err
+		}
+		if cutoff == "" {
+			if journal.metrics != nil {
+				journal.metrics.ObserveWriteJournalBarrierFastPath(reason)
+			}
+			return nil
+		}
+		projectionStarted := time.Now()
+		projectionErr := journal.projectUIDThrough(ctx, uid, cutoff)
+		if journal.metrics != nil {
+			journal.metrics.ObserveWriteJournalTargetedProjection(
+				reason, time.Since(projectionStarted), projectionErr,
+			)
+		}
+		if projectionErr == nil {
+			return nil
+		}
+		// A transient targeted projection failure does not violate consistency:
+		// append a recovery-only barrier and wait for the ordinary projector
+		// instead of failing a recoverable claim.
 	}
 	record := writeJournalRecord{
 		Version: writeJournalVersion,
@@ -807,7 +1000,7 @@ func (journal *FarmWriteJournal) WaitUIDProjected(ctx context.Context, uid uint6
 		delete(journal.barriers, record.EventID)
 		journal.barrierMu.Unlock()
 	}
-	if err := journal.appendRecord(ctx, uid, record, false); err != nil {
+	if err = journal.appendRecord(ctx, uid, record, false, false); err != nil {
 		remove()
 		return err
 	}
@@ -816,11 +1009,168 @@ func (journal *FarmWriteJournal) WaitUIDProjected(ctx context.Context, uid uint6
 		return nil
 	case <-ctx.Done():
 		remove()
-		return fmt.Errorf("store: wait for UID %d projection: %w", uid, ctx.Err())
+		err = fmt.Errorf("store: wait for UID %d projection: %w", uid, ctx.Err())
+		return err
 	case <-journal.ctx.Done():
 		remove()
-		return errors.New("store: write journal stopped while waiting for projection")
+		err = errors.New("store: write journal stopped while waiting for projection")
+		return err
 	}
+}
+
+// projectionCutoff snapshots the last already-appended record for one UID.
+// Redis executes this read atomically relative to the append Lua scripts: a
+// concurrent mutation is therefore either included in cutoff or ordered after
+// the Claim. The common successful path needs no synthetic Stream record.
+func (journal *FarmWriteJournal) projectionCutoff(ctx context.Context, uid uint64) (string, error) {
+	if err := journal.accepting(); err != nil {
+		return "", err
+	}
+	shard := journal.shard(uid)
+	cutoff, err := journal.lookupRDB.LIndex(ctx, journal.pendingUIDKey(shard, uid), -1).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("store: load UID %d projection cutoff: %w", uid, err)
+	}
+	return cutoff, nil
+}
+
+// projectUIDThrough materializes only one UID's records through cutoff. It can
+// overtake unrelated UIDs in the shared shard while retaining the exact Redis
+// append order for the claimed UID. The ordinary projector may have already
+// read the same records; all projections are replay-safe and the stream ACK is
+// idempotent, while farm_seq prevents an old player snapshot from overwriting
+// a direct reward transaction.
+func (journal *FarmWriteJournal) projectUIDThrough(ctx context.Context, uid uint64, cutoff string) error {
+	select {
+	case journal.targetedPermits <- struct{}{}:
+		defer func() { <-journal.targetedPermits }()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-journal.ctx.Done():
+		return errors.New("store: write journal stopped during targeted projection")
+	}
+	messages, err := journal.pendingUIDMessagesThrough(ctx, uid, cutoff)
+	if err != nil || len(messages) == 0 {
+		return err
+	}
+	return journal.processMessages(ctx, journal.shard(uid), messages)
+}
+
+func (journal *FarmWriteJournal) pendingUIDMessagesThrough(
+	ctx context.Context,
+	uid uint64,
+	cutoff string,
+) ([]redis.XMessage, error) {
+	shard := journal.shard(uid)
+	ids, err := journal.lookupRDB.LRange(ctx, journal.pendingUIDKey(shard, uid), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("store: load UID %d pending projection index: %w", uid, err)
+	}
+	cutoffIndex := -1
+	for index, id := range ids {
+		if id == cutoff {
+			cutoffIndex = index
+			break
+		}
+	}
+	if cutoffIndex < 0 {
+		// The background projector removes an index entry only after its MySQL
+		// materialization committed, so a missing cutoff is already satisfied.
+		return nil, nil
+	}
+	ids = ids[:cutoffIndex+1]
+	pipe := journal.lookupRDB.Pipeline()
+	commands := make([]*redis.XMessageSliceCmd, 0, len(ids))
+	for _, id := range ids {
+		commands = append(commands, pipe.XRangeN(ctx, journal.streamKey(shard), id, id, 1))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("store: load UID %d pending projection records: %w", uid, err)
+	}
+	messages := make([]redis.XMessage, 0, len(commands))
+	for _, command := range commands {
+		entries, commandErr := command.Result()
+		if commandErr != nil && !errors.Is(commandErr, redis.Nil) {
+			return nil, fmt.Errorf("store: load UID %d projection record: %w", uid, commandErr)
+		}
+		if len(entries) != 0 {
+			messages = append(messages, entries[0])
+		}
+	}
+	if len(messages) == 0 {
+		return nil, nil
+	}
+	return messages, nil
+}
+
+// projectTaskThrough applies only task progress events for one task. It leaves
+// the Redis stream and pending UID index untouched; the ordinary projector
+// later materializes and acknowledges the complete Farm records. Task stream
+// high-water columns make both projections idempotent when they overlap.
+func (journal *FarmWriteJournal) projectTaskThrough(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	taskID uint32,
+) error {
+	cutoff, err := journal.projectionCutoff(ctx, uid)
+	if err != nil || cutoff == "" {
+		return err
+	}
+	select {
+	case journal.targetedPermits <- struct{}{}:
+		defer func() { <-journal.targetedPermits }()
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-journal.ctx.Done():
+		return errors.New("store: write journal stopped during targeted task projection")
+	}
+	messages, err := journal.pendingUIDMessagesThrough(ctx, uid, cutoff)
+	if err != nil || len(messages) == 0 {
+		return err
+	}
+	events := make([]journalTaskProjection, 0, len(messages))
+	for _, message := range messages {
+		record, decodeErr := recordFromXMessage(message)
+		if decodeErr != nil {
+			return decodeErr
+		}
+		streamMS, streamSeq, parseErr := parseJournalStreamID(message.ID)
+		if parseErr != nil {
+			return parseErr
+		}
+		appendAdvance := func(advance *farmv1.FarmWriteTaskAdvance) {
+			if advance != nil && advance.DayKey == dayKey && advance.TaskId == taskID && advance.Amount > 0 {
+				events = append(events, journalTaskProjection{
+					uid: uid, dayKey: dayKey, taskID: taskID, amount: advance.Amount,
+					streamMS: streamMS, streamSeq: streamSeq,
+				})
+			}
+		}
+		switch record.Kind {
+		case writeJournalTaskAdvance:
+			if record.Task != nil && record.Task.DayKey == dayKey && record.Task.TaskID == taskID && record.Task.Amount > 0 {
+				events = append(events, journalTaskProjection{
+					uid: uid, dayKey: dayKey, taskID: taskID, amount: record.Task.Amount,
+					streamMS: streamMS, streamSeq: streamSeq,
+				})
+			}
+		case writeJournalFarmCommit:
+			if record.Commit != nil && record.Commit.Mutation != nil {
+				for _, advance := range record.Commit.Mutation.TaskAdvances {
+					appendAdvance(advance)
+				}
+			}
+		}
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	_, err = journal.base.materializeTaskJournal(ctx, events)
+	return err
 }
 
 func ownerUIDFromOutboxEventID(eventID string) (uint64, error) {
@@ -835,7 +1185,12 @@ func ownerUIDFromOutboxEventID(eventID string) (uint64, error) {
 	return uid, nil
 }
 
-func (journal *FarmWriteJournal) appendRecord(ctx context.Context, uid uint64, record writeJournalRecord, latest bool) error {
+func (journal *FarmWriteJournal) appendRecord(
+	ctx context.Context,
+	uid uint64,
+	record writeJournalRecord,
+	latest, trackPending bool,
+) error {
 	if err := journal.accepting(); err != nil {
 		return err
 	}
@@ -848,9 +1203,9 @@ func (journal *FarmWriteJournal) appendRecord(ctx context.Context, uid uint64, r
 	connection := journal.appendRDB.Conn()
 	defer connection.Close()
 	_, err = appendWriteJournalScript.Run(ctx, connection, []string{
-		journal.streamKey(shard), journal.latestKey(shard, uid),
+		journal.streamKey(shard), journal.latestKey(shard, uid), journal.pendingUIDKey(shard, uid),
 	}, record.EventID, record.Kind, record.UID, record.FarmSeq, body,
-		boolJournalArg(latest), journal.config.LatestTTL.Milliseconds()).Result()
+		boolJournalArg(latest), boolJournalArg(trackPending), journal.config.LatestTTL.Milliseconds()).Result()
 	journal.observeAppend(started, 1, err)
 	if err != nil {
 		return fmt.Errorf("store: append %s write journal: %w", record.Kind, err)
@@ -918,13 +1273,21 @@ func (journal *FarmWriteJournal) latestFarmUIDs(ctx context.Context, uids []uint
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	values, err := journal.lookupRDB.MGet(ctx, keys...).Result()
-	if err != nil {
+	pipe := journal.lookupRDB.Pipeline()
+	commands := make([]*redis.BoolCmd, 0, len(keys))
+	for _, key := range keys {
+		commands = append(commands, pipe.HExists(ctx, key, "event_id"))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("store: check latest journal farms: %w", err)
 	}
 	pending := make([]uint64, 0)
-	for index, value := range values {
-		if value != nil {
+	for index := range commands {
+		exists, err := commands[index].Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("store: check latest journal farm: %w", err)
+		}
+		if exists {
 			pending = append(pending, unique[index])
 		}
 	}
@@ -934,11 +1297,24 @@ func (journal *FarmWriteJournal) latestFarmUIDs(ctx context.Context, uids []uint
 func (journal *FarmWriteJournal) runProjector(shard int) {
 	defer journal.wg.Done()
 	retry := journal.config.RetryMin
+	var nextPendingClaim time.Time
 	for {
 		if journal.ctx.Err() != nil {
 			return
 		}
-		messages, err := journal.claimPending(shard)
+		var messages []redis.XMessage
+		var err error
+		now := time.Now()
+		if !now.Before(nextPendingClaim) {
+			messages, err = journal.claimPending(shard)
+			// XAUTOCLAIM is a recovery scan, not a prerequisite for every normal
+			// XREADGROUP. Polling it on every projected batch used to add one Redis
+			// round trip per tiny MySQL transaction under sustained load.
+			if err == nil && int64(len(messages)) < journal.config.BatchSize {
+				claimPoll := max(journal.config.ClaimIdle/2, projectionClaimPollMin)
+				nextPendingClaim = now.Add(claimPoll)
+			}
+		}
 		if err == nil && len(messages) == 0 {
 			messages, err = journal.readNew(shard)
 		}
@@ -961,7 +1337,42 @@ func (journal *FarmWriteJournal) runProjector(shard int) {
 		if !journal.projectLimiter.Acquire(journal.ctx) {
 			return
 		}
-		if err := journal.processMessages(shard, messages); err != nil {
+		if int64(len(messages)) < journal.config.BatchSize {
+			timer := time.NewTimer(projectionCoalesceWindow)
+			select {
+			case <-timer.C:
+			case <-journal.ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				journal.projectLimiter.Release()
+				return
+			}
+		}
+		// A shard may have waited behind another projector after its first small
+		// XREADGROUP. Pull everything that accumulated meanwhile without blocking
+		// so MySQL receives useful batches instead of many tiny transactions.
+		if remaining := journal.config.BatchSize - int64(len(messages)); remaining > 0 {
+			additional, readErr := journal.readNewAvailable(shard, remaining)
+			if readErr != nil {
+				journal.projectLimiter.Release()
+				journal.observeProjectionError()
+				journal.sleepRetry(retry)
+				retry = min(retry*2, journal.config.RetryMax)
+				continue
+			}
+			messages = append(messages, additional...)
+		}
+		if journal.metrics != nil {
+			journal.metrics.AddWriteJournalProjectionActive(1)
+		}
+		if err := journal.processMessages(journal.ctx, shard, messages); err != nil {
+			if journal.metrics != nil {
+				journal.metrics.AddWriteJournalProjectionActive(-1)
+			}
 			journal.projectLimiter.Release()
 			journal.observeProjectionError()
 			telemetry.L().Error("write journal projection failed",
@@ -969,6 +1380,9 @@ func (journal *FarmWriteJournal) runProjector(shard int) {
 			journal.sleepRetry(retry)
 			retry = min(retry*2, journal.config.RetryMax)
 			continue
+		}
+		if journal.metrics != nil {
+			journal.metrics.AddWriteJournalProjectionActive(-1)
 		}
 		journal.projectLimiter.Release()
 		retry = journal.config.RetryMin
@@ -983,23 +1397,26 @@ func (journal *FarmWriteJournal) adjustProjectionLimit() {
 	inFlight := journal.appendInFlight.Load()
 	queue := journal.foregroundQueue.Load()
 	now := time.Now()
-	if inFlight > 0 || queue > 0 {
-		// A single projector protects the one-core Farm's foreground path. When
-		// Redis repeatedly returns a full batch, permit exactly one additional
-		// projector so sustained writes cannot grow the recovery log forever.
+	if journal.barrierWaiters.Load() > 0 {
+		// A direct claim is waiting for all earlier mutations of the same UID to
+		// reach MySQL. It is part of the foreground consistency boundary, not
+		// disposable background work. Restore the configured projection width
+		// while barriers exist; the isolated claim lane bounds this demand.
+		limit = journal.config.Projectors
+	} else if inFlight > 0 || queue > 0 {
+		// Keep the projector narrow for short foreground bursts, then widen it
+		// from aggregate lag. The old hard-coded ceiling of four workers came from
+		// a one-core experiment and left half of an eight-projector, four-core Farm
+		// idle while the durable log crossed its admission watermark. Scale against
+		// the configured projector budget instead; that budget remains the explicit
+		// resource guard for the process.
 		journal.lastForeground.Store(now.UnixNano())
-		limit = 1
-		if journal.projectionBacklogged(now) {
-			limit = min(projectionForegroundMax, journal.config.Projectors)
-		}
+		limit = journal.foregroundProjectionLimit()
 	} else if last := journal.lastForeground.Load(); last > 0 && now.Sub(time.Unix(0, last)) < projectionForegroundHold {
 		// Group commits create very short gaps between batches. Holding the
 		// reduced limit avoids oscillating 1→4→1 and starting expensive MySQL
 		// work just before the next foreground batch arrives.
-		limit = 1
-		if journal.projectionBacklogged(now) {
-			limit = min(projectionForegroundMax, journal.config.Projectors)
-		}
+		limit = journal.foregroundProjectionLimit()
 	}
 	changed := journal.projectLimiter.SetLimit(limit)
 	if changed && journal.metrics != nil {
@@ -1011,17 +1428,30 @@ func (journal *FarmWriteJournal) markProjectionBacklog(records int) {
 	if journal == nil || journal.config.BatchSize <= 0 || int64(records) < journal.config.BatchSize {
 		return
 	}
-	until := time.Now().Add(projectionBacklogHold).UnixNano()
 	for {
-		current := journal.backlogUntil.Load()
-		if current >= until || journal.backlogUntil.CompareAndSwap(current, until) {
+		current := journal.projectionBacklog.Load()
+		if current >= int64(records) || journal.projectionBacklog.CompareAndSwap(current, int64(records)) {
 			return
 		}
 	}
 }
 
-func (journal *FarmWriteJournal) projectionBacklogged(now time.Time) bool {
-	return journal != nil && journal.backlogUntil.Load() > now.UnixNano()
+func (journal *FarmWriteJournal) foregroundProjectionLimit() int {
+	if journal == nil {
+		return 1
+	}
+	batch := max(int64(1), journal.config.BatchSize)
+	backlog := journal.projectionBacklog.Load()
+	limit := 1
+	switch {
+	case backlog >= projectionHighBatches*batch:
+		limit = journal.config.Projectors
+	case backlog >= projectionMediumBatches*batch:
+		limit = max(3, (journal.config.Projectors+1)/2)
+	case backlog >= batch:
+		limit = 2
+	}
+	return min(limit, journal.config.Projectors)
 }
 
 type adaptiveProjectionLimiter struct {
@@ -1111,84 +1541,187 @@ func (journal *FarmWriteJournal) readNew(shard int) ([]redis.XMessage, error) {
 	return streams[0].Messages, nil
 }
 
-func (journal *FarmWriteJournal) processMessages(shard int, messages []redis.XMessage) error {
-	for index := 0; index < len(messages); {
+func (journal *FarmWriteJournal) readNewAvailable(shard int, count int64) ([]redis.XMessage, error) {
+	if count <= 0 {
+		return nil, nil
+	}
+	streams, err := journal.rdb.XReadGroup(journal.ctx, &redis.XReadGroupArgs{
+		Group: journal.groupName(), Consumer: journal.consumerName(shard),
+		Streams: []string{journal.streamKey(shard), ">"},
+		Count:   count, Block: -1,
+	}).Result()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil || len(streams) == 0 {
+		return nil, err
+	}
+	return streams[0].Messages, nil
+}
+
+func (journal *FarmWriteJournal) processMessages(ctx context.Context, shard int, messages []redis.XMessage) error {
+	records := make([]writeJournalRecord, len(messages))
+	for index := range messages {
 		record, err := recordFromXMessage(messages[index])
 		if err != nil {
 			return err
 		}
-		kind := record.Kind
-		end := index + 1
-		for end < len(messages) {
-			next, nextErr := recordFromXMessage(messages[end])
-			if nextErr != nil || next.Kind != kind {
-				break
+		records[index] = record
+	}
+	for index := 0; index < len(messages); {
+		end := index
+		if records[index].Kind == writeJournalBarrier {
+			for end < len(messages) && records[end].Kind == writeJournalBarrier {
+				end++
 			}
-			end++
+		} else {
+			// A barrier is an ordering fence: everything before it must reach MySQL
+			// before the waiter is released. Inside a barrier-free segment, outbox
+			// ACKs are independent and may safely move behind state materialization.
+			for end < len(messages) && records[end].Kind != writeJournalBarrier {
+				end++
+			}
 		}
-		group := messages[index:end]
-		started := time.Now()
-		switch kind {
-		case writeJournalFarmCommit:
-			err = journal.materializeFarmGroup(shard, group)
-		case writeJournalTaskAdvance:
-			err = journal.materializeTaskGroup(group)
-		case writeJournalCodexReward:
-			err = journal.materializeCodexGroup(group)
-		case writeJournalOutboxAck:
-			err = journal.materializeOutboxAckGroup(group)
-		case writeJournalBarrier:
-			err = journal.materializeBarrierGroup(group)
-		default:
-			err = fmt.Errorf("store: unsupported write journal kind %q", kind)
-		}
-		journal.observeProjection(started, len(group), err)
-		if err != nil {
+		if err := journal.processProjectionSegment(ctx, shard, messages[index:end], records[index:end]); err != nil {
 			return err
-		}
-		ids := make([]string, len(group))
-		for offset := range group {
-			ids[offset] = group[offset].ID
-		}
-		// The stream is a recovery log, not long-term analytics storage. One Lua
-		// call preserves ACK-before-delete semantics while removing an extra RTT.
-		args := make([]any, 0, len(ids)+1)
-		args = append(args, journal.groupName())
-		for _, id := range ids {
-			args = append(args, id)
-		}
-		if err := acknowledgeWriteJournalScript.Run(
-			journal.ctx, journal.rdb, []string{journal.streamKey(shard)}, args...,
-		).Err(); err != nil {
-			return fmt.Errorf("store: acknowledge and trim write journal: %w", err)
 		}
 		index = end
 	}
 	return nil
 }
 
-func (journal *FarmWriteJournal) materializeFarmGroup(shard int, messages []redis.XMessage) error {
-	records := make([]writeJournalRecord, 0, len(messages))
-	for _, message := range messages {
-		record, err := recordFromXMessage(message)
-		if err == nil && record.Commit != nil && record.Commit.Mutation == nil && record.Commit.Snapshot != nil {
+type projectionMessageGroup struct {
+	kind     string
+	messages []redis.XMessage
+	records  []writeJournalRecord
+}
+
+// projectionGroups removes outbox ACKs from the state-record sequence and
+// appends them as one final group. ACKs are emitted only after delivery, so
+// moving them behind state projection is causally safe. This also joins Farm
+// mutations that ACK traffic previously split into many one-row MySQL
+// transactions while retaining the relative order of Farm/task/codex records.
+func projectionGroups(messages []redis.XMessage, records []writeJournalRecord) []projectionMessageGroup {
+	groups := make([]projectionMessageGroup, 0, 5)
+	ackMessages := make([]redis.XMessage, 0)
+	ackRecords := make([]writeJournalRecord, 0)
+	appendRecord := func(message redis.XMessage, record writeJournalRecord) {
+		if record.Kind == writeJournalOutboxAck {
+			ackMessages = append(ackMessages, message)
+			ackRecords = append(ackRecords, record)
+			return
+		}
+		if len(groups) == 0 || groups[len(groups)-1].kind != record.Kind {
+			groups = append(groups, projectionMessageGroup{kind: record.Kind})
+		}
+		group := &groups[len(groups)-1]
+		group.messages = append(group.messages, message)
+		group.records = append(group.records, record)
+	}
+	for index := range records {
+		if index >= len(messages) {
+			break
+		}
+		appendRecord(messages[index], records[index])
+	}
+	if len(ackRecords) != 0 {
+		groups = append(groups, projectionMessageGroup{
+			kind: writeJournalOutboxAck, messages: ackMessages, records: ackRecords,
+		})
+	}
+	return groups
+}
+
+func (journal *FarmWriteJournal) processProjectionSegment(
+	ctx context.Context,
+	shard int,
+	messages []redis.XMessage,
+	records []writeJournalRecord,
+) error {
+	for _, group := range projectionGroups(messages, records) {
+		started := time.Now()
+		var err error
+		switch group.kind {
+		case writeJournalFarmCommit:
+			err = journal.materializeFarmGroup(ctx, shard, group.messages, group.records)
+		case writeJournalTaskAdvance:
+			err = journal.materializeTaskGroup(ctx, group.messages, group.records)
+		case writeJournalCodexReward:
+			err = journal.materializeCodexGroup(ctx, group.records)
+		case writeJournalOutboxAck:
+			err = journal.materializeOutboxAckGroup(ctx, group.records)
+		case writeJournalBarrier:
+			err = journal.materializeBarrierGroup(group.records)
+		default:
+			err = fmt.Errorf("store: unsupported write journal kind %q", group.kind)
+		}
+		journal.observeProjection(started, len(group.messages), err)
+		if err != nil {
+			return err
+		}
+	}
+	return journal.acknowledgeProjectedMessages(ctx, shard, messages, records)
+}
+
+func (journal *FarmWriteJournal) acknowledgeProjectedMessages(
+	ctx context.Context,
+	shard int,
+	messages []redis.XMessage,
+	records []writeJournalRecord,
+) error {
+	ids := make([]string, len(messages))
+	for index := range messages {
+		ids[index] = messages[index].ID
+	}
+	// The stream is a recovery log, not long-term analytics storage. One Lua
+	// call preserves ACK-before-delete semantics while removing an extra RTT.
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, journal.groupName())
+	keys := make([]string, 0, len(ids)+1)
+	keys = append(keys, journal.streamKey(shard))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, record := range records {
+		uid, parseErr := strconv.ParseUint(record.UID, 10, 64)
+		if parseErr != nil || uid == 0 {
+			return errors.New("store: invalid journal UID while acknowledging projection")
+		}
+		keys = append(keys, journal.pendingUIDKey(shard, uid))
+	}
+	if err := acknowledgeWriteJournalScript.Run(ctx, journal.rdb, keys, args...).Err(); err != nil {
+		return fmt.Errorf("store: acknowledge and trim write journal: %w", err)
+	}
+	return nil
+}
+
+func (journal *FarmWriteJournal) materializeFarmGroup(
+	parent context.Context,
+	shard int,
+	messages []redis.XMessage,
+	records []writeJournalRecord,
+) error {
+	for index := range records {
+		record := &records[index]
+		var err error
+		if record.Commit != nil && record.Commit.Mutation == nil && record.Commit.Snapshot != nil {
 			record.Commit.Mutation, err = outbox.NewFarmWriteMutation(
 				record.Commit.Snapshot, outbox.PersistPlan{Mode: outbox.PersistFull}, nil, nil, nil,
 				record.Commit.Outbox, record.Commit.TaskAdvances, record.Commit.CodexRewards,
+				record.Commit.TaskClaims, record.Commit.MailMutations,
 			)
 		}
 		if err != nil || record.Commit == nil || record.Commit.Mutation == nil {
 			return fmt.Errorf("store: decode farm journal record: %w", err)
 		}
-		records = append(records, record)
 	}
 	commits, latestIDs := coalesceJournalFarmCommits(records)
-	ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
+	ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
 	defer cancel()
 	if err := journal.base.MaterializeFarmCommits(ctx, commits); err != nil {
 		return err
 	}
-	if err := journal.materializeBundledSideEffects(records, messages); err != nil {
+	if err := journal.materializeBundledSideEffects(parent, records, messages); err != nil {
 		return err
 	}
 	uids := make([]uint64, 0, len(commits))
@@ -1211,8 +1744,14 @@ func (journal *FarmWriteJournal) materializeFarmGroup(shard int, messages []redi
 	return nil
 }
 
-func (journal *FarmWriteJournal) materializeBundledSideEffects(records []writeJournalRecord, messages []redis.XMessage) error {
+func (journal *FarmWriteJournal) materializeBundledSideEffects(
+	parent context.Context,
+	records []writeJournalRecord,
+	messages []redis.XMessage,
+) error {
 	tasks := make([]journalTaskProjection, 0)
+	claims := make([]journalTaskClaimProjection, 0)
+	mailMutations := make([]journalMailMutationProjection, 0)
 	for index, record := range records {
 		if record.Commit == nil || record.Commit.Mutation == nil || index >= len(messages) {
 			continue
@@ -1231,9 +1770,44 @@ func (journal *FarmWriteJournal) materializeBundledSideEffects(records []writeJo
 				streamMS: streamMS, streamSeq: streamSeq,
 			})
 		}
+		for _, claim := range record.Commit.Mutation.TaskClaims {
+			if claim.DayKey == 0 || claim.TaskId == 0 || claim.ClaimedAt <= 0 {
+				return errors.New("store: invalid bundled task claim")
+			}
+			claims = append(claims, journalTaskClaimProjection{
+				uid: uid, dayKey: claim.DayKey, taskID: claim.TaskId, claimedAt: claim.ClaimedAt,
+				streamMS: streamMS, streamSeq: streamSeq,
+			})
+		}
+		for _, mutation := range record.Commit.Mutation.MailMutations {
+			if mutation.MailId == 0 || mutation.OccurredAt <= 0 ||
+				mutation.Kind == farmv1.FarmWriteMailMutationKind_FARM_WRITE_MAIL_MUTATION_KIND_UNSPECIFIED {
+				return errors.New("store: invalid bundled mail mutation")
+			}
+			mailMutations = append(mailMutations, journalMailMutationProjection{
+				uid: uid, mailID: mutation.MailId, kind: mutation.Kind, occurredAt: mutation.OccurredAt,
+				streamMS: streamMS, streamSeq: streamSeq,
+			})
+		}
+	}
+	if len(claims) > 0 {
+		ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
+		err := journal.base.materializeTaskClaims(ctx, claims)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	if len(mailMutations) > 0 {
+		ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
+		err := journal.base.materializeMailMutations(ctx, mailMutations)
+		cancel()
+		if err != nil {
+			return err
+		}
 	}
 	if len(tasks) > 0 {
-		ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
+		ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
 		results, err := journal.base.materializeTaskJournal(ctx, tasks)
 		cancel()
 		if err != nil {
@@ -1251,7 +1825,7 @@ func (journal *FarmWriteJournal) materializeBundledSideEffects(records []writeJo
 		}
 		uid := record.Commit.Mutation.Uid
 		for _, reward := range record.Commit.Mutation.CodexRewards {
-			ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
+			ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
 			issued, err := journal.base.IssueCodexRewards(ctx, uid, farm.CodexProgress{
 				CropID: uint16(reward.CropId), HarvestCount: reward.HarvestCount,
 			})
@@ -1286,7 +1860,12 @@ func coalesceJournalFarmCommits(records []writeJournalRecord) ([]outbox.FarmComm
 			continue
 		}
 		uid := record.Commit.Mutation.Uid
-		incoming := outbox.FarmCommit{Mutation: proto.Clone(record.Commit.Mutation).(*farmv1.FarmWriteMutation)}
+		// Decoded journal messages are exclusively owned by this projection. Keep
+		// the first mutation for a UID directly and clone only when two records for
+		// the same UID actually need merging. With a large account pool, duplicates
+		// inside one batch are rare, so the old unconditional clone was pure CPU and
+		// allocation overhead on the projector hot path.
+		incoming := outbox.FarmCommit{Mutation: record.Commit.Mutation}
 		if current, ok := byUID[uid]; ok {
 			incoming.Mutation = mergeJournalFarmMutation(current.Mutation, incoming.Mutation)
 		} else {
@@ -1513,13 +2092,17 @@ func mergeJournalPersistPlan(existing, incoming outbox.PersistPlan) outbox.Persi
 	return merged
 }
 
-func (journal *FarmWriteJournal) materializeTaskGroup(messages []redis.XMessage) error {
+func (journal *FarmWriteJournal) materializeTaskGroup(
+	parent context.Context,
+	messages []redis.XMessage,
+	records []writeJournalRecord,
+) error {
 	events := make([]journalTaskProjection, 0, len(messages))
-	for _, message := range messages {
-		record, err := recordFromXMessage(message)
-		if err != nil || record.Task == nil {
-			return fmt.Errorf("store: decode task journal record: %w", err)
+	for index, message := range messages {
+		if index >= len(records) || records[index].Task == nil {
+			return errors.New("store: decode task journal record: missing task")
 		}
+		record := records[index]
 		uid, err := strconv.ParseUint(record.UID, 10, 64)
 		if err != nil || uid == 0 {
 			return errors.New("store: invalid task journal UID")
@@ -1535,7 +2118,7 @@ func (journal *FarmWriteJournal) materializeTaskGroup(messages []redis.XMessage)
 		events[len(events)-1].streamMS = streamMS
 		events[len(events)-1].streamSeq = streamSeq
 	}
-	ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
+	ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
 	results, err := journal.base.materializeTaskJournal(ctx, events)
 	cancel()
 	if err != nil {
@@ -1619,36 +2202,82 @@ func (s *Store) materializeTaskJournal(
 		return order[left].taskID < order[right].taskID
 	})
 
-	results := make(map[journalTaskKey]TaskAdvanceResult, len(order))
-	appliedKeys := make([]journalTaskKey, 0, len(order))
+	type taskProjectionState struct {
+		progress            uint32
+		claimed             bool
+		streamMS, streamSeq uint64
+	}
+	definitions := make(map[journalTaskKey]dailyTaskDefinition, len(order))
+	selectedOrder := make([]journalTaskKey, 0, len(order))
 	for _, key := range order {
 		definition, selected := dailyTaskDefinitionByID(dailyTaskDefinitionsFor(key.uid, key.dayKey), key.taskID)
-		if !selected {
-			continue
+		if selected {
+			definitions[key] = definition
+			selectedOrder = append(selectedOrder, key)
 		}
-		currentProgress := definition.initialProgress
-		var claimed bool
-		var previousMS, previousSequence uint64
-		exists := true
-		queryErr := tx.QueryRowContext(ctx, `
-			SELECT progress, claimed_at IS NOT NULL, journal_stream_ms, journal_stream_seq
-			FROM player_task
-			WHERE uid = ? AND logic_day = ? AND task_id = ?
-			FOR UPDATE`, key.uid, key.dayKey, key.taskID,
-		).Scan(&currentProgress, &claimed, &previousMS, &previousSequence)
-		if errors.Is(queryErr, sql.ErrNoRows) {
-			exists = false
-		} else if queryErr != nil {
-			return nil, fmt.Errorf("store: lock projected task %d: %w", key.taskID, queryErr)
-		}
+	}
 
-		amount := uint32(0)
-		latestMS, latestSequence := previousMS, previousSequence
+	// Lock every existing task row in primary-key order with one round trip.
+	// The old per-key SELECT + UPDATE path needed two MySQL exchanges for every
+	// task touched by a journal batch; claim-driven projection amplifies that
+	// cost because many UIDs arrive concurrently.
+	states := make(map[journalTaskKey]taskProjectionState, len(selectedOrder))
+	if len(selectedOrder) > 0 {
+		marks := make([]string, len(selectedOrder))
+		args := make([]any, 0, len(selectedOrder)*3)
+		for index, key := range selectedOrder {
+			marks[index] = "(?, ?, ?)"
+			args = append(args, key.uid, key.dayKey, key.taskID)
+		}
+		rows, queryErr := tx.QueryContext(ctx, `
+			SELECT uid, logic_day, task_id, progress, claimed_at IS NOT NULL,
+				journal_stream_ms, journal_stream_seq
+			FROM player_task
+			WHERE (uid, logic_day, task_id) IN (`+strings.Join(marks, ",")+`)
+			ORDER BY uid, logic_day, task_id
+			FOR UPDATE`, args...)
+		if queryErr != nil {
+			return nil, fmt.Errorf("store: lock projected task batch: %w", queryErr)
+		}
+		for rows.Next() {
+			var key journalTaskKey
+			var state taskProjectionState
+			if scanErr := rows.Scan(
+				&key.uid, &key.dayKey, &key.taskID, &state.progress, &state.claimed,
+				&state.streamMS, &state.streamSeq,
+			); scanErr != nil {
+				rows.Close()
+				return nil, fmt.Errorf("store: scan projected task batch: %w", scanErr)
+			}
+			states[key] = state
+		}
+		if rowsErr := rows.Close(); rowsErr != nil {
+			return nil, fmt.Errorf("store: close projected task batch: %w", rowsErr)
+		}
+	}
+
+	type taskProjectionUpdate struct {
+		key                 journalTaskKey
+		definition          dailyTaskDefinition
+		previous, progress  uint32
+		claimed             bool
+		streamMS, streamSeq uint64
+	}
+	results := make(map[journalTaskKey]TaskAdvanceResult, len(order))
+	updates := make([]taskProjectionUpdate, 0, len(selectedOrder))
+	for _, key := range selectedOrder {
+		definition := definitions[key]
+		state, exists := states[key]
+		if !exists {
+			state.progress = definition.initialProgress
+		}
+		var amount uint64
+		latestMS, latestSequence := state.streamMS, state.streamSeq
 		for _, event := range byKey[key] {
-			if !journalStreamAfter(event.streamMS, event.streamSeq, previousMS, previousSequence) {
+			if !journalStreamAfter(event.streamMS, event.streamSeq, state.streamMS, state.streamSeq) {
 				continue
 			}
-			amount += event.amount
+			amount += uint64(event.amount)
 			if journalStreamAfter(event.streamMS, event.streamSeq, latestMS, latestSequence) {
 				latestMS, latestSequence = event.streamMS, event.streamSeq
 			}
@@ -1656,65 +2285,72 @@ func (s *Store) materializeTaskJournal(
 		if amount == 0 {
 			continue
 		}
-		newProgress := currentProgress
-		if !claimed {
-			newProgress = min(definition.target, currentProgress+amount)
+		newProgress := state.progress
+		if !state.claimed {
+			newProgress = uint32(min(uint64(definition.target), uint64(state.progress)+amount))
 		}
-		var execErr error
-		if exists {
-			_, execErr = tx.ExecContext(ctx, `
-				UPDATE player_task
-				SET progress = ?, target = ?, reward_coin = ?,
-					journal_stream_ms = ?, journal_stream_seq = ?
-				WHERE uid = ? AND logic_day = ? AND task_id = ?`,
-				newProgress, definition.target, definition.rewardCoin,
-				latestMS, latestSequence, key.uid, key.dayKey, key.taskID,
-			)
-		} else {
-			_, execErr = tx.ExecContext(ctx, `
-				INSERT INTO player_task (
-					uid, logic_day, task_id, progress, target, reward_coin,
-					journal_stream_ms, journal_stream_seq
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				key.uid, key.dayKey, key.taskID, newProgress, definition.target,
-				definition.rewardCoin, latestMS, latestSequence,
-			)
-		}
-		if execErr != nil {
-			return nil, fmt.Errorf("store: materialize projected task %d: %w", key.taskID, execErr)
-		}
-		appliedKeys = append(appliedKeys, key)
-		if newProgress != currentProgress {
+		updates = append(updates, taskProjectionUpdate{
+			key: key, definition: definition, previous: state.progress, progress: newProgress,
+			claimed: state.claimed, streamMS: latestMS, streamSeq: latestSequence,
+		})
+		if newProgress != state.progress {
 			results[key] = TaskAdvanceResult{
 				Task: Task{
 					ID: key.taskID, DayKey: key.dayKey, Title: definition.title,
 					Progress: newProgress, Target: definition.target,
-					RewardCoin: definition.rewardCoin, Claimed: claimed, Kind: definition.kind,
+					RewardCoin: definition.rewardCoin, Claimed: state.claimed, Kind: definition.kind,
 				},
-				Changed: true, JustCompleted: currentProgress < definition.target && newProgress == definition.target,
+				Changed: true, JustCompleted: state.progress < definition.target && newProgress == definition.target,
 			}
+		}
+	}
+	if len(updates) > 0 {
+		values := make([]string, len(updates))
+		args := make([]any, 0, len(updates)*8)
+		for index, update := range updates {
+			values[index] = "(?, ?, ?, ?, ?, ?, ?, ?)"
+			args = append(args, update.key.uid, update.key.dayKey, update.key.taskID,
+				update.progress, update.definition.target, update.definition.rewardCoin,
+				update.streamMS, update.streamSeq)
+		}
+		// A missing row can still be inserted concurrently by targeted and shard
+		// projection. The stream high-water predicate makes the multi-row upsert
+		// safe in that race and on replay after COMMIT-before-XACK crashes.
+		newer := `(VALUES(journal_stream_ms) > journal_stream_ms OR
+			(VALUES(journal_stream_ms) = journal_stream_ms AND VALUES(journal_stream_seq) > journal_stream_seq))`
+		query := `INSERT INTO player_task (
+			uid, logic_day, task_id, progress, target, reward_coin,
+			journal_stream_ms, journal_stream_seq
+		) VALUES ` + strings.Join(values, ",") + `
+		ON DUPLICATE KEY UPDATE
+			progress = IF(` + newer + `, VALUES(progress), progress),
+			target = IF(` + newer + `, VALUES(target), target),
+			reward_coin = IF(` + newer + `, VALUES(reward_coin), reward_coin),
+			journal_stream_ms = IF(` + newer + `, VALUES(journal_stream_ms), journal_stream_ms),
+			journal_stream_seq = IF(` + newer + `, VALUES(journal_stream_seq), journal_stream_seq)`
+		if _, execErr := tx.ExecContext(ctx, query, args...); execErr != nil {
+			return nil, fmt.Errorf("store: materialize projected task batch: %w", execErr)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("store: commit task journal projection: %w", err)
 	}
-	for _, key := range appliedKeys {
-		s.invalidateTaskCache(taskReadKey{uid: key.uid, dayKey: key.dayKey})
+	for _, update := range updates {
+		s.invalidateTaskCache(taskReadKey{uid: update.key.uid, dayKey: update.key.dayKey})
 	}
 	return results, nil
 }
 
-func (journal *FarmWriteJournal) materializeCodexGroup(messages []redis.XMessage) error {
-	for _, message := range messages {
-		record, err := recordFromXMessage(message)
-		if err != nil || record.Codex == nil {
-			return fmt.Errorf("store: decode codex journal record: %w", err)
+func (journal *FarmWriteJournal) materializeCodexGroup(parent context.Context, records []writeJournalRecord) error {
+	for _, record := range records {
+		if record.Codex == nil {
+			return errors.New("store: decode codex journal record: missing reward")
 		}
 		uid, err := strconv.ParseUint(record.UID, 10, 64)
 		if err != nil || uid == 0 {
 			return errors.New("store: invalid codex journal UID")
 		}
-		ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
+		ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
 		issued, issueErr := journal.base.IssueCodexRewards(ctx, uid, record.Codex.Progress)
 		cancel()
 		if issueErr != nil {
@@ -1727,30 +2363,31 @@ func (journal *FarmWriteJournal) materializeCodexGroup(messages []redis.XMessage
 	return nil
 }
 
-func (journal *FarmWriteJournal) materializeOutboxAckGroup(messages []redis.XMessage) error {
-	for _, message := range messages {
-		record, err := recordFromXMessage(message)
-		if err != nil || record.Ack == nil || record.Ack.EventID == "" {
-			return fmt.Errorf("store: decode outbox ack journal record: %w", err)
+func (journal *FarmWriteJournal) materializeOutboxAckGroup(parent context.Context, records []writeJournalRecord) error {
+	eventIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		if record.Ack == nil || record.Ack.EventID == "" {
+			return errors.New("store: decode outbox ack journal record: missing event")
 		}
-		ctx, cancel := context.WithTimeout(journal.ctx, journal.config.IOTimeout)
-		err = journal.base.MarkOutboxPublished(ctx, record.Ack.EventID)
-		cancel()
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
+		eventIDs = append(eventIDs, record.Ack.EventID)
+	}
+	// Gateway already appends delivered outbox acknowledgements in batches. Do
+	// not explode that batch back into one MySQL UPDATE per event during
+	// projection: cross-farm traffic otherwise adds roughly one extra SQL round
+	// trip for every successful action and fragments the shared projector lane.
+	ctx, cancel := context.WithTimeout(parent, journal.config.IOTimeout)
+	err := journal.base.MarkOutboxPublishedBatch(ctx, eventIDs)
+	cancel()
+	if err != nil {
+		return err
 	}
 	return nil
 }
 
-func (journal *FarmWriteJournal) materializeBarrierGroup(messages []redis.XMessage) error {
+func (journal *FarmWriteJournal) materializeBarrierGroup(records []writeJournalRecord) error {
 	journal.barrierMu.Lock()
 	defer journal.barrierMu.Unlock()
-	for _, message := range messages {
-		record, err := recordFromXMessage(message)
-		if err != nil {
-			return err
-		}
+	for _, record := range records {
 		if waiter := journal.barriers[record.EventID]; waiter != nil {
 			close(waiter)
 			delete(journal.barriers, record.EventID)
@@ -1847,6 +2484,10 @@ func (journal *FarmWriteJournal) streamKey(shard int) string {
 
 func (journal *FarmWriteJournal) latestKey(shard int, uid uint64) string {
 	return journal.config.Prefix + ":{" + journal.streamTag(shard) + "}:latest:" + strconv.FormatUint(uid, 10)
+}
+
+func (journal *FarmWriteJournal) pendingUIDKey(shard int, uid uint64) string {
+	return journal.config.Prefix + ":{" + journal.streamTag(shard) + "}:pending:" + strconv.FormatUint(uid, 10)
 }
 
 // FarmWriteJournalProjectorGroup is the Redis consumer group that materializes
@@ -1963,6 +2604,8 @@ func (journal *FarmWriteJournal) WriteBacklog(ctx context.Context) (WriteJournal
 			return WriteJournalBacklog{}, fmt.Errorf("store: write journal group missing on shard %d", shard)
 		}
 	}
+	journal.projectionBacklog.Store(backlog.Total())
+	journal.adjustProjectionLimit()
 	return backlog, nil
 }
 

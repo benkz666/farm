@@ -29,6 +29,10 @@ const (
 	defaultDeltaQueueShards   = 16
 	defaultDeltaQueuePerShard = 1024
 	deltaLookupBatchSize      = 256
+	// Delta delivery is advisory and already asynchronous. A very small
+	// coalescing window turns bursts into useful Redis pipelines without
+	// delaying the command response or making real-time updates perceptible.
+	deltaLookupBatchWindow = time.Millisecond
 )
 
 // PushBatch is the typed Farm-to-Gateway fan-out unit.
@@ -158,6 +162,7 @@ func (publisher *AsyncDeltaPublisher) run(queue <-chan queuedDelta) {
 		batch := make([]queuedDelta, 0, deltaLookupBatchSize)
 		batch = append(batch, job)
 		closed := false
+		timer := time.NewTimer(deltaLookupBatchWindow)
 	drain:
 		for len(batch) < deltaLookupBatchSize {
 			select {
@@ -167,8 +172,14 @@ func (publisher *AsyncDeltaPublisher) run(queue <-chan queuedDelta) {
 					break drain
 				}
 				batch = append(batch, next)
-			default:
+			case <-timer.C:
 				break drain
+			}
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
 		}
 		var err error
@@ -367,6 +378,22 @@ func (p *FanoutPublisher) publishResolved(ctx context.Context, delta farm.FarmDe
 	encodeStart := time.Now()
 	typedDelta := clientwire.FarmDeltaToProto(delta)
 	encodeDur := time.Since(encodeStart)
+	// A delta normally targets one Gateway. Avoid allocating a job channel and
+	// spawning a worker goroutine for that overwhelmingly common case; the
+	// outer AsyncDeltaPublisher already provides bounded parallelism.
+	if len(groups) == 1 {
+		for gatewayID, connIDs := range groups {
+			pushStart := time.Now()
+			err := p.pusher.PushBatch(ctx, gatewayID, PushBatch{
+				ConnIDs: connIDs,
+				Delta:   typedDelta,
+			})
+			if m := p.metrics; m != nil {
+				m.ObserveDeltaBroadcast(1, len(connIDs), encodeDur, time.Since(pushStart))
+			}
+			return err
+		}
+	}
 
 	type job struct {
 		gatewayID string

@@ -190,6 +190,33 @@ export class NetClient {
   }
 
   /**
+   * 当前真实 WebSocket 生命周期；不使用登录会话标志推断连接状态。
+   * @returns {'offline'|'connecting'|'connected'|'reconnecting'|'restoring'}
+   */
+  get connectionState() {
+    if (this._fatalStopped) return 'offline'
+    if (this._restoring) return 'restoring'
+    if (this._ws?.readyState === this._WebSocket.OPEN) return 'connected'
+    if (this._connecting || this._openingWs?.readyState === this._WebSocket.CONNECTING) {
+      return this._hadOpenConnection ? 'reconnecting' : 'connecting'
+    }
+    if (this._reconnectTimer != null || (this._autoReconnect && this._hadOpenConnection)) {
+      return 'reconnecting'
+    }
+    return 'offline'
+  }
+
+  /**
+   * 应用层探活：只有服务端返回 Ping 响应，调用方才能确认链路真实可用。
+   * @param {number} [clientTime]
+   * @param {number} [timeoutMs] 可为探活使用短于普通业务请求的独立超时。
+   * @returns {Promise<Envelope>}
+   */
+  ping(clientTime = Date.now(), timeoutMs) {
+    return this.request(CMD_PING, { client_time: clientTime }, { timeoutMs })
+  }
+
+  /**
    * 主动关闭：取消重连、拒绝在途请求。后续显式 connect 可重新启用自动重连。
    */
   close() {
@@ -532,13 +559,17 @@ export class NetClient {
    * 发送 Envelope，按 client_seq 匹配应答。默认超时；超时/关闭时清 timer，不二次 reject。
    * @param {number} cmd
    * @param {object} payload
+   * @param {{ timeoutMs?: number }} [options]
    * @returns {Promise<Envelope>}
    */
-  request(cmd, payload = {}) {
+  request(cmd, payload = {}, options = {}) {
     if (!this._ws || this._ws.readyState !== this._WebSocket.OPEN) {
       return Promise.reject(new Error('net: websocket not open'))
     }
     const client_seq = ++this._clientSeq
+    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+      ? options.timeoutMs
+      : this.requestTimeoutMs
     /** @type {Envelope} */
     const envelope = { cmd, client_seq, err: 0, payload }
     const ws = this._ws
@@ -567,7 +598,7 @@ export class NetClient {
         if (entry.settled) return
         this._pending.delete(client_seq)
         entry.reject(new Error(`net: request timeout cmd=${cmd} seq=${client_seq}`))
-      }, this.requestTimeoutMs)
+      }, timeoutMs)
       this._pending.set(client_seq, entry)
       try {
         this._sendQueue.push({ ws, envelope })
@@ -759,7 +790,12 @@ export class NetClient {
     const gen = ++this._restoreGeneration
     try {
       const resume = this._resumeContext()
-      const hs = await this.handshake()
+      // Queue handshake and EnterFarm in the same binary batch. Gateway handles
+      // batch members in order, saving one full RTT during every reconnect.
+      const [hs, initialEnter] = await Promise.all([
+        this.handshake(),
+        this.enterFarm(resume.resume_farm_uid || 0),
+      ])
       if (gen !== this._restoreGeneration) return
       if (hs.err !== 0) {
         if (FATAL_RECONNECT_ERRS.has(hs.err)) {
@@ -771,7 +807,7 @@ export class NetClient {
         return
       }
 
-      let enter = await this.enterFarm(resume.resume_farm_uid || 0)
+      let enter = initialEnter
       if (gen !== this._restoreGeneration) return
       if (
         enter.err === ERR_NOT_FRIEND &&

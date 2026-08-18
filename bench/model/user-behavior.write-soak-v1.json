@@ -1,0 +1,19 @@
+{
+  "name": "write-soak-v1",
+  "description": "可重复写链路长稳模型：Buy/Sell使用大额合法资产持续产生Farm Journal与任务副作用，读请求保留Gateway/Farm/Social混合流量。72%写比例用于逼近capacity-100-v1在15000 QPS规划验证档约0.7218条Journal记录/业务请求的实测放大率。",
+  "calibration": {
+    "source_run": "candidate-15000-final-r1",
+    "source_business_qps": 15000,
+    "source_journal_records_per_second": 10826.733333333334,
+    "source_journal_records_per_business_request": 0.7217822222222222,
+    "target_write_share": 0.72
+  },
+  "operations": [
+    {"name": "buy", "reference_qps": 36.0, "pool": "local", "enabled": true},
+    {"name": "sell", "reference_qps": 36.0, "pool": "local", "enabled": true},
+    {"name": "sync", "reference_qps": 10.0, "pool": "local", "enabled": true},
+    {"name": "friend-list", "reference_qps": 9.0, "pool": "social", "enabled": true},
+    {"name": "task-list", "reference_qps": 5.0, "pool": "local", "enabled": true},
+    {"name": "mail-list", "reference_qps": 4.0, "pool": "local", "enabled": true}
+  ]
+}

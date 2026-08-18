@@ -1,0 +1,896 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "annotations": {
+                    "deployment.kubernetes.io/revision": "67",
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{},\"name\":\"gateway\",\"namespace\":\"benkz\"},\"spec\":{\"replicas\":3,\"selector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"gateway\"}},\"strategy\":{\"rollingUpdate\":{\"maxSurge\":1,\"maxUnavailable\":0}},\"template\":{\"metadata\":{\"annotations\":{\"prometheus.io/path\":\"/metrics\",\"prometheus.io/port\":\"9302\",\"prometheus.io/scrape\":\"true\"},\"labels\":{\"app.kubernetes.io/name\":\"gateway\",\"app.kubernetes.io/part-of\":\"farm\"}},\"spec\":{\"containers\":[{\"env\":[{\"name\":\"FARM_ENV\",\"value\":\"dev\"},{\"name\":\"FARM_MYSQL_DSN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"mysql-dsn\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_REDIS_ADDR\",\"value\":\"redis:6379\"},{\"name\":\"FARM_INTERNAL_TOKEN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"internal-token\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_GATEWAY_HTTP_ADDR\",\"value\":\":9002\"},{\"name\":\"FARM_GATEWAY_GRPC_ADDR\",\"value\":\":9202\"},{\"name\":\"FARM_GATEWAY_ADMIN_ADDR\",\"value\":\":9302\"},{\"name\":\"FARM_GATEWAY_INSTANCE_ID\",\"valueFrom\":{\"fieldRef\":{\"fieldPath\":\"metadata.uid\"}}},{\"name\":\"FARM_GATEWAY_ADVERTISE_HOST\",\"valueFrom\":{\"fieldRef\":{\"fieldPath\":\"status.podIP\"}}},{\"name\":\"FARM_GATEWAY_ADVERTISE_PORT\",\"value\":\"9202\"},{\"name\":\"FARM_GATEWAY_INSTANCE_TTL\",\"value\":\"30s\"},{\"name\":\"FARM_ROUTE_TABLE\",\"value\":\"deploy/route-table.local.json\"},{\"name\":\"FARM_FARM_GRPC_TARGETS\",\"value\":\"{\\\"farm-0\\\":\\\"farm:9210\\\"}\"},{\"name\":\"FARM_GATEWAY_GRPC_TARGETS\",\"value\":\"{}\"},{\"name\":\"FARM_SOCIAL_GRPC_TARGET\",\"value\":\"social:9204\"},{\"name\":\"FARM_DISABLE_WS_RATE_LIMIT\",\"value\":\"0\"},{\"name\":\"FARM_ENABLE_API_DOCS\",\"value\":\"1\"},{\"name\":\"FARM_TIME_PROFILE\",\"value\":\"authentic\"},{\"name\":\"FARM_ALLOW_DEBUG_TIME\",\"value\":\"1\"},{\"name\":\"GOMAXPROCS\",\"value\":\"1\"},{\"name\":\"GOMEMLIMIT\",\"value\":\"800MiB\"}],\"image\":\"benkz/gateway:k3s\",\"imagePullPolicy\":\"Never\",\"lifecycle\":{\"preStop\":{\"sleep\":{\"seconds\":5}}},\"livenessProbe\":{\"httpGet\":{\"path\":\"/healthz\",\"port\":\"admin\"},\"initialDelaySeconds\":20,\"periodSeconds\":10},\"name\":\"gateway\",\"ports\":[{\"containerPort\":9002,\"name\":\"http\"},{\"containerPort\":9202,\"name\":\"grpc\"},{\"containerPort\":9302,\"name\":\"admin\"}],\"readinessProbe\":{\"failureThreshold\":24,\"httpGet\":{\"path\":\"/readyz\",\"port\":\"admin\"},\"periodSeconds\":5,\"timeoutSeconds\":3},\"resources\":{\"limits\":{\"cpu\":\"1\",\"memory\":\"1Gi\"},\"requests\":{\"cpu\":\"1\",\"memory\":\"1Gi\"}}}],\"terminationGracePeriodSeconds\":45}}}}\n"
+                },
+                "creationTimestamp": "2026-08-13T07:04:03Z",
+                "generation": 76,
+                "name": "gateway",
+                "namespace": "benkz",
+                "resourceVersion": "111379",
+                "uid": "98ece2c7-4f2e-4735-8504-50441084b010"
+            },
+            "spec": {
+                "progressDeadlineSeconds": 600,
+                "replicas": 3,
+                "revisionHistoryLimit": 10,
+                "selector": {
+                    "matchLabels": {
+                        "app.kubernetes.io/name": "gateway"
+                    }
+                },
+                "strategy": {
+                    "rollingUpdate": {
+                        "maxSurge": 0,
+                        "maxUnavailable": 1
+                    },
+                    "type": "RollingUpdate"
+                },
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": "2026-08-16T01:43:42+08:00",
+                            "prometheus.io/path": "/metrics",
+                            "prometheus.io/port": "9302",
+                            "prometheus.io/scrape": "true"
+                        },
+                        "labels": {
+                            "app.kubernetes.io/name": "gateway",
+                            "app.kubernetes.io/part-of": "farm"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "name": "FARM_ENV",
+                                        "value": "dev"
+                                    },
+                                    {
+                                        "name": "FARM_MYSQL_DSN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "mysql-dsn",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_REDIS_ADDR",
+                                        "value": "redis:6379"
+                                    },
+                                    {
+                                        "name": "FARM_INTERNAL_TOKEN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "internal-token",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_HTTP_ADDR",
+                                        "value": ":9002"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_GRPC_ADDR",
+                                        "value": ":9202"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_ADMIN_ADDR",
+                                        "value": ":9302"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_INSTANCE_ID",
+                                        "valueFrom": {
+                                            "fieldRef": {
+                                                "apiVersion": "v1",
+                                                "fieldPath": "metadata.uid"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_ADVERTISE_HOST",
+                                        "valueFrom": {
+                                            "fieldRef": {
+                                                "apiVersion": "v1",
+                                                "fieldPath": "status.podIP"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_ADVERTISE_PORT",
+                                        "value": "9202"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_INSTANCE_TTL",
+                                        "value": "30s"
+                                    },
+                                    {
+                                        "name": "FARM_ROUTE_TABLE",
+                                        "value": "deploy/route-table.local.json"
+                                    },
+                                    {
+                                        "name": "FARM_FARM_GRPC_TARGETS",
+                                        "value": "{\"farm-0\":\"farm:9210\"}"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                        "value": "{}"
+                                    },
+                                    {
+                                        "name": "FARM_SOCIAL_GRPC_TARGET",
+                                        "value": "social:9204"
+                                    },
+                                    {
+                                        "name": "FARM_DISABLE_WS_RATE_LIMIT",
+                                        "value": "0"
+                                    },
+                                    {
+                                        "name": "FARM_ENABLE_API_DOCS",
+                                        "value": "1"
+                                    },
+                                    {
+                                        "name": "FARM_TIME_PROFILE",
+                                        "value": "authentic"
+                                    },
+                                    {
+                                        "name": "FARM_ALLOW_DEBUG_TIME",
+                                        "value": "1"
+                                    },
+                                    {
+                                        "name": "GOMAXPROCS",
+                                        "value": "2"
+                                    },
+                                    {
+                                        "name": "GOMEMLIMIT",
+                                        "value": "1536MiB"
+                                    }
+                                ],
+                                "image": "benkz/gateway:k3s",
+                                "imagePullPolicy": "Never",
+                                "lifecycle": {
+                                    "preStop": {
+                                        "sleep": {
+                                            "seconds": 5
+                                        }
+                                    }
+                                },
+                                "livenessProbe": {
+                                    "failureThreshold": 3,
+                                    "httpGet": {
+                                        "path": "/healthz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "initialDelaySeconds": 20,
+                                    "periodSeconds": 10,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 1
+                                },
+                                "name": "gateway",
+                                "ports": [
+                                    {
+                                        "containerPort": 9002,
+                                        "name": "http",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9202,
+                                        "name": "grpc",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9302,
+                                        "name": "admin",
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "readinessProbe": {
+                                    "failureThreshold": 24,
+                                    "httpGet": {
+                                        "path": "/readyz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "periodSeconds": 5,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 3
+                                },
+                                "resources": {
+                                    "limits": {
+                                        "cpu": "2",
+                                        "memory": "2Gi"
+                                    },
+                                    "requests": {
+                                        "cpu": "2",
+                                        "memory": "2Gi"
+                                    }
+                                },
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Always",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 45
+                    }
+                }
+            },
+            "status": {
+                "availableReplicas": 3,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-08-15T15:31:40Z",
+                        "lastUpdateTime": "2026-08-15T15:31:40Z",
+                        "message": "Deployment has minimum availability.",
+                        "reason": "MinimumReplicasAvailable",
+                        "status": "True",
+                        "type": "Available"
+                    },
+                    {
+                        "lastTransitionTime": "2026-08-13T07:04:03Z",
+                        "lastUpdateTime": "2026-08-15T17:44:27Z",
+                        "message": "ReplicaSet \"gateway-6b57f4b4c4\" has successfully progressed.",
+                        "reason": "NewReplicaSetAvailable",
+                        "status": "True",
+                        "type": "Progressing"
+                    }
+                ],
+                "observedGeneration": 76,
+                "readyReplicas": 3,
+                "replicas": 3,
+                "terminatingReplicas": 0,
+                "updatedReplicas": 3
+            }
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "annotations": {
+                    "deployment.kubernetes.io/revision": "135",
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{},\"name\":\"farm\",\"namespace\":\"benkz\"},\"spec\":{\"replicas\":1,\"selector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"farm\"}},\"strategy\":{\"type\":\"Recreate\"},\"template\":{\"metadata\":{\"annotations\":{\"prometheus.io/path\":\"/metrics\",\"prometheus.io/port\":\"9310\",\"prometheus.io/scrape\":\"true\"},\"labels\":{\"app.kubernetes.io/name\":\"farm\",\"app.kubernetes.io/part-of\":\"farm\"}},\"spec\":{\"containers\":[{\"env\":[{\"name\":\"FARM_ENV\",\"value\":\"dev\"},{\"name\":\"FARM_MYSQL_DSN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"mysql-dsn\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_REDIS_ADDR\",\"value\":\"redis:6379\"},{\"name\":\"FARM_INTERNAL_TOKEN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"internal-token\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_FARM_HTTP_ADDR\",\"value\":\":9100\"},{\"name\":\"FARM_FARM_GRPC_ADDR\",\"value\":\":9210\"},{\"name\":\"FARM_FARM_ADMIN_ADDR\",\"value\":\":9310\"},{\"name\":\"FARM_FARM_INSTANCE_ID\",\"value\":\"farm-0\"},{\"name\":\"FARM_ROUTE_TABLE\",\"value\":\"deploy/route-table.local.json\"},{\"name\":\"FARM_FARM_GRPC_TARGETS\",\"value\":\"{\\\"farm-0\\\":\\\"farm:9210\\\"}\"},{\"name\":\"FARM_GATEWAY_GRPC_TARGETS\",\"value\":\"{}\"},{\"name\":\"FARM_SOCIAL_GRPC_TARGET\",\"value\":\"social:9204\"},{\"name\":\"FARM_HAZARD_SECRET\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"hazard-secret\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_TIME_PROFILE\",\"value\":\"authentic\"},{\"name\":\"FARM_ALLOW_DEBUG_TIME\",\"value\":\"1\"},{\"name\":\"FARM_ACTOR_IDLE_TTL\",\"value\":\"2m\"},{\"name\":\"FARM_ACTOR_MAX_RESIDENT\",\"value\":\"20000\"},{\"name\":\"FARM_COMMITTER_SHARDS\",\"value\":\"16\"},{\"name\":\"FARM_WRITE_JOURNAL_SHARDS\",\"value\":\"32\"},{\"name\":\"FARM_WRITE_JOURNAL_PROJECTORS\",\"value\":\"8\"},{\"name\":\"FARM_WRITE_JOURNAL_BATCH\",\"value\":\"1024\"},{\"name\":\"FARM_WRITE_JOURNAL_BLOCK\",\"value\":\"50ms\"},{\"name\":\"FARM_WRITE_JOURNAL_LATEST_TTL\",\"value\":\"24h\"},{\"name\":\"FARM_WRITE_JOURNAL_CLAIM_IDLE\",\"value\":\"5s\"},{\"name\":\"FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT\",\"value\":\"5m\"},{\"name\":\"FARM_WRITE_JOURNAL_REPLICAS\",\"value\":\"0\"},{\"name\":\"FARM_WRITE_DYNAMIC_ADMISSION\",\"value\":\"1\"},{\"name\":\"FARM_WRITE_MAX_IN_FLIGHT\",\"value\":\"512\"},{\"name\":\"FARM_WRITE_MIN_IN_FLIGHT\",\"value\":\"64\"},{\"name\":\"FARM_WRITE_BACKLOG_LOW\",\"value\":\"8192\"},{\"name\":\"FARM_WRITE_BACKLOG_HIGH\",\"value\":\"65536\"},{\"name\":\"FARM_WRITE_BACKLOG_HARD\",\"value\":\"262144\"},{\"name\":\"FARM_WRITE_RECOVERY_STEP\",\"value\":\"64\"},{\"name\":\"FARM_WRITE_BACKLOG_POLL\",\"value\":\"250ms\"},{\"name\":\"FARM_WRITE_BACKLOG_TIMEOUT\",\"value\":\"150ms\"},{\"name\":\"FARM_WRITE_BACKLOG_ERROR_GRACE\",\"value\":\"2s\"},{\"name\":\"FARM_WRITE_ADMISSION_WAIT\",\"value\":\"2ms\"},{\"name\":\"GOMAXPROCS\",\"value\":\"2\"},{\"name\":\"GOMEMLIMIT\",\"value\":\"800MiB\"}],\"image\":\"benkz/farm:k3s\",\"imagePullPolicy\":\"Never\",\"livenessProbe\":{\"httpGet\":{\"path\":\"/healthz\",\"port\":\"admin\"},\"initialDelaySeconds\":30,\"periodSeconds\":10},\"name\":\"farm\",\"ports\":[{\"containerPort\":9100,\"name\":\"http\"},{\"containerPort\":9210,\"name\":\"grpc\"},{\"containerPort\":9310,\"name\":\"admin\"}],\"readinessProbe\":{\"failureThreshold\":60,\"httpGet\":{\"path\":\"/readyz\",\"port\":\"admin\"},\"periodSeconds\":5,\"timeoutSeconds\":3},\"resources\":{\"limits\":{\"cpu\":\"2\",\"memory\":\"1Gi\"},\"requests\":{\"cpu\":\"2\",\"memory\":\"1Gi\"}}}],\"terminationGracePeriodSeconds\":45}}}}\n"
+                },
+                "creationTimestamp": "2026-08-13T07:04:03Z",
+                "generation": 139,
+                "name": "farm",
+                "namespace": "benkz",
+                "resourceVersion": "111250",
+                "uid": "26be7691-dfd5-478b-967e-6c26ec518ee5"
+            },
+            "spec": {
+                "progressDeadlineSeconds": 600,
+                "replicas": 1,
+                "revisionHistoryLimit": 10,
+                "selector": {
+                    "matchLabels": {
+                        "app.kubernetes.io/name": "farm"
+                    }
+                },
+                "strategy": {
+                    "type": "Recreate"
+                },
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": "2026-08-16T01:43:42+08:00",
+                            "prometheus.io/path": "/metrics",
+                            "prometheus.io/port": "9310",
+                            "prometheus.io/scrape": "true"
+                        },
+                        "labels": {
+                            "app.kubernetes.io/name": "farm",
+                            "app.kubernetes.io/part-of": "farm"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "name": "FARM_ENV",
+                                        "value": "dev"
+                                    },
+                                    {
+                                        "name": "FARM_MYSQL_DSN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "mysql-dsn",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_REDIS_ADDR",
+                                        "value": "redis:6379"
+                                    },
+                                    {
+                                        "name": "FARM_INTERNAL_TOKEN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "internal-token",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_FARM_HTTP_ADDR",
+                                        "value": ":9100"
+                                    },
+                                    {
+                                        "name": "FARM_FARM_GRPC_ADDR",
+                                        "value": ":9210"
+                                    },
+                                    {
+                                        "name": "FARM_FARM_ADMIN_ADDR",
+                                        "value": ":9310"
+                                    },
+                                    {
+                                        "name": "FARM_FARM_INSTANCE_ID",
+                                        "value": "farm-0"
+                                    },
+                                    {
+                                        "name": "FARM_ROUTE_TABLE",
+                                        "value": "deploy/route-table.local.json"
+                                    },
+                                    {
+                                        "name": "FARM_FARM_GRPC_TARGETS",
+                                        "value": "{\"farm-0\":\"farm:9210\"}"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                        "value": "{}"
+                                    },
+                                    {
+                                        "name": "FARM_SOCIAL_GRPC_TARGET",
+                                        "value": "social:9204"
+                                    },
+                                    {
+                                        "name": "FARM_HAZARD_SECRET",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "hazard-secret",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_TIME_PROFILE",
+                                        "value": "authentic"
+                                    },
+                                    {
+                                        "name": "FARM_ALLOW_DEBUG_TIME",
+                                        "value": "1"
+                                    },
+                                    {
+                                        "name": "FARM_ACTOR_IDLE_TTL",
+                                        "value": "2m"
+                                    },
+                                    {
+                                        "name": "FARM_ACTOR_MAX_RESIDENT",
+                                        "value": "20000"
+                                    },
+                                    {
+                                        "name": "FARM_COMMITTER_SHARDS",
+                                        "value": "8"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_SHARDS",
+                                        "value": "32"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_PROJECTORS",
+                                        "value": "12"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_BATCH",
+                                        "value": "1024"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_BLOCK",
+                                        "value": "50ms"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_LATEST_TTL",
+                                        "value": "24h"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_CLAIM_IDLE",
+                                        "value": "5s"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT",
+                                        "value": "5m"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_JOURNAL_REPLICAS",
+                                        "value": "0"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_DYNAMIC_ADMISSION",
+                                        "value": "1"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_MAX_IN_FLIGHT",
+                                        "value": "512"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_MIN_IN_FLIGHT",
+                                        "value": "64"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_LOW",
+                                        "value": "8192"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_HIGH",
+                                        "value": "65536"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_HARD",
+                                        "value": "262144"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_RECOVERY_STEP",
+                                        "value": "64"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_POLL",
+                                        "value": "250ms"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_TIMEOUT",
+                                        "value": "150ms"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_BACKLOG_ERROR_GRACE",
+                                        "value": "2s"
+                                    },
+                                    {
+                                        "name": "FARM_WRITE_ADMISSION_WAIT",
+                                        "value": "5ms"
+                                    },
+                                    {
+                                        "name": "GOMAXPROCS",
+                                        "value": "4"
+                                    },
+                                    {
+                                        "name": "GOMEMLIMIT",
+                                        "value": "3GiB"
+                                    }
+                                ],
+                                "image": "benkz/farm:capacity-p90-v2",
+                                "imagePullPolicy": "Never",
+                                "livenessProbe": {
+                                    "failureThreshold": 3,
+                                    "httpGet": {
+                                        "path": "/healthz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "initialDelaySeconds": 30,
+                                    "periodSeconds": 10,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 1
+                                },
+                                "name": "farm",
+                                "ports": [
+                                    {
+                                        "containerPort": 9100,
+                                        "name": "http",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9210,
+                                        "name": "grpc",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9310,
+                                        "name": "admin",
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "readinessProbe": {
+                                    "failureThreshold": 60,
+                                    "httpGet": {
+                                        "path": "/readyz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "periodSeconds": 5,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 3
+                                },
+                                "resources": {
+                                    "limits": {
+                                        "cpu": "4",
+                                        "memory": "4Gi"
+                                    },
+                                    "requests": {
+                                        "cpu": "4",
+                                        "memory": "4Gi"
+                                    }
+                                },
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Always",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 45
+                    }
+                }
+            },
+            "status": {
+                "availableReplicas": 1,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-08-15T17:43:57Z",
+                        "lastUpdateTime": "2026-08-15T17:43:57Z",
+                        "message": "Deployment has minimum availability.",
+                        "reason": "MinimumReplicasAvailable",
+                        "status": "True",
+                        "type": "Available"
+                    },
+                    {
+                        "lastTransitionTime": "2026-08-13T07:04:03Z",
+                        "lastUpdateTime": "2026-08-15T17:43:57Z",
+                        "message": "ReplicaSet \"farm-77b56fd856\" has successfully progressed.",
+                        "reason": "NewReplicaSetAvailable",
+                        "status": "True",
+                        "type": "Progressing"
+                    }
+                ],
+                "observedGeneration": 139,
+                "readyReplicas": 1,
+                "replicas": 1,
+                "terminatingReplicas": 0,
+                "updatedReplicas": 1
+            }
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "annotations": {
+                    "deployment.kubernetes.io/revision": "28",
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{},\"name\":\"social\",\"namespace\":\"benkz\"},\"spec\":{\"replicas\":1,\"selector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"social\"}},\"template\":{\"metadata\":{\"annotations\":{\"prometheus.io/path\":\"/metrics\",\"prometheus.io/port\":\"9304\",\"prometheus.io/scrape\":\"true\"},\"labels\":{\"app.kubernetes.io/name\":\"social\",\"app.kubernetes.io/part-of\":\"farm\"}},\"spec\":{\"containers\":[{\"env\":[{\"name\":\"FARM_ENV\",\"value\":\"dev\"},{\"name\":\"FARM_MYSQL_DSN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"mysql-dsn\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_REDIS_ADDR\",\"value\":\"redis:6379\"},{\"name\":\"FARM_GATEWAY_GRPC_TARGETS\",\"value\":\"{}\"},{\"name\":\"FARM_INVITE_SECRET\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"invite-secret\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_INTERNAL_TOKEN\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"internal-token\",\"name\":\"farm-secrets\"}}},{\"name\":\"FARM_SOCIAL_HTTP_ADDR\",\"value\":\":9004\"},{\"name\":\"FARM_SOCIAL_GRPC_ADDR\",\"value\":\":9204\"},{\"name\":\"FARM_SOCIAL_ADMIN_ADDR\",\"value\":\":9304\"},{\"name\":\"GOMAXPROCS\",\"value\":\"1\"},{\"name\":\"GOMEMLIMIT\",\"value\":\"800MiB\"}],\"image\":\"benkz/social:k3s\",\"imagePullPolicy\":\"Never\",\"livenessProbe\":{\"httpGet\":{\"path\":\"/healthz\",\"port\":\"admin\"},\"initialDelaySeconds\":15,\"periodSeconds\":10},\"name\":\"social\",\"ports\":[{\"containerPort\":9004,\"name\":\"http\"},{\"containerPort\":9204,\"name\":\"grpc\"},{\"containerPort\":9304,\"name\":\"admin\"}],\"readinessProbe\":{\"failureThreshold\":12,\"httpGet\":{\"path\":\"/readyz\",\"port\":\"admin\"},\"periodSeconds\":5,\"timeoutSeconds\":3},\"resources\":{\"limits\":{\"cpu\":\"1\",\"memory\":\"1Gi\"},\"requests\":{\"cpu\":\"1\",\"memory\":\"1Gi\"}}}]}}}}\n"
+                },
+                "creationTimestamp": "2026-08-13T07:04:03Z",
+                "generation": 29,
+                "name": "social",
+                "namespace": "benkz",
+                "resourceVersion": "111228",
+                "uid": "d3dee554-64bb-4049-ab58-2a39de80765c"
+            },
+            "spec": {
+                "progressDeadlineSeconds": 600,
+                "replicas": 1,
+                "revisionHistoryLimit": 10,
+                "selector": {
+                    "matchLabels": {
+                        "app.kubernetes.io/name": "social"
+                    }
+                },
+                "strategy": {
+                    "rollingUpdate": {
+                        "maxSurge": 0,
+                        "maxUnavailable": 1
+                    },
+                    "type": "RollingUpdate"
+                },
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": "2026-08-16T01:43:42+08:00",
+                            "prometheus.io/path": "/metrics",
+                            "prometheus.io/port": "9304",
+                            "prometheus.io/scrape": "true"
+                        },
+                        "labels": {
+                            "app.kubernetes.io/name": "social",
+                            "app.kubernetes.io/part-of": "farm"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "name": "FARM_ENV",
+                                        "value": "dev"
+                                    },
+                                    {
+                                        "name": "FARM_MYSQL_DSN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "mysql-dsn",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_REDIS_ADDR",
+                                        "value": "redis:6379"
+                                    },
+                                    {
+                                        "name": "FARM_GATEWAY_GRPC_TARGETS",
+                                        "value": "{}"
+                                    },
+                                    {
+                                        "name": "FARM_INVITE_SECRET",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "invite-secret",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_INTERNAL_TOKEN",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "internal-token",
+                                                "name": "farm-secrets"
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "name": "FARM_SOCIAL_HTTP_ADDR",
+                                        "value": ":9004"
+                                    },
+                                    {
+                                        "name": "FARM_SOCIAL_GRPC_ADDR",
+                                        "value": ":9204"
+                                    },
+                                    {
+                                        "name": "FARM_SOCIAL_ADMIN_ADDR",
+                                        "value": ":9304"
+                                    },
+                                    {
+                                        "name": "GOMAXPROCS",
+                                        "value": "2"
+                                    },
+                                    {
+                                        "name": "GOMEMLIMIT",
+                                        "value": "1536MiB"
+                                    }
+                                ],
+                                "image": "benkz/social:k3s",
+                                "imagePullPolicy": "Never",
+                                "livenessProbe": {
+                                    "failureThreshold": 3,
+                                    "httpGet": {
+                                        "path": "/healthz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "initialDelaySeconds": 15,
+                                    "periodSeconds": 10,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 1
+                                },
+                                "name": "social",
+                                "ports": [
+                                    {
+                                        "containerPort": 9004,
+                                        "name": "http",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9204,
+                                        "name": "grpc",
+                                        "protocol": "TCP"
+                                    },
+                                    {
+                                        "containerPort": 9304,
+                                        "name": "admin",
+                                        "protocol": "TCP"
+                                    }
+                                ],
+                                "readinessProbe": {
+                                    "failureThreshold": 12,
+                                    "httpGet": {
+                                        "path": "/readyz",
+                                        "port": "admin",
+                                        "scheme": "HTTP"
+                                    },
+                                    "periodSeconds": 5,
+                                    "successThreshold": 1,
+                                    "timeoutSeconds": 3
+                                },
+                                "resources": {
+                                    "limits": {
+                                        "cpu": "2",
+                                        "memory": "2Gi"
+                                    },
+                                    "requests": {
+                                        "cpu": "2",
+                                        "memory": "2Gi"
+                                    }
+                                },
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Always",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "availableReplicas": 1,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-08-13T07:04:04Z",
+                        "lastUpdateTime": "2026-08-13T07:04:04Z",
+                        "message": "Deployment has minimum availability.",
+                        "reason": "MinimumReplicasAvailable",
+                        "status": "True",
+                        "type": "Available"
+                    },
+                    {
+                        "lastTransitionTime": "2026-08-13T07:04:03Z",
+                        "lastUpdateTime": "2026-08-15T17:43:52Z",
+                        "message": "ReplicaSet \"social-6f7c5d484f\" has successfully progressed.",
+                        "reason": "NewReplicaSetAvailable",
+                        "status": "True",
+                        "type": "Progressing"
+                    }
+                ],
+                "observedGeneration": 29,
+                "readyReplicas": 1,
+                "replicas": 1,
+                "terminatingReplicas": 0,
+                "updatedReplicas": 1
+            }
+        },
+        {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "annotations": {
+                    "deployment.kubernetes.io/revision": "30",
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"apps/v1\",\"kind\":\"Deployment\",\"metadata\":{\"annotations\":{},\"name\":\"k6\",\"namespace\":\"benkz\"},\"spec\":{\"replicas\":1,\"selector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"k6\"}},\"strategy\":{\"type\":\"Recreate\"},\"template\":{\"metadata\":{\"labels\":{\"app.kubernetes.io/name\":\"k6\",\"app.kubernetes.io/part-of\":\"farm\"}},\"spec\":{\"containers\":[{\"args\":[\"while true; do sleep 3600; done\"],\"command\":[\"/bin/sh\",\"-c\"],\"image\":\"benkz/k6:k3s\",\"imagePullPolicy\":\"Never\",\"name\":\"k6\",\"resources\":{\"limits\":{\"cpu\":\"22\",\"memory\":\"12Gi\"},\"requests\":{\"cpu\":\"20\",\"memory\":\"10Gi\"}},\"securityContext\":{\"runAsGroup\":0,\"runAsUser\":0},\"volumeMounts\":[{\"mountPath\":\"/fixtures\",\"name\":\"data\"},{\"mountPath\":\"/results\",\"name\":\"results\"}]}],\"volumes\":[{\"name\":\"data\",\"persistentVolumeClaim\":{\"claimName\":\"bench-data\"}},{\"name\":\"results\",\"persistentVolumeClaim\":{\"claimName\":\"bench-results\"}}]}}}}\n"
+                },
+                "creationTimestamp": "2026-08-13T07:04:04Z",
+                "generation": 31,
+                "name": "k6",
+                "namespace": "benkz",
+                "resourceVersion": "105974",
+                "uid": "067678b1-9cdd-44cd-b72c-5a829b5c2622"
+            },
+            "spec": {
+                "progressDeadlineSeconds": 600,
+                "replicas": 1,
+                "revisionHistoryLimit": 10,
+                "selector": {
+                    "matchLabels": {
+                        "app.kubernetes.io/name": "k6"
+                    }
+                },
+                "strategy": {
+                    "type": "Recreate"
+                },
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": "2026-08-15T18:47:09+08:00"
+                        },
+                        "labels": {
+                            "app.kubernetes.io/name": "k6",
+                            "app.kubernetes.io/part-of": "farm"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "while true; do sleep 3600; done"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-c"
+                                ],
+                                "image": "benkz/k6:capacity-100-v2",
+                                "imagePullPolicy": "Never",
+                                "name": "k6",
+                                "resources": {
+                                    "limits": {
+                                        "cpu": "12",
+                                        "memory": "12Gi"
+                                    },
+                                    "requests": {
+                                        "cpu": "12",
+                                        "memory": "12Gi"
+                                    }
+                                },
+                                "securityContext": {
+                                    "runAsGroup": 0,
+                                    "runAsUser": 0
+                                },
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File",
+                                "volumeMounts": [
+                                    {
+                                        "mountPath": "/fixtures",
+                                        "name": "data"
+                                    },
+                                    {
+                                        "mountPath": "/results",
+                                        "name": "results"
+                                    }
+                                ]
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Always",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30,
+                        "volumes": [
+                            {
+                                "name": "data",
+                                "persistentVolumeClaim": {
+                                    "claimName": "bench-data"
+                                }
+                            },
+                            {
+                                "name": "results",
+                                "persistentVolumeClaim": {
+                                    "claimName": "bench-results"
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+            "status": {
+                "availableReplicas": 1,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-08-15T16:23:06Z",
+                        "lastUpdateTime": "2026-08-15T16:23:06Z",
+                        "message": "Deployment has minimum availability.",
+                        "reason": "MinimumReplicasAvailable",
+                        "status": "True",
+                        "type": "Available"
+                    },
+                    {
+                        "lastTransitionTime": "2026-08-13T07:04:04Z",
+                        "lastUpdateTime": "2026-08-15T16:23:06Z",
+                        "message": "ReplicaSet \"k6-67778c768f\" has successfully progressed.",
+                        "reason": "NewReplicaSetAvailable",
+                        "status": "True",
+                        "type": "Progressing"
+                    }
+                ],
+                "observedGeneration": 31,
+                "readyReplicas": 1,
+                "replicas": 1,
+                "terminatingReplicas": 0,
+                "updatedReplicas": 1
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

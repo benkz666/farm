@@ -30,21 +30,3 @@ message AdvanceTaskRequest {
 message AdvanceTaskResponse {
   int32 err = 1;
 }
-
-message StreamExecuteRequest {
-  uint64 request_id = 1;
-  ClientCommandRequest request = 2;
-}
-
-message StreamExecuteResponse {
-  uint64 request_id = 1;
-  ClientCommandResponse response = 2;
-}
-
-message StreamExecuteBatchRequest {
-  repeated StreamExecuteRequest requests = 1;
-}
-
-message StreamExecuteBatchResponse {
-  repeated StreamExecuteResponse responses = 1;
-}

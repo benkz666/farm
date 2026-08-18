@@ -28,12 +28,14 @@ type Event struct {
 // FarmCommit bundles one immutable snapshot with durable outbox events that must
 // land in the same MySQL transaction.
 type FarmCommit struct {
-	Snapshot     *farm.Aggregate
-	Mutation     *farmv1.FarmWriteMutation
-	Outbox       []Event
-	TaskAdvances []TaskAdvance
-	CodexRewards []CodexReward
-	Plan         PersistPlan
+	Snapshot      *farm.Aggregate
+	Mutation      *farmv1.FarmWriteMutation
+	Outbox        []Event
+	TaskAdvances  []TaskAdvance
+	CodexRewards  []CodexReward
+	TaskClaims    []TaskClaim
+	MailMutations []MailMutation
+	Plan          PersistPlan
 }
 
 // TaskAdvance and CodexReward ride in the same durable Redis record as the
@@ -49,6 +51,29 @@ type CodexReward struct {
 	Progress farm.CodexProgress `json:"progress"`
 }
 
+// TaskClaim and MailMutation are Actor-authoritative state transitions. They
+// share the Farm commit's Redis durability boundary; MySQL is only an eventual,
+// idempotent projection of these facts.
+type TaskClaim struct {
+	DayKey    int64
+	TaskID    uint32
+	ClaimedAt int64
+}
+
+type MailMutationKind uint8
+
+const (
+	MailRead MailMutationKind = iota + 1
+	MailClaim
+	MailDelete
+)
+
+type MailMutation struct {
+	MailID     uint64
+	Kind       MailMutationKind
+	OccurredAt int64
+}
+
 // PersistMode identifies the smallest safe row set for one aggregate commit.
 // The zero value is deliberately the conservative full-snapshot mode.
 type PersistMode uint8
@@ -59,6 +84,7 @@ const (
 	PersistPlot
 	PersistCrossVisitor
 	PersistCrossOwner
+	PersistSideEffects
 )
 
 // PersistPlan travels through the Actor committer so reduced writes preserve

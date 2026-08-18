@@ -211,62 +211,151 @@ func (s *Store) AdvanceTask(ctx context.Context, uid uint64, dayKey int64, taskI
 
 // ClaimTask atomically marks and credits one calendar-day task.
 func (s *Store) ClaimTask(ctx context.Context, uid uint64, dayKey int64, taskID uint32) (TaskReward, error) {
-	definitions, err := s.ensureDailyTasks(ctx, uid, dayKey)
-	if err != nil {
+	return s.claimTask(ctx, uid, dayKey, taskID, nil)
+}
+
+// ClaimTaskAtState atomically claims a completed task and replaces player.coin
+// with the Actor-authoritative value plus the reward. Advancing farm_seq in
+// the same statement prevents an older asynchronous farm projection from
+// overwriting the direct reward after this transaction commits.
+func (s *Store) ClaimTaskAtState(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	taskID uint32,
+	state DirectClaimState,
+) (TaskReward, error) {
+	if state.NextFarmSeq == 0 {
+		return TaskReward{}, errors.New("store: direct task claim has invalid next farm sequence")
+	}
+	return s.claimTask(ctx, uid, dayKey, taskID, &state)
+}
+
+func (s *Store) claimTask(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	taskID uint32,
+	state *DirectClaimState,
+) (TaskReward, error) {
+	return s.claimTaskWithExecer(ctx, uid, dayKey, taskID, state, s.db)
+}
+
+func (s *Store) claimTaskWithExecer(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	taskID uint32,
+	state *DirectClaimState,
+	exec sqlContextExecer,
+) (TaskReward, error) {
+	definition, ok := dailyTaskDefinitionByID(dailyTaskDefinitionsFor(uid, dayKey), taskID)
+	if !ok {
+		return TaskReward{}, ErrTaskNotComplete
+	}
+
+	reward, missing, err := s.claimMaterializedTaskWithExecer(ctx, uid, dayKey, definition, state, exec)
+	if err != nil || !missing {
+		return reward, err
+	}
+	// Daily login starts completed even before its row exists. Only that cold
+	// compatibility path needs to materialize the whole daily board (including
+	// legacy daily_login reconciliation). Gameplay tasks with no row have no
+	// persisted progress and therefore cannot be claimed.
+	if taskID != TaskDailyLoginID {
+		return TaskReward{}, ErrTaskNotComplete
+	}
+	if _, err := s.ensureDailyTasks(ctx, uid, dayKey); err != nil {
 		return TaskReward{}, err
 	}
-	if _, ok := dailyTaskDefinitionByID(definitions, taskID); !ok {
-		return TaskReward{}, ErrTaskNotComplete
-	}
-	// Initialize outside the reward transaction. Concurrent task-board
-	// reconciliation while another claimant holds this row FOR UPDATE can
-	// otherwise form an InnoDB deadlock; initialization is idempotent and has no
-	// reward side effect.
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return TaskReward{}, fmt.Errorf("store: begin claim task tx: %w", err)
-	}
-	defer tx.Rollback()
+	reward, _, err = s.claimMaterializedTaskWithExecer(ctx, uid, dayKey, definition, state, exec)
+	return reward, err
+}
 
-	var progress, target uint32
-	var rewardCoin int64
-	var claimedAt sql.NullInt64
-	err = tx.QueryRowContext(ctx, `
-		SELECT progress, target, reward_coin, claimed_at
-		FROM player_task
-		WHERE uid = ? AND logic_day = ? AND task_id = ?
-		FOR UPDATE`, uid, dayKey, taskID).Scan(&progress, &target, &rewardCoin, &claimedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return TaskReward{}, ErrTaskNotComplete
+// claimMaterializedTask credits player and marks the task in one atomic joined
+// UPDATE. The previous success path used BEGIN + SELECT FOR UPDATE + two UPDATEs
+// + COMMIT; under a burst of targeted projections those five exchanges were a
+// large part of TaskClaim's tail. Definition values are deterministic server
+// configuration, so no preliminary read is needed to obtain the reward.
+func (s *Store) claimMaterializedTask(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	definition dailyTaskDefinition,
+	state *DirectClaimState,
+) (reward TaskReward, missing bool, err error) {
+	return s.claimMaterializedTaskWithExecer(ctx, uid, dayKey, definition, state, s.db)
+}
+
+func (s *Store) claimMaterializedTaskWithExecer(
+	ctx context.Context,
+	uid uint64,
+	dayKey int64,
+	definition dailyTaskDefinition,
+	state *DirectClaimState,
+	exec sqlContextExecer,
+) (reward TaskReward, missing bool, err error) {
+	now := time.Now().UnixMilli()
+	var result sql.Result
+	if state == nil {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE player AS p
+			JOIN player_task AS t ON t.uid = p.uid
+				AND t.logic_day = ? AND t.task_id = ?
+			SET p.coin = p.coin + ?, p.updated_at = ?,
+				t.target = ?, t.reward_coin = ?, t.claimed_at = ?
+			WHERE p.uid = ? AND t.claimed_at IS NULL AND t.progress >= ?`,
+			dayKey, definition.id, definition.rewardCoin, now,
+			definition.target, definition.rewardCoin, now, uid, definition.target,
+		)
+	} else {
+		result, err = exec.ExecContext(ctx, `
+			UPDATE player AS p
+			JOIN player_task AS t ON t.uid = p.uid
+				AND t.logic_day = ? AND t.task_id = ?
+			SET p.coin = ? + ?, p.farm_seq = ?, p.updated_at = ?,
+				t.target = ?, t.reward_coin = ?, t.claimed_at = ?
+			WHERE p.uid = ? AND t.claimed_at IS NULL AND t.progress >= ?`,
+			dayKey, definition.id, state.Coin, definition.rewardCoin, state.NextFarmSeq, now,
+			definition.target, definition.rewardCoin, now, uid, definition.target,
+		)
 	}
 	if err != nil {
-		return TaskReward{}, fmt.Errorf("store: load task for claim: %w", err)
+		return TaskReward{}, false, fmt.Errorf("store: atomically claim task: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return TaskReward{}, false, fmt.Errorf("store: inspect claimed task: %w", err)
+	}
+	if affected > 0 {
+		s.invalidateTaskCache(taskReadKey{uid: uid, dayKey: dayKey})
+		s.invalidateFarmAfterDirectClaim(uid)
+		return TaskReward{Coin: definition.rewardCoin}, false, nil
+	}
+
+	var progress uint32
+	var claimedAt sql.NullInt64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT progress, claimed_at
+		FROM player_task
+		WHERE uid = ? AND logic_day = ? AND task_id = ?`,
+		uid, dayKey, definition.id,
+	).Scan(&progress, &claimedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TaskReward{}, true, nil
+	}
+	if err != nil {
+		return TaskReward{}, false, fmt.Errorf("store: diagnose unclaimed task: %w", err)
 	}
 	if claimedAt.Valid {
-		return TaskReward{}, ErrTaskAlreadyClaimed
+		return TaskReward{}, false, ErrTaskAlreadyClaimed
 	}
-	if progress < target {
-		return TaskReward{}, ErrTaskNotComplete
+	if progress < definition.target {
+		return TaskReward{}, false, ErrTaskNotComplete
 	}
-
-	now := time.Now().UnixMilli()
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE player SET coin = coin + ?, updated_at = ? WHERE uid = ?`,
-		rewardCoin, now, uid); err != nil {
-		return TaskReward{}, fmt.Errorf("store: credit task reward: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE player_task SET claimed_at = ?
-		WHERE uid = ? AND logic_day = ? AND task_id = ?`,
-		now, uid, dayKey, taskID); err != nil {
-		return TaskReward{}, fmt.Errorf("store: mark task claimed: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return TaskReward{}, fmt.Errorf("store: commit claim task: %w", err)
-	}
-	s.invalidateTaskCache(taskReadKey{uid: uid, dayKey: dayKey})
-	_ = s.DeleteFarmCache(ctx, uid)
-	return TaskReward{Coin: rewardCoin}, nil
+	// A complete, unclaimed task can only miss the joined update when the player
+	// row is absent/corrupt. Do not misreport it as a client retry condition.
+	return TaskReward{}, false, ErrPlayerNotFound
 }
 
 type dailyTaskInitEntry struct {

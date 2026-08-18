@@ -1,0 +1,757 @@
+{
+  "limitations": [
+    "Latency percentiles are taken from successful responses; technical errors are judged separately.",
+    "Journal/Projection sustainability is not inferred from client JSON and must be supplied by the Prometheus window report."
+  ],
+  "mode": "screening",
+  "model": "capacity-100-v1",
+  "model_validation": {
+    "enabled_operations": 31,
+    "errors": [],
+    "pass": true,
+    "reference_qps_sum": 333333.333334,
+    "requests_per_session_sum": 100.00000000000004,
+    "weight_sum": 1.0000000000000004
+  },
+  "operations": {
+    "buy": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0241,
+          "error_rate": 8.644536652835408e-05,
+          "expected_weight": 0.024,
+          "p90_ms": 26.574111,
+          "p99_ms": 233.502525,
+          "pass": true,
+          "sent": 11568,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 11568,
+      "succeeded": 11567,
+      "technical_error_rate": 8.644536652835408e-05,
+      "worst_p90_ms": 26.574111,
+      "worst_p99_ms": 233.502525
+    },
+    "clear": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.02591875,
+          "error_rate": 0.0,
+          "expected_weight": 0.026,
+          "p90_ms": 26.463275,
+          "p99_ms": 233.979164,
+          "pass": true,
+          "sent": 12441,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12441,
+      "succeeded": 12441,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 26.463275,
+      "worst_p99_ms": 233.979164
+    },
+    "codex-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.022002083333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.022,
+          "p90_ms": 11.071881,
+          "p99_ms": 220.18784,
+          "pass": true,
+          "sent": 10561,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 10561,
+      "succeeded": 10561,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 11.071881,
+      "worst_p99_ms": 220.18784
+    },
+    "enter-friend": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05096666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.051,
+          "p90_ms": 18.607981,
+          "p99_ms": 247.773507,
+          "pass": true,
+          "sent": 24464,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 24464,
+      "succeeded": 24464,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 18.607981,
+      "worst_p99_ms": 247.773507
+    },
+    "enter-self": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01026875,
+          "error_rate": 0.0,
+          "expected_weight": 0.01,
+          "p90_ms": 11.999698,
+          "p99_ms": 287.980734,
+          "pass": true,
+          "sent": 4929,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 4929,
+      "succeeded": 4929,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 11.999698,
+      "worst_p99_ms": 287.980734
+    },
+    "fertilize": {
+      "failed": 4,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03131041666666667,
+          "error_rate": 0.00026615210592853815,
+          "expected_weight": 0.031,
+          "p90_ms": 26.432804,
+          "p99_ms": 241.332838,
+          "pass": true,
+          "sent": 15029,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 15029,
+      "succeeded": 15025,
+      "technical_error_rate": 0.00026615210592853815,
+      "worst_p90_ms": 26.432804,
+      "worst_p99_ms": 241.332838
+    },
+    "friend-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05594791666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.056,
+          "p90_ms": 10.618343,
+          "p99_ms": 115.27388,
+          "pass": true,
+          "sent": 26855,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 26855,
+      "succeeded": 26855,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 10.618343,
+      "worst_p99_ms": 115.27388
+    },
+    "gen-share": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0128875,
+          "error_rate": 0.0,
+          "expected_weight": 0.013,
+          "p90_ms": 1.740356,
+          "p99_ms": 89.394311,
+          "pass": true,
+          "sent": 6186,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 6186,
+      "succeeded": 6186,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 1.740356,
+      "worst_p99_ms": 89.394311
+    },
+    "harvest": {
+      "failed": 4,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.05010833333333333,
+          "error_rate": 0.00016630633627141194,
+          "expected_weight": 0.05,
+          "p90_ms": 25.921728,
+          "p99_ms": 443.112812,
+          "pass": true,
+          "sent": 24052,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 24052,
+      "succeeded": 24048,
+      "technical_error_rate": 0.00016630633627141194,
+      "worst_p90_ms": 25.921728,
+      "worst_p99_ms": 443.112812
+    },
+    "list-friend-requests": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0466625,
+          "error_rate": 0.0,
+          "expected_weight": 0.047,
+          "p90_ms": 2.170275,
+          "p99_ms": 90.907384,
+          "pass": true,
+          "sent": 22398,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 22398,
+      "succeeded": 22398,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.170275,
+      "worst_p99_ms": 90.907384
+    },
+    "mail-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.012075,
+          "error_rate": 0.0,
+          "expected_weight": 0.012,
+          "p90_ms": 20.172852,
+          "p99_ms": 48.965428,
+          "pass": true,
+          "sent": 5796,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 5796,
+      "succeeded": 5796,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 20.172852,
+      "worst_p99_ms": 48.965428
+    },
+    "mail-delete": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0019625,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 24.777097,
+          "p99_ms": 335.543289,
+          "pass": true,
+          "sent": 942,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 942,
+      "succeeded": 942,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 24.777097,
+      "worst_p99_ms": 335.543289
+    },
+    "mail-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04505833333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.045,
+          "p90_ms": 30.663509,
+          "p99_ms": 260.048136,
+          "pass": true,
+          "sent": 21628,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 21628,
+      "succeeded": 21628,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 30.663509,
+      "worst_p99_ms": 260.048136
+    },
+    "mail-read": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.020822916666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.021,
+          "p90_ms": 25.952578,
+          "p99_ms": 245.873916,
+          "pass": true,
+          "sent": 9995,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 9995,
+      "succeeded": 9995,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 25.952578,
+      "worst_p99_ms": 245.873916
+    },
+    "pest-cross": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.016995833333333335,
+          "error_rate": 0.00024515812699190976,
+          "expected_weight": 0.017,
+          "p90_ms": 36.498523,
+          "p99_ms": 278.100363,
+          "pass": true,
+          "sent": 8158,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 8158,
+      "succeeded": 8156,
+      "technical_error_rate": 0.00024515812699190976,
+      "worst_p90_ms": 36.498523,
+      "worst_p99_ms": 278.100363
+    },
+    "pest-local": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.026252083333333332,
+          "error_rate": 0.00015871756209824618,
+          "expected_weight": 0.026,
+          "p90_ms": 26.140382,
+          "p99_ms": 246.669224,
+          "pass": true,
+          "sent": 12601,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12601,
+      "succeeded": 12599,
+      "technical_error_rate": 0.00015871756209824618,
+      "worst_p90_ms": 26.140382,
+      "worst_p99_ms": 246.669224
+    },
+    "pet-activate": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0019291666666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.002,
+          "p90_ms": 25.340592,
+          "p99_ms": 358.973639,
+          "pass": true,
+          "sent": 926,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 926,
+      "succeeded": 926,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 25.340592,
+      "worst_p99_ms": 358.973639
+    },
+    "pet-feed": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.01901875,
+          "error_rate": 0.00010954102311315588,
+          "expected_weight": 0.019,
+          "p90_ms": 30.661119,
+          "p99_ms": 232.715396,
+          "pass": true,
+          "sent": 9129,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 9129,
+      "succeeded": 9128,
+      "technical_error_rate": 0.00010954102311315588,
+      "worst_p90_ms": 30.661119,
+      "worst_p99_ms": 232.715396
+    },
+    "pet-status": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023935416666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 11.571579,
+          "p99_ms": 245.930253,
+          "pass": true,
+          "sent": 11489,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 11489,
+      "succeeded": 11489,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 11.571579,
+      "worst_p99_ms": 245.930253
+    },
+    "plant": {
+      "failed": 3,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04241458333333333,
+          "error_rate": 0.0001473549781423449,
+          "expected_weight": 0.043,
+          "p90_ms": 26.011686,
+          "p99_ms": 337.214276,
+          "pass": true,
+          "sent": 20359,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 20359,
+      "succeeded": 20356,
+      "technical_error_rate": 0.0001473549781423449,
+      "worst_p90_ms": 26.011686,
+      "worst_p99_ms": 337.214276
+    },
+    "search-user": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.027127083333333333,
+          "error_rate": 0.0,
+          "expected_weight": 0.027,
+          "p90_ms": 2.145356,
+          "p99_ms": 48.868511,
+          "pass": true,
+          "sent": 13021,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 13021,
+      "succeeded": 13021,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 2.145356,
+      "worst_p99_ms": 48.868511
+    },
+    "sell": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.018845833333333332,
+          "error_rate": 0.0,
+          "expected_weight": 0.019,
+          "p90_ms": 26.923733,
+          "p99_ms": 255.894172,
+          "pass": true,
+          "sent": 9046,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 9046,
+      "succeeded": 9046,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 26.923733,
+      "worst_p99_ms": 255.894172
+    },
+    "steal": {
+      "failed": 3,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04198333333333333,
+          "error_rate": 0.00014886859865025803,
+          "expected_weight": 0.042,
+          "p90_ms": 37.133527,
+          "p99_ms": 280.305507,
+          "pass": true,
+          "sent": 20152,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 20152,
+      "succeeded": 20149,
+      "technical_error_rate": 0.00014886859865025803,
+      "worst_p90_ms": 37.133527,
+      "worst_p99_ms": 280.305507
+    },
+    "sync": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03875625,
+          "error_rate": 0.0,
+          "expected_weight": 0.039,
+          "p90_ms": 16.723548,
+          "p99_ms": 224.722287,
+          "pass": true,
+          "sent": 18603,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 18603,
+      "succeeded": 18603,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 16.723548,
+      "worst_p99_ms": 224.722287
+    },
+    "task-claim": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.023572916666666666,
+          "error_rate": 0.0,
+          "expected_weight": 0.024,
+          "p90_ms": 20.130164,
+          "p99_ms": 92.910852,
+          "pass": true,
+          "sent": 11315,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 11315,
+      "succeeded": 11315,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 20.130164,
+      "worst_p99_ms": 92.910852
+    },
+    "task-list": {
+      "failed": 0,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.09639166666666667,
+          "error_rate": 0.0,
+          "expected_weight": 0.096,
+          "p90_ms": 14.69103,
+          "p99_ms": 247.910372,
+          "pass": true,
+          "sent": 46268,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 46268,
+      "succeeded": 46268,
+      "technical_error_rate": 0.0,
+      "worst_p90_ms": 14.69103,
+      "worst_p99_ms": 247.910372
+    },
+    "till": {
+      "failed": 2,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0259125,
+          "error_rate": 0.00016079755587715066,
+          "expected_weight": 0.026,
+          "p90_ms": 26.528493,
+          "p99_ms": 248.076898,
+          "pass": true,
+          "sent": 12438,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12438,
+      "succeeded": 12436,
+      "technical_error_rate": 0.00016079755587715066,
+      "worst_p90_ms": 26.528493,
+      "worst_p99_ms": 248.076898
+    },
+    "water-cross": {
+      "failed": 3,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.04231666666666667,
+          "error_rate": 0.00014769594328475777,
+          "expected_weight": 0.042,
+          "p90_ms": 35.442538,
+          "p99_ms": 270.135465,
+          "pass": true,
+          "sent": 20312,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 20312,
+      "succeeded": 20309,
+      "technical_error_rate": 0.00014769594328475777,
+      "worst_p90_ms": 35.442538,
+      "worst_p99_ms": 270.135465
+    },
+    "water-local": {
+      "failed": 9,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.08541666666666667,
+          "error_rate": 0.00021951219512195122,
+          "expected_weight": 0.085,
+          "p90_ms": 26.077705,
+          "p99_ms": 259.363065,
+          "pass": true,
+          "sent": 41000,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 41000,
+      "succeeded": 40991,
+      "technical_error_rate": 0.00021951219512195122,
+      "worst_p90_ms": 26.077705,
+      "worst_p99_ms": 259.363065
+    },
+    "weed-cross": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.0260875,
+          "error_rate": 7.985944737262418e-05,
+          "expected_weight": 0.026,
+          "p90_ms": 35.545186,
+          "p99_ms": 269.076731,
+          "pass": true,
+          "sent": 12522,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 12522,
+      "succeeded": 12521,
+      "technical_error_rate": 7.985944737262418e-05,
+      "worst_p90_ms": 35.545186,
+      "worst_p99_ms": 269.076731
+    },
+    "weed-local": {
+      "failed": 1,
+      "minimum_samples_required": 0,
+      "pass": true,
+      "rounds": [
+        {
+          "actual_weight": 0.03295208333333333,
+          "error_rate": 6.322311437061389e-05,
+          "expected_weight": 0.033,
+          "p90_ms": 25.747452,
+          "p99_ms": 256.697262,
+          "pass": true,
+          "sent": 15817,
+          "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json"
+        }
+      ],
+      "rounds_passed": 1,
+      "sent": 15817,
+      "succeeded": 15816,
+      "technical_error_rate": 6.322311437061389e-05,
+      "worst_p90_ms": 25.747452,
+      "worst_p99_ms": 256.697262
+    }
+  },
+  "rounds": [
+    {
+      "client_drain_milliseconds": 77,
+      "delivery_ratio": 0.999925,
+      "failed_operations": [],
+      "missing_operations": [],
+      "pass": true,
+      "source": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/opt-projectors12-16000-r1/client.json",
+      "target_qps": 16000,
+      "technical_error_rate": 7.5e-05,
+      "unexpected_operations": []
+    }
+  ],
+  "slo": {
+    "maximum_client_drain_milliseconds": 1000,
+    "maximum_projection_drain_seconds": 60,
+    "maximum_technical_error_rate": 0.001,
+    "minimum_samples_per_operation": 10000,
+    "minimum_target_delivery_ratio": 0.98,
+    "p90_milliseconds": 300.0,
+    "p99_milliseconds": 500.0,
+    "screening_step_qps": 1000,
+    "sustainable_soak_seconds": 600
+  },
+  "target_qps": 16000,
+  "verdict": "pass"
+}

@@ -1,0 +1,65 @@
+LAST SEEN   TYPE      REASON              OBJECT                          MESSAGE
+68s         Warning   FailedScheduling    pod/gateway-7b56658758-nrglc    0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+57s         Normal    Scheduled           pod/gateway-7b56658758-2jk44    Successfully assigned benkz/gateway-7b56658758-2jk44 to vm-218-62-tencentos
+4m5s        Normal    Scheduled           pod/gateway-df649b778-vbxgh     Successfully assigned benkz/gateway-df649b778-vbxgh to vm-218-62-tencentos
+4m10s       Warning   FailedScheduling    pod/gateway-df649b778-vbxgh     0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+63s         Warning   FailedScheduling    pod/gateway-7b56658758-2jk44    0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+3m53s       Normal    Scheduled           pod/gateway-df649b778-5k9kg     Successfully assigned benkz/gateway-df649b778-5k9kg to vm-218-62-tencentos
+57s         Warning   FailedScheduling    pod/gateway-7b56658758-7xgqw    0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+52s         Normal    Scheduled           pod/gateway-7b56658758-7xgqw    Successfully assigned benkz/gateway-7b56658758-7xgqw to vm-218-62-tencentos
+3m58s       Warning   FailedScheduling    pod/gateway-df649b778-5k9kg     0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+4m4s        Warning   FailedScheduling    pod/gateway-df649b778-z6lkg     0/1 nodes are available: 1 Insufficient cpu. no new claims to deallocate, preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.
+3m59s       Normal    Scheduled           pod/gateway-df649b778-z6lkg     Successfully assigned benkz/gateway-df649b778-z6lkg to vm-218-62-tencentos
+63s         Normal    Scheduled           pod/gateway-7b56658758-nrglc    Successfully assigned benkz/gateway-7b56658758-nrglc to vm-218-62-tencentos
+4m10s       Normal    ScalingReplicaSet   deployment/gateway              Scaled down replica set gateway-854fdc6b45 from 3 to 2
+4m10s       Normal    Killing             pod/gateway-854fdc6b45-qk9wb    Stopping container gateway
+4m10s       Normal    SuccessfulCreate    replicaset/gateway-df649b778    Created pod: gateway-df649b778-vbxgh
+4m10s       Normal    ScalingReplicaSet   deployment/gateway              Scaled up replica set gateway-df649b778 from 0 to 1
+4m10s       Normal    SuccessfulDelete    replicaset/gateway-854fdc6b45   Deleted pod: gateway-854fdc6b45-qk9wb
+4m4s        Warning   Unhealthy           pod/gateway-df649b778-vbxgh     Readiness probe failed: Get "http://10.42.0.224:9302/readyz": dial tcp 10.42.0.224:9302: connect: connection refused
+4m4s        Normal    ScalingReplicaSet   deployment/gateway              Scaled down replica set gateway-854fdc6b45 from 2 to 1
+4m4s        Normal    Pulled              pod/gateway-df649b778-vbxgh     Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+4m4s        Normal    Created             pod/gateway-df649b778-vbxgh     Container created
+4m4s        Normal    Killing             pod/gateway-854fdc6b45-glrdl    Stopping container gateway
+4m4s        Normal    Started             pod/gateway-df649b778-vbxgh     Container started
+4m4s        Normal    ScalingReplicaSet   deployment/gateway              Scaled up replica set gateway-df649b778 from 1 to 2
+4m4s        Normal    SuccessfulDelete    replicaset/gateway-854fdc6b45   Deleted pod: gateway-854fdc6b45-glrdl
+4m4s        Normal    SuccessfulCreate    replicaset/gateway-df649b778    Created pod: gateway-df649b778-z6lkg
+3m59s       Normal    Created             pod/gateway-df649b778-z6lkg     Container created
+3m59s       Normal    Pulled              pod/gateway-df649b778-z6lkg     Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+3m58s       Normal    SuccessfulDelete    replicaset/gateway-854fdc6b45   Deleted pod: gateway-854fdc6b45-pr7sd
+3m58s       Warning   Unhealthy           pod/gateway-df649b778-z6lkg     Readiness probe failed: Get "http://10.42.0.225:9302/readyz": dial tcp 10.42.0.225:9302: connect: connection refused
+3m58s       Normal    Started             pod/gateway-df649b778-z6lkg     Container started
+3m58s       Normal    Killing             pod/gateway-854fdc6b45-pr7sd    Stopping container gateway
+3m58s       Normal    ScalingReplicaSet   deployment/gateway              Scaled down replica set gateway-854fdc6b45 from 1 to 0
+3m58s       Normal    ScalingReplicaSet   deployment/gateway              Scaled up replica set gateway-df649b778 from 2 to 3
+3m58s       Normal    SuccessfulCreate    replicaset/gateway-df649b778    Created pod: gateway-df649b778-5k9kg
+3m53s       Normal    Pulled              pod/gateway-df649b778-5k9kg     Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+3m53s       Normal    Created             pod/gateway-df649b778-5k9kg     Container created
+3m52s       Warning   Unhealthy           pod/gateway-df649b778-5k9kg     Readiness probe failed: Get "http://10.42.0.226:9302/readyz": dial tcp 10.42.0.226:9302: connect: connection refused
+3m52s       Normal    Started             pod/gateway-df649b778-5k9kg     Container started
+69s         Normal    Killing             pod/gateway-df649b778-z6lkg     Stopping container gateway
+69s         Normal    ScalingReplicaSet   deployment/gateway              Scaled down replica set gateway-df649b778 from 3 to 2
+69s         Normal    ScalingReplicaSet   deployment/gateway              Scaled up replica set gateway-7b56658758 from 0 to 1
+69s         Normal    SuccessfulDelete    replicaset/gateway-df649b778    Deleted pod: gateway-df649b778-z6lkg
+68s         Normal    SuccessfulCreate    replicaset/gateway-7b56658758   Created pod: gateway-7b56658758-nrglc
+63s         Normal    Pulled              pod/gateway-7b56658758-nrglc    Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+63s         Normal    SuccessfulDelete    replicaset/gateway-df649b778    Deleted pod: gateway-df649b778-5k9kg
+63s         Normal    Created             pod/gateway-7b56658758-nrglc    Container created
+63s         Warning   Unhealthy           pod/gateway-7b56658758-nrglc    Readiness probe failed: Get "http://10.42.0.227:9302/readyz": dial tcp 10.42.0.227:9302: connect: connection refused
+63s         Normal    Started             pod/gateway-7b56658758-nrglc    Container started
+63s         Normal    ScalingReplicaSet   deployment/gateway              Scaled down replica set gateway-df649b778 from 2 to 1
+63s         Normal    Killing             pod/gateway-df649b778-5k9kg     Stopping container gateway
+63s         Normal    SuccessfulCreate    replicaset/gateway-7b56658758   Created pod: gateway-7b56658758-2jk44
+57s         Normal    Pulled              pod/gateway-7b56658758-2jk44    Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+57s         Normal    SuccessfulDelete    replicaset/gateway-df649b778    Deleted pod: gateway-df649b778-vbxgh
+57s         Normal    ScalingReplicaSet   deployment/gateway              (combined from similar events): Scaled up replica set gateway-7b56658758 from 2 to 3
+57s         Normal    SuccessfulCreate    replicaset/gateway-7b56658758   Created pod: gateway-7b56658758-7xgqw
+57s         Normal    Killing             pod/gateway-df649b778-vbxgh     Stopping container gateway
+57s         Warning   Unhealthy           pod/gateway-7b56658758-2jk44    Readiness probe failed: Get "http://10.42.0.228:9302/readyz": dial tcp 10.42.0.228:9302: connect: connection refused
+57s         Normal    Started             pod/gateway-7b56658758-2jk44    Container started
+57s         Normal    Created             pod/gateway-7b56658758-2jk44    Container created
+51s         Normal    Started             pod/gateway-7b56658758-7xgqw    Container started
+51s         Normal    Pulled              pod/gateway-7b56658758-7xgqw    Container image "benkz/gateway:k3s" already present on machine and can be accessed by the pod
+51s         Normal    Created             pod/gateway-7b56658758-7xgqw    Container created
+51s         Warning   Unhealthy           pod/gateway-7b56658758-7xgqw    Readiness probe failed: Get "http://10.42.0.229:9302/readyz": dial tcp 10.42.0.229:9302: connect: connection refused

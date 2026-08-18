@@ -306,12 +306,13 @@ body {
 
 /* ---------------- 地块 Tooltip ---------------- */
 #tooltip {
-  position: fixed; z-index: 50; pointer-events: none !important;
+  position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none !important;
   min-width: 190px; max-width: 250px;
   background: rgba(43, 34, 27, 0.92); backdrop-filter: blur(8px);
   border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 14px;
   padding: 11px 13px; color: #fdf6ec; font-size: 12.5px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  will-change: transform;
 }
 #tooltip h4 { font-size: 14px; margin-bottom: 5px; display: flex; justify-content: space-between; gap: 8px; }
 #tooltip h4 .stage { color: #ffd54f; font-size: 12px; }

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, defineAsyncComponent, shallowRef } from 'vue'
+import { computed, onMounted, defineAsyncComponent, shallowRef, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 const DevNetPanel = shallowRef(null)
@@ -13,15 +13,26 @@ const showFarm = computed(() => route.name === 'farm')
 
 let resolveFarmReady
 let rejectFarmReady
+let farmBridge = null
 window.__farmReady = new Promise((resolve, reject) => {
   resolveFarmReady = resolve
   rejectFarmReady = reject
 })
 
+function syncFarmActivity() {
+  farmBridge?.setActive?.(showFarm.value)
+}
+
+watch(showFarm, syncFarmActivity)
+
 onMounted(() => {
   // #scene-container 需先挂载到 DOM，再加载有顶层副作用的游戏主逻辑
   import('./game/main.js')
-    .then(() => resolveFarmReady(window.__farm))
+    .then(() => {
+      farmBridge = window.__farm
+      syncFarmActivity()
+      resolveFarmReady(farmBridge)
+    })
     .catch(rejectFarmReady)
 })
 </script>

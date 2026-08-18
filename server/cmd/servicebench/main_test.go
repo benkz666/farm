@@ -52,6 +52,38 @@ func TestSummarizeRecordsP90(t *testing.T) {
 	}
 }
 
+func TestLatencyPercentilesExcludeFailedRequests(t *testing.T) {
+	recorded := &recorder{}
+	recorded.add(100*time.Millisecond, true, 0)
+	recorded.add(0, false, -2)
+
+	measured := summarize("test", 2, 2, time.Second, recorded, false)
+	if measured.AverageMS != 100 || measured.P99MS != 100 {
+		t.Fatalf("successful latency average/p99 = %v/%v, want 100/100", measured.AverageMS, measured.P99MS)
+	}
+	if measured.Succeeded != 1 || measured.Failed != 1 {
+		t.Fatalf("success/failed = %d/%d, want 1/1", measured.Succeeded, measured.Failed)
+	}
+}
+
+func TestMixedAccountIndexIsPermutationAndSeparatesOperations(t *testing.T) {
+	const poolSize = 7500
+	seen := make([]bool, poolSize)
+	for sequence := uint64(0); sequence < poolSize; sequence++ {
+		index := mixedAccountIndex("water-local", sequence, poolSize)
+		if index < 0 || index >= poolSize {
+			t.Fatalf("index %d outside pool", index)
+		}
+		if seen[index] {
+			t.Fatalf("account %d repeated before one complete pool", index)
+		}
+		seen[index] = true
+	}
+	if mixedAccountIndex("water-local", 0, poolSize) == mixedAccountIndex("task-list", 0, poolSize) {
+		t.Fatal("independent operations unexpectedly start on the same account")
+	}
+}
+
 func TestGatewayOperationModes(t *testing.T) {
 	if !validGatewayWarmupMode(gatewayWarmupFull) || !validGatewayWarmupMode(gatewayWarmupSessionOnly) {
 		t.Fatal("documented gateway warmup mode is invalid")
@@ -156,5 +188,22 @@ func TestGatewayMultiPlotFixtureCapacityAndRotation(t *testing.T) {
 	bad = []gatewayAccount{{PlotIndexes: []int{0, 18}}}
 	if err := validateGatewayFixturePlots(bad, "steal"); err == nil {
 		t.Fatal("out-of-range plot index should be rejected")
+	}
+}
+
+func TestSelectExtraResidentActorsSkipsAlreadyWarmOwners(t *testing.T) {
+	accounts := []gatewayAccount{
+		{UID: "1", PeerUID: "2"},
+		{UID: "2", PeerUID: "3"},
+		{UID: "3", PeerUID: "4"},
+		{UID: "4", PeerUID: "5"},
+		{UID: "5", PeerUID: "6"},
+		{UID: "6", PeerUID: "7"},
+	}
+	// UID 4 is already warmed as the visitor's peer and must not be counted
+	// again. The selector therefore consumes the following two unique owners.
+	targets := selectExtraResidentActors(accounts, 2, 3, 2)
+	if len(targets) != 2 || targets[0].UID != "5" || targets[1].UID != "6" {
+		t.Fatalf("extra targets = %#v, want UIDs 5 and 6", targets)
 	}
 }

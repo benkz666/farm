@@ -157,6 +157,7 @@ type cachedFriendStore struct {
 
 	relationShards  [friendRelationCacheShards]friendRelationShard
 	listShards      [friendListCacheShards]friendListCacheShard
+	searchShards    [userSearchCacheShards]userSearchCacheShard
 	relationState   [friendCacheStateShards]friendCacheStateShard
 	listState       [friendCacheStateShards]friendCacheStateShard
 	unsafeMu        sync.RWMutex
@@ -166,6 +167,7 @@ type cachedFriendStore struct {
 	flightMu            sync.Mutex
 	relationFlights     map[friendRelationKey]*friendRelationCall
 	listFlights         [friendListCacheShards]friendListFlightShard
+	searchFlights       [userSearchCacheShards]userSearchFlightShard
 	writes              chan friendCacheWrite
 	redisAttempts       atomic.Uint64
 	redisHits           atomic.Uint64
@@ -207,6 +209,13 @@ func newCachedFriendStoreWithBus(inner FriendStore, client friendCacheRedis, bus
 		cache.listShards[i].positions = make(map[uint64]int, listPerShard)
 		cache.listShards[i].slots = make([]uint64, 0, listPerShard)
 		cache.listFlights[i].calls = make(map[uint64]*friendListCall)
+	}
+	searchPerShard := userSearchCacheCapacity / userSearchCacheShards
+	for i := range cache.searchShards {
+		cache.searchShards[i].entries = make(map[string]userSearchCacheEntry, searchPerShard)
+		cache.searchShards[i].positions = make(map[string]int, searchPerShard)
+		cache.searchShards[i].slots = make([]string, 0, searchPerShard)
+		cache.searchFlights[i].calls = make(map[string]*userSearchCall)
 	}
 	return cache
 }
@@ -815,10 +824,6 @@ func (cache *cachedFriendStore) RemoveFriends(ctx context.Context, a, b uint64) 
 
 func (cache *cachedFriendStore) CountFriends(ctx context.Context, uid uint64) (int, error) {
 	return cache.inner.CountFriends(ctx, uid)
-}
-
-func (cache *cachedFriendStore) FindUserByUsername(ctx context.Context, username string) (UserSearchRow, error) {
-	return cache.inner.FindUserByUsername(ctx, username)
 }
 
 func (cache *cachedFriendStore) CreateFriendRequest(ctx context.Context, fromUID, toUID uint64) error {

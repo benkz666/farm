@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -35,6 +36,9 @@ type SessionStore interface {
 type AccountStore interface {
 	CreateAccount(ctx context.Context, username, passwordHash string) (uint64, error)
 	GetAccountByUsername(ctx context.Context, username string) (uid uint64, passwordHash string, err error)
+	// UpdatePasswordHash uses the previously read hash as a compare-and-swap
+	// guard, so concurrent logins cannot overwrite a newer password hash.
+	UpdatePasswordHash(ctx context.Context, uid uint64, previousHash, passwordHash string) (bool, error)
 }
 
 // FarmStore 管理账号与农场聚合的持久化（MySQL）与缓存（Redis `farm:{uid}`）。
@@ -109,6 +113,15 @@ type TaskReward struct {
 	Exp  uint32 `json:"exp"`
 }
 
+// DirectClaimState is the Actor-owned economy before a direct task/mail
+// reward and the sequence that the successful reward will produce. A claim
+// transaction writes the resulting absolute economy at NextFarmSeq, fencing
+// older asynchronous journal projections without first materializing them.
+type DirectClaimState struct {
+	Coin        int64
+	NextFarmSeq uint64
+}
+
 // Mail 是个人邮件与其可领取金币附件。
 type Mail struct {
 	ID             uint64 `json:"id"`
@@ -156,6 +169,7 @@ const (
 	// 突发查询会让多个服务一起打穿 MySQL max_connections，而不是形成可控排队。
 	defaultMySQLMaxOpenConns = 24
 	defaultMySQLMaxIdleConns = 12
+	mysqlMaxOpenConnsPerCPU  = 32
 	defaultMySQLConnLifetime = 5 * time.Minute
 	defaultMySQLConnIdleTime = 1 * time.Minute
 
@@ -261,10 +275,18 @@ func configureMySQLPool(db *sql.DB) {
 	if db == nil {
 		return
 	}
-	db.SetMaxOpenConns(defaultMySQLMaxOpenConns)
-	db.SetMaxIdleConns(defaultMySQLMaxIdleConns)
+	maxOpen, maxIdle := mysqlPoolSizes(runtime.GOMAXPROCS(0))
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
 	db.SetConnMaxLifetime(defaultMySQLConnLifetime)
 	db.SetConnMaxIdleTime(defaultMySQLConnIdleTime)
+}
+
+func mysqlPoolSizes(processors int) (maxOpen, maxIdle int) {
+	processors = max(processors, 1)
+	maxOpen = max(defaultMySQLMaxOpenConns, processors*mysqlMaxOpenConnsPerCPU)
+	maxIdle = max(defaultMySQLMaxIdleConns, maxOpen/2)
+	return maxOpen, maxIdle
 }
 
 // Ping 检查 MySQL 与 Redis 是否仍可响应，供 /readyz 使用。

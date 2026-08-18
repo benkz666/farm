@@ -1,0 +1,70 @@
+{
+  "alternate_run": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw6-05000-final-r1",
+  "baseline_run": "/data/workspace/farm/bench/results/capacity-100-v1-20260815/topology-gw3-05000-cross-r1",
+  "interpretation": "Use the larger observed cost. A positive penalty above 20% must be disclosed and combined with the explicit horizontal-efficiency discount when no further repeat is requested.",
+  "method": "same QPS and same aggregate resources, different instance split",
+  "services": {
+    "farm": {
+      "alternate_cpu_cores_per_1000_qps": 0.5275621636049,
+      "alternate_synchronous_cpu_cores_per_1000_qps": 0.3968033040246723,
+      "baseline_cpu_cores_per_1000_qps": 0.43924966693505546,
+      "baseline_synchronous_cpu_cores_per_1000_qps": 0.3803359445786389,
+      "cross_topology_planning_cpu_per_1000_qps": 0.5275621636049,
+      "grade": "large (>20%); absorbed by larger cost plus horizontal discount",
+      "relative_difference": 0.20105307600131178,
+      "reusable": true,
+      "signed_alternate_penalty": 0.20105307600131178,
+      "synchronous_relative_difference": 0.04329687919525201
+    },
+    "gateway": {
+      "alternate_cpu_cores_per_1000_qps": 0.35711529741635056,
+      "alternate_synchronous_cpu_cores_per_1000_qps": 0.3458708233428673,
+      "baseline_cpu_cores_per_1000_qps": 0.3611594161892515,
+      "baseline_synchronous_cpu_cores_per_1000_qps": 0.3334705035985442,
+      "cross_topology_planning_cpu_per_1000_qps": 0.3611594161892515,
+      "grade": "alternate no worse; baseline cost is conservative",
+      "relative_difference": 0.011197600260771792,
+      "reusable": true,
+      "signed_alternate_penalty": -0.011197600260771792,
+      "synchronous_relative_difference": 0.03718565693369838
+    },
+    "mysql": {
+      "alternate_cpu_cores_per_1000_qps": 0.3999681302788193,
+      "alternate_synchronous_cpu_cores_per_1000_qps": 0.2218633556203421,
+      "baseline_cpu_cores_per_1000_qps": 0.3431944523121828,
+      "baseline_synchronous_cpu_cores_per_1000_qps": 0.2900535937650709,
+      "cross_topology_planning_cpu_per_1000_qps": 0.3999681302788193,
+      "grade": "visible (10%-20%)",
+      "relative_difference": 0.16542714366196382,
+      "reusable": true,
+      "signed_alternate_penalty": 0.16542714366196382,
+      "synchronous_relative_difference": 0.23509530517990937
+    },
+    "redis": {
+      "alternate_cpu_cores_per_1000_qps": 0.1287546037623854,
+      "alternate_synchronous_cpu_cores_per_1000_qps": 0.07831039907739558,
+      "baseline_cpu_cores_per_1000_qps": 0.16887149384585842,
+      "baseline_synchronous_cpu_cores_per_1000_qps": 0.1189447019504822,
+      "cross_topology_planning_cpu_per_1000_qps": 0.16887149384585842,
+      "grade": "alternate no worse; baseline cost is conservative",
+      "relative_difference": 0.23755868542319342,
+      "reusable": true,
+      "signed_alternate_penalty": -0.23755868542319342,
+      "synchronous_relative_difference": 0.3416234788667012
+    },
+    "social": {
+      "alternate_cpu_cores_per_1000_qps": 0.08422233472947104,
+      "alternate_synchronous_cpu_cores_per_1000_qps": 0.07626677324810771,
+      "baseline_cpu_cores_per_1000_qps": 0.06364455695134011,
+      "baseline_synchronous_cpu_cores_per_1000_qps": 0.0634667732481077,
+      "cross_topology_planning_cpu_per_1000_qps": 0.08422233472947104,
+      "grade": "large (>20%); absorbed by larger cost plus horizontal discount",
+      "relative_difference": 0.32332345079978814,
+      "reusable": true,
+      "signed_alternate_penalty": 0.32332345079978814,
+      "synchronous_relative_difference": 0.2016803335811884
+    }
+  },
+  "target_qps": 5000,
+  "verdict": "pass_with_conservative_cost"
+}

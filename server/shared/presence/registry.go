@@ -472,17 +472,13 @@ func (b redisBackend) AliveMembers(ctx context.Context, key string, nowUnixMilli
 	if b.client == nil {
 		return nil, errors.New("redis client is nil")
 	}
-	// Drop leases whose expiresAt <= now, then return the remainder.
-	pipe := b.client.Pipeline()
-	pipe.ZRemRangeByScore(ctx, key, "-inf", strconv.FormatInt(nowUnixMilli, 10))
-	rangeCmd := pipe.ZRangeByScore(ctx, key, &redis.ZRangeBy{
+	// Reads only return live scores. Upsert/Claim/Replace already prune expired
+	// members and the key has a fallback TTL, so mutating every fan-out lookup
+	// doubled Redis commands without improving correctness.
+	return b.client.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 		Min: "(" + strconv.FormatInt(nowUnixMilli, 10),
 		Max: "+inf",
-	})
-	if _, err := pipe.Exec(ctx); err != nil {
-		return nil, err
-	}
-	return rangeCmd.Result()
+	}).Result()
 }
 
 func (b redisBackend) AliveMembersBatch(ctx context.Context, keys []string, nowUnixMilli int64) (map[string][]string, error) {
@@ -503,7 +499,6 @@ func (b redisBackend) AliveMembersBatch(ctx context.Context, keys []string, nowU
 		if _, exists := commands[key]; exists {
 			continue
 		}
-		pipe.ZRemRangeByScore(ctx, key, "-inf", nowText)
 		commands[key] = pipe.ZRangeByScore(ctx, key, &redis.ZRangeBy{
 			Min: "(" + nowText,
 			Max: "+inf",

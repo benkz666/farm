@@ -108,6 +108,7 @@ test('同账号已有在线连接时保留 1105 且不进入农场', async () =>
     ['login', 'alice', 'secret12'],
     ['connect'],
     ['handshake'],
+    ['enterFarm', 0],
   ])
 })
 
@@ -151,4 +152,70 @@ test('已是好友的邀请不阻断登录进入农场', async () => {
     ['enterFarm', 0],
     ['enterOnlineFromNet'],
   ])
+})
+
+test('游戏桥接准备与登录请求并行启动', async () => {
+  const events = []
+  let resolveLogin
+  const client = createClient(events)
+  client.login = async () => {
+    events.push(['login-start'])
+    await new Promise((resolve) => { resolveLogin = resolve })
+    events.push(['login-done'])
+  }
+  const farm = {
+    enterOnlineFromNet() {
+      events.push(['enterOnlineFromNet'])
+    },
+  }
+
+  const pending = authenticateAndEnter({
+    client,
+    mode: 'login',
+    username: 'alice',
+    password: 'secret12',
+    getFarmBridge: async () => {
+      events.push(['farm-bridge-start'])
+      return farm
+    },
+  })
+  await Promise.resolve()
+
+  assert.deepEqual(events, [['login-start'], ['farm-bridge-start']])
+  resolveLogin()
+  await pending
+})
+
+test('握手、邀请和进入农场在等待响应前一起发出', async () => {
+  const events = []
+  let resolveHandshake
+  const client = createClient(events)
+  client.handshake = async () => {
+    events.push(['handshake-start'])
+    await new Promise((resolve) => { resolveHandshake = resolve })
+    events.push(['handshake-done'])
+    return { err: 0, payload: {} }
+  }
+  const farm = { enterOnlineFromNet() {} }
+
+  const pending = authenticateAndEnter({
+    client,
+    mode: 'login',
+    username: 'alice',
+    password: 'secret12',
+    inviteToken: 'invite-token',
+    getFarmBridge: async () => farm,
+  })
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.deepEqual(events, [
+    ['login', 'alice', 'secret12'],
+    ['connect'],
+    ['handshake-start'],
+    ['acceptInvite', 'invite-token'],
+    ['enterFarm', 0],
+  ])
+  resolveHandshake()
+  await pending
 })

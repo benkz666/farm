@@ -1,0 +1,83 @@
+{
+  "alloc_bytes_per_request": {
+    "farm": 13595.146955417418,
+    "gateway": 3748.891544682842,
+    "social": 527.9878617739456
+  },
+  "cpu_ms_per_request": {
+    "farm": 0.09531448432591405,
+    "gateway": 0.12973731702426325,
+    "mysql": 0.030227581712451757,
+    "redis": 0.050467538934561025,
+    "social": 0.03154869326916668,
+    "total": 0.33729561526635676
+  },
+  "method": "Prometheus counter delta over the exact measurement window minus scaled idle baseline",
+  "mysql_operations_per_request": 0.2536661987835037,
+  "raw_window_counters": {
+    "farm_alloc_bytes": {
+      "business_increase": 4067939872.0,
+      "idle_increase": 16819136.0,
+      "idle_scaled": 16819136.0,
+      "load_increase": 4084759008.0
+    },
+    "farm_cpu_seconds": {
+      "business_increase": 28.520000000000003,
+      "idle_increase": 0.6800000000000006,
+      "idle_scaled": 0.6800000000000006,
+      "load_increase": 29.200000000000003
+    },
+    "gateway_alloc_bytes": {
+      "business_increase": 1121743328.0,
+      "idle_increase": 9038800.0,
+      "idle_scaled": 9038800.0,
+      "load_increase": 1130782128.0
+    },
+    "gateway_cpu_seconds": {
+      "business_increase": 38.82000000000005,
+      "idle_increase": 0.2199999999999136,
+      "idle_scaled": 0.2199999999999136,
+      "load_increase": 39.039999999999964
+    },
+    "mysql_cpu_seconds": {
+      "business_increase": 9.044696999999815,
+      "idle_increase": 1.3113060000000587,
+      "idle_scaled": 1.3113060000000587,
+      "load_increase": 10.356002999999873
+    },
+    "mysql_operations": {
+      "business_increase": 75901.99999999999,
+      "idle_increase": 556.0,
+      "idle_scaled": 556.0,
+      "load_increase": 76457.99999999999
+    },
+    "redis_cpu_seconds": {
+      "business_increase": 15.10089699999935,
+      "idle_increase": 0.40707600000041566,
+      "idle_scaled": 0.40707600000041566,
+      "load_increase": 15.507972999999765
+    },
+    "redis_operations": {
+      "business_increase": 1189852.0,
+      "idle_increase": 14339.999999999998,
+      "idle_scaled": 14339.999999999998,
+      "load_increase": 1204192.0
+    },
+    "social_alloc_bytes": {
+      "business_increase": 157984528.0,
+      "idle_increase": 713376.0,
+      "idle_scaled": 713376.0,
+      "load_increase": 158697904.0
+    },
+    "social_cpu_seconds": {
+      "business_increase": 9.440000000000055,
+      "idle_increase": 0.01999999999998181,
+      "idle_scaled": 0.01999999999998181,
+      "load_increase": 9.460000000000036
+    }
+  },
+  "redis_operations_per_request": 3.976512265222913,
+  "source_idle_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/idle-1qps-30s.json",
+  "source_load_result": "/data/workspace/farm/bench/results/defense-60-v1-20260815/final-8shard-10000-r1.json",
+  "success_requests": 299220
+}

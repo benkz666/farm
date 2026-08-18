@@ -12,6 +12,7 @@ import (
 
 	publicv3 "farm/server/gen/farm/public/v3"
 	farmv1 "farm/server/gen/farm/v1"
+	"farm/server/shared/clientwire"
 	"farm/server/shared/errcode"
 	"farm/server/shared/gameconfig"
 	"farm/server/shared/sharding"
@@ -170,6 +171,40 @@ func TestGatewayAppliesOnlyFarmRoomDirective(t *testing.T) {
 	connection.roomMu.Unlock()
 	if !known || seq != 12 {
 		t.Fatalf("room watermark=(%d,%v), want (12,true)", seq, known)
+	}
+}
+
+func TestGatewayServesFreshCaughtUpSelfSyncFromRoomWatermark(t *testing.T) {
+	farmClient := &testFarmClient{}
+	gateway := New(nil, testSessions{"session": 42},
+		WithFarmRPC(farmClient, testRoutes(t)), WithSocialRPC(&testSocialClient{}), WithWSRateLimitDisabled(),
+	)
+	connection := authenticatedConnection(gateway, 42)
+	connection.roomUID = 42
+	connection.roomSeq = 12
+	connection.roomSeqKnown = true
+	connection.roomSeqObservedAt = time.Now().UnixNano()
+	request := &publicv3.WireEnvelope{
+		Cmd: CommandSyncFarm, ClientSeq: 2,
+		Payload: &publicv3.WireEnvelope_SyncFarmRequest{
+			SyncFarmRequest: &publicv3.SyncFarmRequest{OwnerUid: 42, FromSeq: 12},
+		},
+	}
+
+	response, _, disconnect := gateway.dispatchWireRequest(context.Background(), connection, request)
+	if disconnect || response.GetErr() != int32(errcode.OK) ||
+		response.PreparedField != clientwire.PreparedSyncFarmResponse || len(response.PreparedPayload) == 0 {
+		t.Fatalf("local Sync response=%#v disconnect=%v", response, disconnect)
+	}
+	if farmClient.request != nil {
+		t.Fatalf("fresh caught-up Sync unexpectedly reached Farm: %#v", farmClient.request)
+	}
+
+	connection.roomSeqObservedAt = time.Now().Add(-roomWatermarkFreshness - time.Millisecond).UnixNano()
+	request.ClientSeq++
+	response, _, disconnect = gateway.dispatchWireRequest(context.Background(), connection, request)
+	if disconnect || response.GetErr() != int32(errcode.OK) || farmClient.request == nil {
+		t.Fatalf("stale Sync response=%#v request=%#v disconnect=%v", response, farmClient.request, disconnect)
 	}
 }
 
