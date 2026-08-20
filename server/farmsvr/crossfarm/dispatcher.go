@@ -16,12 +16,29 @@ import (
 const (
 	dispatcherPollInterval = 250 * time.Millisecond
 	dispatcherBatchSize    = 64
-	dispatcherMinBackoff   = 25 * time.Millisecond
+	// 投递保持串行。一行要等对端 Farm 处理完 DeliverCrossResult（实测 12.5ms：
+	// 写 journal 加改 actor 状态），串行把吞吐锁在 80 行/秒，而静态双分片下跨
+	// 农场事件以约 400 行/秒产生，outbox 会持续积压、访客延迟收到跨农场结果。
+	//
+	// 但并行化解决不了：投递的真实成本在对端 Farm 的处理和它背后那个共享
+	// MySQL，不在 dispatcher 自己。1.8U 双分片下实测 16 路让对端 journal 积压
+	// 9.2 万、98% 业务请求失败；8 路让 MySQL 节流从 0 涨到 18 秒、连接池耗尽、
+	// 投影批量报 context deadline exceeded，P99 从 1.2 秒恶化到 6.8 秒。
+	// 提高投递并发只是把同一份压力更快地推给已经饱和的下游。
+	//
+	// 真正的解法是减少跨分片流量本身（按好友关系聚类分片）或让数据层跟着水平
+	// 扩展；在那之前，积压换稳定是更划算的取舍——业务请求并不等待这条投递路径。
+	dispatcherMinBackoff = 25 * time.Millisecond
 	dispatcherMaxBackoff   = 5 * time.Second
 	dispatcherMaxAttempts  = 100
 	dispatcherOpTimeout    = 5 * time.Second
-	outboxRetention        = 24 * time.Hour
-	outboxCleanupInterval  = time.Hour
+	// 已投递的行留 24 小时对可靠性毫无贡献，却让表无界增长：2 倍水平扩展一轮
+	// 压测就攒下 61.7 万行。代价不只是空间——published_at 是 idx_outbox_publish
+	// 的首列，把它从 NULL 改成时间戳会让索引条目搬家，表越大随机写越多。
+	// 保留期只需覆盖 journal 投影的重放窗口（默认 5 分钟），让重放期内的
+	// 重复 INSERT 仍命中 ON DUPLICATE KEY 而不是重新投递一遍。
+	outboxRetention       = 10 * time.Minute
+	outboxCleanupInterval = 30 * time.Second
 )
 
 // OutboxDispatcher delivers durable cross results to visitor farms.
@@ -105,46 +122,72 @@ func (d *OutboxDispatcher) pollOnce() {
 		telemetry.L().Error("outbox claim failed", "component", "outbox", "err", err.Error())
 		return
 	}
+	if len(rows) == 0 {
+		return
+	}
+	// 批量确认把一批的 N 次 DELETE 收成一条语句。store 未实现该扩展时回退到
+	// 逐行确认，此时 deliverRow 自己收尾。
+	batcher, _ := d.store.(store.OutboxBatchPublisher)
+	delivered := make([]string, 0, len(rows))
 	for _, row := range rows {
-		d.deliverRow(row)
+		eventID, ok := d.deliverRow(row, batcher != nil)
+		if !ok {
+			continue
+		}
+		delivered = append(delivered, eventID)
+	}
+	if batcher == nil || len(delivered) == 0 {
+		return
+	}
+	ackCtx, ackCancel := context.WithTimeout(context.Background(), dispatcherOpTimeout)
+	defer ackCancel()
+	if err := batcher.MarkOutboxPublishedBatch(ackCtx, delivered); err != nil {
+		telemetry.L().Error("outbox batch ack failed",
+			"component", "outbox", "count", len(delivered), "err", err.Error())
 	}
 }
 
-func (d *OutboxDispatcher) deliverRow(row store.OutboxRow) {
+// deliverRow 投递一行，返回待确认的事件 ID。deferAck 为真时确认交给调用方批量
+// 执行，返回值即待确认 ID；为假时本函数自己确认并返回 false。
+func (d *OutboxDispatcher) deliverRow(row store.OutboxRow, deferAck bool) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), dispatcherOpTimeout)
 	defer cancel()
+	ack := func() (string, bool) {
+		if deferAck {
+			return row.EventID, true
+		}
+		if err := d.store.MarkOutboxPublished(ctx, row.EventID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			telemetry.L().Error("outbox mark published failed",
+				"component", "outbox",
+				"event_id", row.EventID,
+				"err", err.Error(),
+			)
+		}
+		return "", false
+	}
 	switch row.Kind {
 	case outbox.KindCrossResult:
 		result, err := outbox.DecodeCrossResult(row.Payload)
 		if err != nil {
-			_ = d.store.MarkOutboxPublished(ctx, row.EventID)
-			return
+			return ack()
 		}
 		domain, ok := resultFromProto(result)
 		if !ok {
-			_ = d.store.MarkOutboxPublished(ctx, row.EventID)
-			return
+			return ack()
 		}
 		_, playerDelta, code, err := d.client.DeliverCrossResult(ctx, domain)
 		if err != nil || code == errcode.Internal {
 			d.scheduleRetry(row)
-			return
+			return "", false
 		}
 		// The direct path returns this delta to Gateway. The dispatcher is the
 		// only fallback consumer, so it owns the one best-effort push here.
 		if playerDelta != nil && d.players != nil {
 			_ = d.players.PublishPlayerDelta(context.Background(), domain.VisitorUID, *playerDelta)
 		}
+		return ack()
 	default:
-		_ = d.store.MarkOutboxPublished(ctx, row.EventID)
-		return
-	}
-	if err := d.store.MarkOutboxPublished(ctx, row.EventID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		telemetry.L().Error("outbox mark published failed",
-			"component", "outbox",
-			"event_id", row.EventID,
-			"err", err.Error(),
-		)
+		return ack()
 	}
 }
 

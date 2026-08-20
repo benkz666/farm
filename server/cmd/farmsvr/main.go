@@ -90,6 +90,9 @@ func run() error {
 		return err
 	}
 	defer closeStorage()
+	// Outbox rows are partitioned by their producing Farm. This keeps each
+	// dispatcher's claim/delete lock range independent as Farm shards scale.
+	storage.SetOutboxFarmID(instanceID)
 	stealHints := store.NewAsyncStealHintStore(storage)
 	defer stealHints.Shutdown(context.Background())
 	metrics := telemetry.NewMetrics(nil)
@@ -280,8 +283,11 @@ func run() error {
 		farmrpc.WithTimeProfileSwitch(timeProfiles),
 	)
 	owner.SetAdvanceScheduler(commandHandler.ScheduleAdvanceAt)
+	// 访客侧的 outbox 确认直连 MySQL，不经 journal：它只是删掉一条已投递的
+	// fan-out 行，与业务状态无先后依赖，却要占一条 journal 记录再等投影落地。
+	// 静态分片下每个跨农场操作都会产生一次确认，这条链路会跟着分片数一起放大。
 	crossServer := crossfarm.NewGRPCServer(
-		owner, visitor, owns, journal.WrapOutboxStore(storage),
+		owner, visitor, owns, storage,
 	)
 	crossCoordinator := crossfarm.NewClientCoordinator(
 		friends, crossServer, crossClient, clock.Now, timeProfiles.Get,

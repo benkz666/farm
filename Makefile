@@ -71,7 +71,7 @@ proto-check:
 
 # 只启动本地依赖。
 infra-up:
-	docker compose -f $(COMPOSE_FILE) up -d mysql redis
+	docker compose -f $(COMPOSE_FILE) up -d mysql redis redis-journal redis-presence
 
 # 容器化启动迁移任务、三个后端、Web 及依赖。
 compose-up:

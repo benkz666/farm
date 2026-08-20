@@ -18,9 +18,13 @@ from pathlib import Path
 from typing import Any
 
 
+# go_service 按正则匹配 Prometheus 的 service 标签（来自 pod 的
+# app.kubernetes.io/name）。Farm 的静态分片拓扑给每个分片一个独立标签值
+# （farm、farm-1、farm-2…），因为 Deployment 的 selector 不可变、无法让现有
+# farm 只认自己的 Pod；正则把各分片重新聚成一个逻辑服务。
 SERVICES = {
     "gateway": {"container": "gateway", "pod": "gateway-.*", "go_service": "gateway"},
-    "farm": {"container": "farm", "pod": "farm-.*", "go_service": "farm"},
+    "farm": {"container": "farm", "pod": "farm-.*", "go_service": "farm(-[0-9]+)?"},
     "social": {"container": "social", "pod": "social-.*", "go_service": "social"},
     "mysql": {"container": "mysql", "pod": "mysql-.*"},
     "redis": {"container": "redis", "pod": "redis-.*"},
@@ -30,17 +34,17 @@ SERVICES = {
 
 GAUGES = {
     "gateway_ws_connections": 'sum(farm_ws_connections{service="gateway"})',
-    "farm_actor_resident": 'sum(farm_actor_resident{service="farm"})',
-    "farm_actor_mailbox_depth_p99": 'histogram_quantile(0.99, sum by (le) (rate(farm_actor_mailbox_depth_bucket{service="farm"}[30s])))',
-    "farm_write_pending": 'sum(farm_write_journal_pending{service="farm"})',
-    "farm_write_lag": 'sum(farm_write_journal_lag{service="farm"})',
-    "farm_projection_active": 'sum(farm_write_journal_projection_active{service="farm"})',
-    "farm_barrier_waiters": 'sum(farm_write_journal_barrier_waiters{service="farm"})',
-    "farm_stream_queue_depth": 'sum(farm_grpc_stream_queue_depth{service="farm"})',
-    "farm_stream_in_flight": 'sum(farm_grpc_stream_in_flight{service="farm"})',
-    "farm_write_admission_limit": 'sum(farm_write_admission_limit{service="farm"})',
-    "farm_projection_duration_p99_ms": '1000 * histogram_quantile(0.99, sum by (le) (rate(farm_write_journal_projection_duration_seconds_bucket{service="farm"}[30s])))',
-    "farm_targeted_projection_duration_p99_ms": '1000 * histogram_quantile(0.99, sum by (le) (rate(farm_write_journal_targeted_projection_duration_seconds_bucket{service="farm"}[30s])))',
+    "farm_actor_resident": 'sum(farm_actor_resident{service=~"farm(-[0-9]+)?"})',
+    "farm_actor_mailbox_depth_p99": 'histogram_quantile(0.99, sum by (le) (rate(farm_actor_mailbox_depth_bucket{service=~"farm(-[0-9]+)?"}[30s])))',
+    "farm_write_pending": 'sum(farm_write_journal_pending{service=~"farm(-[0-9]+)?"})',
+    "farm_write_lag": 'sum(farm_write_journal_lag{service=~"farm(-[0-9]+)?"})',
+    "farm_projection_active": 'sum(farm_write_journal_projection_active{service=~"farm(-[0-9]+)?"})',
+    "farm_barrier_waiters": 'sum(farm_write_journal_barrier_waiters{service=~"farm(-[0-9]+)?"})',
+    "farm_stream_queue_depth": 'sum(farm_grpc_stream_queue_depth{service=~"farm(-[0-9]+)?"})',
+    "farm_stream_in_flight": 'sum(farm_grpc_stream_in_flight{service=~"farm(-[0-9]+)?"})',
+    "farm_write_admission_limit": 'sum(farm_write_admission_limit{service=~"farm(-[0-9]+)?"})',
+    "farm_projection_duration_p99_ms": '1000 * histogram_quantile(0.99, sum by (le) (rate(farm_write_journal_projection_duration_seconds_bucket{service=~"farm(-[0-9]+)?"}[30s])))',
+    "farm_targeted_projection_duration_p99_ms": '1000 * histogram_quantile(0.99, sum by (le) (rate(farm_write_journal_targeted_projection_duration_seconds_bucket{service=~"farm(-[0-9]+)?"}[30s])))',
     "mysql_threads_connected": "sum(mysql_global_status_threads_connected)",
     "mysql_threads_running": "sum(mysql_global_status_threads_running)",
     "redis_connected_clients": "sum(redis_connected_clients)",
@@ -51,17 +55,17 @@ GAUGES = {
 
 COUNTERS = {
     "gateway_rate_limited": 'farm_ws_rate_limited_total{service="gateway"}',
-    "farm_stream_rejected": 'farm_grpc_stream_rejected_total{service="farm"}',
-    "farm_write_admission_rejected": 'farm_write_admission_rejected_total{service="farm"}',
-    "farm_committer_batches": 'farm_committer_batches_total{service="farm"}',
-    "farm_committer_requests": 'farm_committer_requests_total{service="farm"}',
-    "farm_journal_appends": 'farm_write_journal_appends_total{service="farm"}',
-    "farm_journal_append_records": 'farm_write_journal_append_records_total{service="farm"}',
-    "farm_projection_batches": 'farm_write_journal_projection_batches_total{service="farm"}',
-    "farm_projection_records": 'farm_write_journal_projection_records_total{service="farm"}',
-    "farm_journal_append_errors": 'farm_write_journal_append_errors_total{service="farm"}',
-    "farm_projection_errors": 'farm_write_journal_projection_errors_total{service="farm"}',
-    "farm_barrier_timeouts": 'farm_write_journal_barrier_timeouts_total{service="farm"}',
+    "farm_stream_rejected": 'farm_grpc_stream_rejected_total{service=~"farm(-[0-9]+)?"}',
+    "farm_write_admission_rejected": 'farm_write_admission_rejected_total{service=~"farm(-[0-9]+)?"}',
+    "farm_committer_batches": 'farm_committer_batches_total{service=~"farm(-[0-9]+)?"}',
+    "farm_committer_requests": 'farm_committer_requests_total{service=~"farm(-[0-9]+)?"}',
+    "farm_journal_appends": 'farm_write_journal_appends_total{service=~"farm(-[0-9]+)?"}',
+    "farm_journal_append_records": 'farm_write_journal_append_records_total{service=~"farm(-[0-9]+)?"}',
+    "farm_projection_batches": 'farm_write_journal_projection_batches_total{service=~"farm(-[0-9]+)?"}',
+    "farm_projection_records": 'farm_write_journal_projection_records_total{service=~"farm(-[0-9]+)?"}',
+    "farm_journal_append_errors": 'farm_write_journal_append_errors_total{service=~"farm(-[0-9]+)?"}',
+    "farm_projection_errors": 'farm_write_journal_projection_errors_total{service=~"farm(-[0-9]+)?"}',
+    "farm_barrier_timeouts": 'farm_write_journal_barrier_timeouts_total{service=~"farm(-[0-9]+)?"}',
     "mysql_questions": "mysql_global_status_questions",
     "mysql_row_lock_waits": "mysql_global_status_innodb_row_lock_waits",
     "redis_commands": "redis_commands_processed_total",
@@ -257,7 +261,7 @@ def service_window(
         # 应用自身的进程计数器与业务metrics同一次抓取。在Farm高负载时，
         # cAdvisor偶尔会在恰好30秒的窗口中只留下一个样本，increase会返回空；
         # 进程计数器仍有完整样本，且正好代表该业务进程实际消耗的CPU。
-        cpu_selector = f'process_cpu_seconds_total{{service="{go_service}"}}'
+        cpu_selector = f'process_cpu_seconds_total{{service=~"{go_service}"}}'
         cpu_source = "process_cpu_seconds_total"
     else:
         cpu_selector = f"container_cpu_usage_seconds_total{selector}"
@@ -388,7 +392,7 @@ def service_window(
             "go_allocated_bytes",
             lambda: counter_window(
                 base_url,
-                f'go_memstats_alloc_bytes_total{{service="{go_service}"}}',
+                f'go_memstats_alloc_bytes_total{{service=~"{go_service}"}}',
                 start,
                 end,
                 group_by_pod=True,

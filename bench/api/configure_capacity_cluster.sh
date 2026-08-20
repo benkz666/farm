@@ -4,10 +4,13 @@ set -euo pipefail
 namespace="${NAMESPACE:-benkz}"
 
 wait_journal_idle() {
-  local attempt values pending lag
+  local attempt values pending lag journal_pod="redis-journal-0"
+  if ! kubectl -n "$namespace" get pod "$journal_pod" >/dev/null 2>&1; then
+    journal_pod="redis-0"
+  fi
   for attempt in $(seq 1 180); do
     values="$(
-      kubectl -n "$namespace" exec redis-0 -- sh -lc '
+      kubectl -n "$namespace" exec "$journal_pod" -- sh -lc '
         for key in $(redis-cli --scan --pattern "*:events"); do
           redis-cli --raw XINFO GROUPS "$key"
         done | awk '\''

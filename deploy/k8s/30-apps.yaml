@@ -41,6 +41,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_PRESENCE_REDIS_ADDR, value: "redis-presence:6379"}
             - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
             - name: FARM_INVITE_SECRET
               valueFrom:
@@ -116,6 +117,8 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_PRESENCE_REDIS_ADDR, value: "redis-presence:6379"}
+            - {name: FARM_EVENT_REDIS_ADDR, value: "redis-journal:6379"}
             - name: FARM_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: internal-token}
@@ -135,8 +138,8 @@ spec:
             - {name: FARM_ACTOR_IDLE_TTL, value: 2m}
             - {name: FARM_ACTOR_MAX_RESIDENT, value: "20000"}
             - {name: FARM_COMMITTER_SHARDS, value: "8"}
-            - {name: FARM_WRITE_JOURNAL_SHARDS, value: "32"}
-            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "12"}
+            - {name: FARM_WRITE_JOURNAL_SHARDS, value: "20"}
+            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "20"}
             - {name: FARM_WRITE_JOURNAL_BATCH, value: "1024"}
             - {name: FARM_WRITE_JOURNAL_BLOCK, value: 50ms}
             - {name: FARM_WRITE_JOURNAL_LATEST_TTL, value: 24h}
@@ -207,10 +210,10 @@ metadata:
   namespace: benkz
 spec:
   replicas: 3
+  # 单节点垂直档下 Gateway 独占约 5 核，maxSurge 会让新旧两个 Pod 同时占用配额
+  # 并挤掉 Farm。压测每轮都从重启开始，短暂不可用无影响。
   strategy:
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: gateway
@@ -235,6 +238,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: mysql-dsn}
             - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_PRESENCE_REDIS_ADDR, value: "redis-presence:6379"}
             - name: FARM_INTERNAL_TOKEN
               valueFrom:
                 secretKeyRef: {name: farm-secrets, key: internal-token}

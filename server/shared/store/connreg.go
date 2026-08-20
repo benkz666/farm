@@ -8,7 +8,7 @@ func (s *Store) ConnectionRegistry() *presence.Registry {
 	if s == nil {
 		return presence.New(nil)
 	}
-	return presence.New(s.rdb)
+	return presence.New(s.presenceClient())
 }
 
 // GatewayDirectory returns the Redis-backed ephemeral Gateway discovery
@@ -17,5 +17,5 @@ func (s *Store) GatewayDirectory() *presence.GatewayDirectory {
 	if s == nil {
 		return presence.NewGatewayDirectory(nil)
 	}
-	return presence.NewGatewayDirectory(s.rdb)
+	return presence.NewGatewayDirectory(s.presenceClient())
 }

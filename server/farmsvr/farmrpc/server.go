@@ -1223,7 +1223,7 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 		if farmActor == nil || farmActor.Aggregate == nil {
 			return errors.New("farmrpc: actor aggregate is nil")
 		}
-		if err := h.ensureActorMails(commandContext(command), command.FarmUID, farmActor); err != nil {
+		if err := h.ensureActorMailForClaim(commandContext(command), command.FarmUID, mailID, farmActor); err != nil {
 			return err
 		}
 		mail, claimErr = farmActor.ClaimMailState(mailID, h.now())
@@ -1244,6 +1244,33 @@ func (h *Handler) mailClaim(command CommandRequest) CommandResponse {
 	}
 	h.publishPlayerDelta(command.FarmUID, playerDelta)
 	return CommandResponse{Err: errcode.OK, ClientResponse: clientwire.NewMailClaimCommandResponse(mail)}
+}
+
+type mailByIDReader interface {
+	GetMail(ctx context.Context, uid, mailID uint64) (store.Mail, error)
+}
+
+func (h *Handler) ensureActorMailForClaim(
+	ctx context.Context,
+	uid, mailID uint64,
+	farmActor *room.FarmActor,
+) error {
+	if farmActor == nil || farmActor.Aggregate == nil || h.taskMail == nil {
+		return errors.New("farmrpc: mail Actor state is unavailable")
+	}
+	if farmActor.MailsReady() || farmActor.HasMail(mailID) {
+		return nil
+	}
+	reader, ok := h.taskMail.(mailByIDReader)
+	if !ok {
+		return h.ensureActorMails(ctx, uid, farmActor)
+	}
+	mail, err := reader.GetMail(ctx, uid, mailID)
+	if err != nil {
+		return err
+	}
+	farmActor.LoadMailForClaim(mail)
+	return nil
 }
 
 func (h *Handler) ensureActorTasks(

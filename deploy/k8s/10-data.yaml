@@ -39,9 +39,16 @@ spec:
             - --character-set-server=utf8mb4
             - --max-connections=1000
             - --innodb-buffer-pool-size=3G
-            - --innodb-flush-log-at-trx-commit=1
-            # 压测环境保留 binlog，以维持与生产主从一致的提交 fsync 成本；
-            # 但必须限制单文件大小与保留时长，否则会累积撑爆节点磁盘并触发 kubelet 驱逐。
+            # 单节点压测的磁盘会先于 CPU 饱和，而 MySQL 是投影落盘的唯一权威。
+            # 用 1 秒内的事务丢失风险换掉每事务两次 fsync，并让数据页写入减半。
+            - --innodb-flush-log-at-trx-commit=2
+            - --sync-binlog=0
+            - --innodb-doublewrite=OFF
+            # redo 容量的 100MB 默认值撑不住持续写入：6MB/s 就会让 InnoDB 不断被
+            # 迫推进检查点，把写事务拖成排队。给一轮长稳留足空间。
+            - --innodb-redo-log-capacity=8589934592
+            # 保留 binlog，提交路径的写放大成本仍计入容量结论；但必须限制单文件
+            # 大小与保留时长，否则会累积撑爆节点磁盘并触发 kubelet 驱逐。
             - --max-binlog-size=134217728
             - --binlog-expire-logs-seconds=1800
           env:
@@ -131,10 +138,10 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - redis-server
+            - --save
+            - ""
             - --appendonly
-            - "yes"
-            - --appendfsync
-            - everysec
+            - "no"
             - --maxmemory-policy
             - noeviction
           ports:
@@ -161,3 +168,133 @@ spec:
         resources:
           requests:
             storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-journal
+  namespace: benkz
+  labels:
+    app.kubernetes.io/name: redis-journal
+spec:
+  selector:
+    app.kubernetes.io/name: redis-journal
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-journal
+  namespace: benkz
+spec:
+  serviceName: redis-journal
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-journal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-journal
+        app.kubernetes.io/part-of: farm
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          args:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-presence
+  namespace: benkz
+  labels:
+    app.kubernetes.io/name: redis-presence
+spec:
+  selector:
+    app.kubernetes.io/name: redis-presence
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-presence
+  namespace: benkz
+spec:
+  serviceName: redis-presence
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-presence
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-presence
+        app.kubernetes.io/part-of: farm
+    spec:
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          args:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests: {cpu: "1", memory: 512Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 5
+          livenessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}

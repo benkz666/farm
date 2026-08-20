@@ -45,10 +45,9 @@ func (s *Store) CommitFarms(ctx context.Context, commits []outbox.FarmCommit) er
 }
 
 // MaterializeFarmCommits writes journaled farm state to MySQL without touching
-// the Redis read cache. The write-journal projector calls this method and only
-// publishes a cache snapshot after the MySQL transaction succeeds. Keeping the
-// cache update outside the transaction prevents an older projected event from
-// overwriting a newer snapshot that is already present in the journal.
+// the Redis read cache. Foreground journal appends already write-through the
+// cache Redis; the projector must not DEL those hot keys or every read pays a
+// miss on the same Redis that is draining the stream.
 func (s *Store) MaterializeFarmCommits(ctx context.Context, commits []outbox.FarmCommit) error {
 	if s == nil {
 		return errors.New("store: nil store")
@@ -389,7 +388,7 @@ func (s *Store) saveSpecializedFarmCommits(ctx context.Context, commits []outbox
 			return fmt.Errorf("store: batch upsert selected player_codex: %w", err)
 		}
 	}
-	if err := insertOutboxEventsTx(ctx, tx, outboxEvents, now); err != nil {
+	if err := insertOutboxEventsTx(ctx, tx, s.outboxScope(), outboxEvents, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -518,7 +517,7 @@ func (s *Store) saveFarmsToMySQL(ctx context.Context, snapshots []*farm.Aggregat
 		}
 	}
 
-	if err := insertOutboxEventsTx(ctx, tx, outboxEvents, now); err != nil {
+	if err := insertOutboxEventsTx(ctx, tx, s.outboxScope(), outboxEvents, now); err != nil {
 		return err
 	}
 
@@ -528,12 +527,18 @@ func (s *Store) saveFarmsToMySQL(ctx context.Context, snapshots []*farm.Aggregat
 	return nil
 }
 
-func insertOutboxEventsTx(ctx context.Context, tx *sql.Tx, events []outbox.Event, now int64) error {
+func insertOutboxEventsTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	farmID string,
+	events []outbox.Event,
+	now int64,
+) error {
 	if len(events) == 0 {
 		return nil
 	}
 	values := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)*7)
+	args := make([]any, 0, len(events)*8)
 	seen := make(map[string]struct{}, len(events))
 	nextAttemptAt := now + outboxInitialDelay.Milliseconds()
 	for _, event := range events {
@@ -544,9 +549,10 @@ func insertOutboxEventsTx(ctx context.Context, tx *sql.Tx, events []outbox.Event
 			continue
 		}
 		seen[event.EventID] = struct{}{}
-		values = append(values, "(?, ?, ?, ?, ?, 0, ?, NULL, ?)")
+		values = append(values, "(?, ?, ?, ?, ?, ?, 0, ?, NULL, ?)")
 		args = append(args,
 			event.EventID,
+			farmID,
 			event.ProducerUID,
 			event.TargetUID,
 			string(event.Kind),
@@ -559,7 +565,7 @@ func insertOutboxEventsTx(ctx context.Context, tx *sql.Tx, events []outbox.Event
 		return nil
 	}
 	query := `INSERT INTO farm_outbox (
-		event_id, producer_uid, target_uid, kind, payload,
+		event_id, producer_farm_id, producer_uid, target_uid, kind, payload,
 		attempts, next_attempt_at, published_at, created_at
 	) VALUES ` + strings.Join(values, ",") + `
 	ON DUPLICATE KEY UPDATE event_id = event_id`

@@ -224,9 +224,13 @@ func main() {
 							err = prepareDirectFixtureWithRetry(context.Background(), directStorage, uid, *profile, *timeProfile)
 						}
 						if err == nil && *profile == "mixed" {
-							taskIDs, mailReadID, mailClaimID, mailDeleteID, err = prepareMixedAuxiliary(
-								context.Background(), directStorage, directDB, uid,
-							)
+							err = withDeadlockRetry(context.Background(), func() error {
+								var auxiliaryErr error
+								taskIDs, mailReadID, mailClaimID, mailDeleteID, auxiliaryErr = prepareMixedAuxiliary(
+									context.Background(), directStorage, directDB, uid,
+								)
+								return auxiliaryErr
+							})
 						}
 					}
 				} else {
@@ -460,7 +464,16 @@ func resetFixtures(storage *store.Store, directDB *sql.DB, fixtures []fixture, p
 				item.ItemID = 1
 				item.Quantity = 1
 				if profile == "mixed" {
-					taskIDs, mailReadID, mailClaimID, mailDeleteID, auxiliaryErr := prepareMixedAuxiliary(ctx, storage, directDB, uid)
+					var (
+						taskIDs                               []int
+						mailReadID, mailClaimID, mailDeleteID string
+					)
+					auxiliaryErr := withDeadlockRetry(ctx, func() error {
+						var err error
+						taskIDs, mailReadID, mailClaimID, mailDeleteID, err =
+							prepareMixedAuxiliary(ctx, storage, directDB, uid)
+						return err
+					})
 					if auxiliaryErr != nil {
 						errs <- auxiliaryErr
 						cancel()
@@ -475,7 +488,14 @@ func resetFixtures(storage *store.Store, directDB *sql.DB, fixtures []fixture, p
 						cancel()
 						return
 					}
-					if friendErr := storage.AddFriends(ctx, uid, peerUID); friendErr != nil && !errors.Is(friendErr, store.ErrAlreadyFriend) {
+					friendErr := withDeadlockRetry(ctx, func() error {
+						err := storage.AddFriends(ctx, uid, peerUID)
+						if errors.Is(err, store.ErrAlreadyFriend) {
+							return nil
+						}
+						return err
+					})
+					if friendErr != nil {
 						errs <- friendErr
 						cancel()
 						return
@@ -705,15 +725,17 @@ func prepareMixedAuxiliary(
 		nil
 }
 
-func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {
+// 并发重置会让多个 worker 在相邻主键上交错加锁，MySQL 报 1213 死锁或 1205 锁
+// 等待超时。每个准备步骤都以删除该 uid 的旧行开始，所以整段重跑是幂等的。
+func withDeadlockRetry(ctx context.Context, run func() error) error {
 	const attempts = 5
 	for attempt := 0; attempt < attempts; attempt++ {
-		err := prepareDirectFixture(ctx, storage, uid, profile, timeProfile)
+		err := run()
 		if err == nil {
 			return nil
 		}
 		var mysqlErr *mysql.MySQLError
-		if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1213 && mysqlErr.Number != 1205 {
+		if !errors.As(err, &mysqlErr) || (mysqlErr.Number != 1213 && mysqlErr.Number != 1205) {
 			return err
 		}
 		if attempt+1 == attempts {
@@ -728,6 +750,12 @@ func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, ui
 		}
 	}
 	return nil
+}
+
+func prepareDirectFixtureWithRetry(ctx context.Context, storage *store.Store, uid uint64, profile, timeProfile string) error {
+	return withDeadlockRetry(ctx, func() error {
+		return prepareDirectFixture(ctx, storage, uid, profile, timeProfile)
+	})
 }
 
 func createDirectFixture(storage *store.Store, uid uint64, username, wsURL, passwordHash string) (authResponse, error) {

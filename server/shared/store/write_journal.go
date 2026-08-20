@@ -39,16 +39,13 @@ const (
 )
 
 const (
-	projectionForegroundHold = 50 * time.Millisecond
-	projectionClaimPollMin   = 500 * time.Millisecond
+	projectionClaimPollMin = 500 * time.Millisecond
 	// Redis 会在第一条消息到达时立即唤醒每个 shard。高并发下若马上
 	// 开 MySQL 事务，即使 BatchSize 很大，实际也只有几条记录，最终把
 	// innodb_flush_log_at_trx_commit=1 的磁盘变成大量小事务。获取投影
 	// permit 后短暂等待新的同 shard 记录；此时没有占用 DB 连接或行锁，
 	// 但能显著提高每次事务的有效批量。
 	projectionCoalesceWindow = 50 * time.Millisecond
-	projectionMediumBatches  = 8
-	projectionHighBatches    = 64
 )
 
 const maxRetainedJournalProtoBuffer = 64 << 10
@@ -297,16 +294,15 @@ type FarmWriteJournal struct {
 	barrierWaiters    atomic.Int64
 	appendInFlight    atomic.Int32
 	foregroundQueue   atomic.Int64
-	lastForeground    atomic.Int64
 	projectionBacklog atomic.Int64
 	targetedReady     atomic.Bool
 	targetedPermits   chan struct{}
 }
 
-// OpenFarmWriteJournal opens dedicated connection pools against the deployment's
-// single Redis instance. Separate pools prevent blocking projector reads from
-// starving foreground session/cache/event commands; they are not separate data
-// stores.
+// OpenFarmWriteJournal opens dedicated connection pools against the journal
+// Redis instance (FARM_EVENT_REDIS_ADDR, falling back to FARM_REDIS_ADDR).
+// Separate pools prevent blocking projector reads from starving foreground
+// appends; cache and presence traffic belongs on their own Redis processes.
 func OpenFarmWriteJournal(
 	ctx context.Context,
 	base *Store,
@@ -789,7 +785,31 @@ func (journal *FarmWriteJournal) AppendFarmCommits(ctx context.Context, commits 
 	if err != nil {
 		return fmt.Errorf("store: append farm write journal: %w", err)
 	}
+	journal.cacheAppendedFarms(ctx, commits)
 	return journal.waitForReplicas(ctx, connection)
+}
+
+// cacheAppendedFarms write-throughs the in-memory snapshot to the cache Redis
+// after the durable journal append succeeds. The projector then leaves the
+// hot key alone, so projection lag no longer turns every subsequent read into
+// a cache miss against the same Redis that is already draining the stream.
+func (journal *FarmWriteJournal) cacheAppendedFarms(ctx context.Context, commits []outbox.FarmCommit) {
+	if journal == nil || journal.base == nil {
+		return
+	}
+	snapshots := make([]*farm.Aggregate, 0, len(commits))
+	for _, commit := range commits {
+		if commit.Snapshot != nil && commit.Snapshot.UID != 0 {
+			snapshots = append(snapshots, commit.Snapshot)
+		}
+	}
+	if len(snapshots) == 0 {
+		return
+	}
+	if err := journal.base.cacheFarmsPipeline(ctx, snapshots); err != nil {
+		logFarmCacheFailure("cache_appended_farms_pipeline", snapshots, err)
+		journal.base.invalidateFarmCaches(snapshots)
+	}
 }
 
 // AdvanceTask implements the Farm gameplay task side effect as an event-log
@@ -1393,31 +1413,10 @@ func (journal *FarmWriteJournal) adjustProjectionLimit() {
 	if journal == nil || journal.projectLimiter == nil {
 		return
 	}
+	// Keep the configured projector width even while foreground writes are in
+	// flight. Narrowing here was the main reason 20 journal shards ran with
+	// ~6 active projectors under 1U mixed load and lost the race against lag.
 	limit := journal.config.Projectors
-	inFlight := journal.appendInFlight.Load()
-	queue := journal.foregroundQueue.Load()
-	now := time.Now()
-	if journal.barrierWaiters.Load() > 0 {
-		// A direct claim is waiting for all earlier mutations of the same UID to
-		// reach MySQL. It is part of the foreground consistency boundary, not
-		// disposable background work. Restore the configured projection width
-		// while barriers exist; the isolated claim lane bounds this demand.
-		limit = journal.config.Projectors
-	} else if inFlight > 0 || queue > 0 {
-		// Keep the projector narrow for short foreground bursts, then widen it
-		// from aggregate lag. The old hard-coded ceiling of four workers came from
-		// a one-core experiment and left half of an eight-projector, four-core Farm
-		// idle while the durable log crossed its admission watermark. Scale against
-		// the configured projector budget instead; that budget remains the explicit
-		// resource guard for the process.
-		journal.lastForeground.Store(now.UnixNano())
-		limit = journal.foregroundProjectionLimit()
-	} else if last := journal.lastForeground.Load(); last > 0 && now.Sub(time.Unix(0, last)) < projectionForegroundHold {
-		// Group commits create very short gaps between batches. Holding the
-		// reduced limit avoids oscillating 1→4→1 and starting expensive MySQL
-		// work just before the next foreground batch arrives.
-		limit = journal.foregroundProjectionLimit()
-	}
 	changed := journal.projectLimiter.SetLimit(limit)
 	if changed && journal.metrics != nil {
 		journal.metrics.SetWriteJournalProjectionLimit(limit)
@@ -1434,24 +1433,6 @@ func (journal *FarmWriteJournal) markProjectionBacklog(records int) {
 			return
 		}
 	}
-}
-
-func (journal *FarmWriteJournal) foregroundProjectionLimit() int {
-	if journal == nil {
-		return 1
-	}
-	batch := max(int64(1), journal.config.BatchSize)
-	backlog := journal.projectionBacklog.Load()
-	limit := 1
-	switch {
-	case backlog >= projectionHighBatches*batch:
-		limit = journal.config.Projectors
-	case backlog >= projectionMediumBatches*batch:
-		limit = max(3, (journal.config.Projectors+1)/2)
-	case backlog >= batch:
-		limit = 2
-	}
-	return min(limit, journal.config.Projectors)
 }
 
 type adaptiveProjectionLimiter struct {
@@ -1723,17 +1704,6 @@ func (journal *FarmWriteJournal) materializeFarmGroup(
 	}
 	if err := journal.materializeBundledSideEffects(parent, records, messages); err != nil {
 		return err
-	}
-	uids := make([]uint64, 0, len(commits))
-	for _, commit := range commits {
-		if commit.Mutation != nil {
-			uids = append(uids, commit.Mutation.Uid)
-		}
-	}
-	if err := journal.base.invalidateFarmCacheUIDs(ctx, uids); err != nil {
-		telemetry.L().Error("write journal projected cache update failed",
-			"component", "write_journal", "count", len(uids), "err", err.Error())
-		return fmt.Errorf("store: invalidate projected farm caches: %w", err)
 	}
 	pipe := journal.rdb.Pipeline()
 	for uid, eventID := range latestIDs {

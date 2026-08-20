@@ -188,7 +188,7 @@ func main() {
 	case "gateway-ws":
 		measured, err = runGatewayWS(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *perConnectionQPS, *fixedConnections, *fixtureAccountOffset, *operation, *warmupMode, *requestsPerAccount)
 	case "gateway-mixed":
-		measured, err = runGatewayMixed(ctx, *accounts, *behaviorModel, *gatewayURLs, *excludeOperations, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *fixedConnections, *residentActors, *residentActorRefresh, *measurementStartUnixMS, *measurementReadyFile, *measurementStartFile)
+		measured, err = runGatewayMixed(ctx, *accounts, *behaviorModel, *gatewayURLs, *excludeOperations, *qps, *duration, *concurrency, *warmupConcurrency, *warmupSettle, *fixedConnections, *fixtureAccountOffset, *residentActors, *residentActorRefresh, *measurementStartUnixMS, *measurementReadyFile, *measurementStartFile)
 	case "gateway-handshake":
 		measured, err = runGatewayHandshake(ctx, *accounts, *gatewayURLs, *qps, *duration, *concurrency, *fixtureAccountOffset, *measurementStartUnixMS)
 	case "gateway-startup":

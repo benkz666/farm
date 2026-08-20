@@ -55,6 +55,7 @@ func runGatewayMixed(
 	maxConnections, warmupConcurrency int,
 	warmupSettle time.Duration,
 	fixedConnections int,
+	fixtureAccountOffset int,
 	residentActors int,
 	residentActorRefresh time.Duration,
 	measurementStartUnixMS int64,
@@ -77,6 +78,17 @@ func runGatewayMixed(
 	}
 	if len(fixture.Accounts) < 10 {
 		return result{}, fmt.Errorf("gateway-mixed needs at least 10 fixture accounts")
+	}
+	if fixtureAccountOffset < 0 || fixtureAccountOffset >= len(fixture.Accounts) {
+		return result{}, fmt.Errorf(
+			"fixture-account-offset %d is outside fixture account range [0,%d)",
+			fixtureAccountOffset,
+			len(fixture.Accounts),
+		)
+	}
+	fixture.Accounts = fixture.Accounts[fixtureAccountOffset:]
+	if len(fixture.Accounts) < 10 {
+		return result{}, fmt.Errorf("gateway-mixed has fewer than 10 accounts after fixture offset")
 	}
 	if fixture.TimeProfile != "" && !gameconfig.ValidTimeProfile(fixture.TimeProfile) {
 		return result{}, fmt.Errorf("gateway account fixture has invalid time_profile %q", fixture.TimeProfile)
@@ -487,14 +499,16 @@ func runGatewayMixedPongKeepalive(
 	if expectedConnections <= 0 || cycle <= 0 {
 		return
 	}
-	period := cycle / time.Duration(expectedConnections)
-	if period < 100*time.Microsecond {
-		period = 100 * time.Microsecond
-	}
-	ticker := time.NewTicker(period)
+	// 每个 tick 推一批连接，而不是一个。逐连接推送要求的定时器频率随连接数线性
+	// 上升——60000 条连接就是 2000 次/秒，而这个 select 还要和 registrations 抢
+	// 就绪分支，实际轮完一圈远超 cycle。一旦超过 Gateway 的 90s 读超时，服务端
+	// 就把连接判死，压测会误报成被测系统的容量上限。按批推送把定时器频率固定下来，
+	// 与连接数无关。
+	const tick = 500 * time.Millisecond
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	clients := make([]*gatewayBenchConnection, 0, expectedConnections)
-	keepaliveJobs := make(chan *gatewayBenchConnection, 4096)
+	keepaliveJobs := make(chan *gatewayBenchConnection, 8192)
 	var keepaliveWorkers sync.WaitGroup
 	for range 32 {
 		keepaliveWorkers.Add(1)
@@ -522,6 +536,7 @@ func runGatewayMixedPongKeepalive(
 		keepaliveWorkers.Wait()
 	}()
 	index := 0
+	dispatched := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
@@ -534,16 +549,26 @@ func runGatewayMixedPongKeepalive(
 			if client != nil {
 				clients = append(clients, client)
 			}
-		case <-ticker.C:
+		case now := <-ticker.C:
+			elapsed := now.Sub(dispatched)
+			dispatched = now
 			if len(clients) == 0 {
 				continue
 			}
-			client := clients[index%len(clients)]
-			index++
-			select {
-			case keepaliveJobs <- client:
-			default:
-				failed.Add(1)
+			// 批量按实际流逝的时间算。建连阶段 registrations 一直就绪，select 会
+			// 随机挤掉部分 tick，按固定批量推会让一圈拖长；按流逝时间推则自动补齐。
+			batch := int(int64(len(clients)) * int64(elapsed) / int64(cycle))
+			if batch < 1 {
+				batch = 1
+			}
+			for range batch {
+				client := clients[index%len(clients)]
+				index++
+				select {
+				case keepaliveJobs <- client:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}

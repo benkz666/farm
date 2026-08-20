@@ -22,7 +22,7 @@ func (s *Store) ListMails(ctx context.Context, uid uint64) ([]Mail, error) {
 			if hit {
 				return cached, nil
 			}
-			mails, err := s.listMailsFromMySQL(ctx, uid)
+			mails, err := s.listMailsFromMySQLBatched(ctx, uid)
 			if err != nil {
 				return nil, err
 			}

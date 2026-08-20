@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: farm-route-table
+  namespace: benkz
+data:
+  # 内容由 bench/api/configure_horizontal_scale.sh 按档位改写；这里的默认值是
+  # 单分片，等价于镜像内的 deploy/route-table.local.json。ConfigMap 常驻挂载，
+  # 切换分片数只需改内容加重启，不必反复 patch volume。路由表在进程启动时读取。
+  route-table.json: |
+    {
+      "logical_shards": 1024,
+      "routes": [
+        {"shard_start": 0, "shard_end": 1023, "farm_id": "farm-0"}
+      ]
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: farm-1
+  namespace: benkz
+spec:
+  selector:
+    app.kubernetes.io/name: farm-1
+  ports:
+    - {name: http, port: 9100, targetPort: 9100}
+    - {name: grpc, port: 9210, targetPort: 9210}
+    - {name: admin, port: 9310, targetPort: 9310}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: farm-1
+  namespace: benkz
+spec:
+  # 单分片档位下保持 0 副本，由 configure_horizontal_scale.sh 拉起。
+  replicas: 0
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: farm-1
+  template:
+    metadata:
+      # 标签值必须与现有 farm 不同：Deployment 的 selector 不可变，现有 farm 的
+      # selector 只有 app.kubernetes.io/name=farm，若本分片也用这个值就会被它
+      # 认作自己的副本而杀掉。容器名仍叫 farm，让按 container 过滤的 cAdvisor
+      # 查询无需区分分片；service 标签的差异由采集脚本用正则重新聚合。
+      labels:
+        app.kubernetes.io/name: farm-1
+        app.kubernetes.io/part-of: farm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "9310"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: farm
+          image: benkz/farm:k3s
+          imagePullPolicy: Never
+          env:
+            - {name: FARM_ENV, value: dev}
+            - name: FARM_MYSQL_DSN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: mysql-dsn}
+            - {name: FARM_REDIS_ADDR, value: "redis:6379"}
+            - {name: FARM_PRESENCE_REDIS_ADDR, value: "redis-presence:6379"}
+            - {name: FARM_EVENT_REDIS_ADDR, value: "redis-journal:6379"}
+            - name: FARM_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: internal-token}
+            - {name: FARM_FARM_HTTP_ADDR, value: ":9100"}
+            - {name: FARM_FARM_GRPC_ADDR, value: ":9210"}
+            - {name: FARM_FARM_ADMIN_ADDR, value: ":9310"}
+            - {name: FARM_FARM_INSTANCE_ID, value: farm-1}
+            - {name: FARM_ROUTE_TABLE, value: /etc/farm/route-table.json}
+            - {name: FARM_FARM_GRPC_TARGETS, value: '{"farm-0":"farm:9210","farm-1":"farm-1:9210"}'}
+            - {name: FARM_GATEWAY_GRPC_TARGETS, value: '{}'}
+            - {name: FARM_SOCIAL_GRPC_TARGET, value: "social:9204"}
+            - name: FARM_HAZARD_SECRET
+              valueFrom:
+                secretKeyRef: {name: farm-secrets, key: hazard-secret}
+            - {name: FARM_TIME_PROFILE, value: authentic}
+            - {name: FARM_ALLOW_DEBUG_TIME, value: "1"}
+            - {name: FARM_ACTOR_IDLE_TTL, value: 20m}
+            - {name: FARM_ACTOR_MAX_RESIDENT, value: "250000"}
+            - {name: FARM_COMMITTER_SHARDS, value: "15"}
+            - {name: FARM_WRITE_JOURNAL_SHARDS, value: "15"}
+            - {name: FARM_WRITE_JOURNAL_PROJECTORS, value: "15"}
+            - {name: FARM_WRITE_JOURNAL_BATCH, value: "1024"}
+            - {name: FARM_WRITE_JOURNAL_BLOCK, value: 50ms}
+            - {name: FARM_WRITE_JOURNAL_LATEST_TTL, value: 24h}
+            - {name: FARM_WRITE_JOURNAL_CLAIM_IDLE, value: 5s}
+            - {name: FARM_WRITE_JOURNAL_RECOVERY_TIMEOUT, value: 5m}
+            - {name: FARM_WRITE_JOURNAL_REPLICAS, value: "0"}
+            - {name: FARM_WRITE_DYNAMIC_ADMISSION, value: "1"}
+            - {name: FARM_WRITE_MAX_IN_FLIGHT, value: "1664"}
+            - {name: FARM_WRITE_MIN_IN_FLIGHT, value: "208"}
+            - {name: FARM_WRITE_BACKLOG_LOW, value: "26624"}
+            - {name: FARM_WRITE_BACKLOG_HIGH, value: "212992"}
+            - {name: FARM_WRITE_BACKLOG_HARD, value: "851968"}
+            - {name: FARM_WRITE_RECOVERY_STEP, value: "208"}
+            - {name: FARM_WRITE_BACKLOG_POLL, value: 250ms}
+            - {name: FARM_WRITE_BACKLOG_TIMEOUT, value: 150ms}
+            - {name: FARM_WRITE_BACKLOG_ERROR_GRACE, value: 2s}
+            - {name: FARM_WRITE_ADMISSION_WAIT, value: 5ms}
+            - {name: GOMAXPROCS, value: "3"}
+            - {name: GOMEMLIMIT, value: 8704MiB}
+            - {name: GOGC, value: "200"}
+          ports:
+            - {name: http, containerPort: 9100}
+            - {name: grpc, containerPort: 9210}
+            - {name: admin, containerPort: 9310}
+          resources:
+            requests: {cpu: "3", memory: 10Gi}
+            limits: {cpu: "3", memory: 10Gi}
+          readinessProbe:
+            httpGet: {path: /readyz, port: admin}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: {path: /healthz, port: admin}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: route-table
+              mountPath: /etc/farm
+              readOnly: true
+      volumes:
+        - name: route-table
+          configMap:
+            name: farm-route-table

@@ -7,6 +7,7 @@
 //   - mysql.go：account/player/farm_plot 的读写（Store 的 MySQL-only 方法）
 //   - redis.go：session:{token} 与 farm:{uid} 缓存（Store 的 Redis-only 方法 +
 //     LoadFarm/SaveFarm 的回填编排）
+//   - Presence 可选独立 Redis（FARM_PRESENCE_REDIS_ADDR）
 //   - farm_codec.go：farm_plot.blob 列的单一编解码函数
 package store
 
@@ -16,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -186,11 +188,36 @@ const (
 type Store struct {
 	db             *sql.DB
 	rdb            *redis.Client
+	presenceRDB    *redis.Client
 	farmTTL        time.Duration
+	outboxFarmID   string
 	taskInit       dailyTaskInitCache
 	taskRead       boundedTTLCache[taskReadKey, []Task]
 	taskCacheState [taskCacheStateShardCount]taskCacheState
 	mailbox        mailboxCache
+	taskBatches    taskReadBatcher
+	mailBatches    mailReadBatcher
+}
+
+// SetOutboxFarmID scopes durable cross-farm events to the Farm instance that
+// produced them. It must be called during startup, before projectors or request
+// handlers begin writing.
+func (s *Store) SetOutboxFarmID(instanceID string) {
+	if s == nil {
+		return
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		instanceID = "farm-0"
+	}
+	s.outboxFarmID = instanceID
+}
+
+func (s *Store) outboxScope() string {
+	if s == nil || s.outboxFarmID == "" {
+		return "farm-0"
+	}
+	return s.outboxFarmID
 }
 
 // CachedFriendStore returns the Social-facing friendship store with bounded
@@ -235,14 +262,10 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 		return nil, nil, fmt.Errorf("store: ping mysql: %w", err)
 	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:         redisAddr,
-		PoolSize:     defaultRedisPoolSize,
-		MinIdleConns: defaultRedisMinIdleConns,
-	})
-	if err := rdb.Ping(ctx).Err(); err != nil {
+	rdb, err := openRedisClient(ctx, redisAddr)
+	if err != nil {
 		db.Close()
-		return nil, nil, fmt.Errorf("store: ping redis: %w", err)
+		return nil, nil, err
 	}
 
 	storage := New(db, rdb, farmTTL)
@@ -257,6 +280,50 @@ func Open(ctx context.Context, mysqlDSN, redisAddr string, farmTTL time.Duration
 		return rdbErr
 	}
 	return storage, closeFn, nil
+}
+
+func openRedisClient(ctx context.Context, addr string) (*redis.Client, error) {
+	if strings.TrimSpace(addr) == "" {
+		return nil, errors.New("store: redis address is empty")
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         addr,
+		PoolSize:     defaultRedisPoolSize,
+		MinIdleConns: defaultRedisMinIdleConns,
+	})
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		_ = rdb.Close()
+		return nil, fmt.Errorf("store: ping redis %s: %w", addr, err)
+	}
+	return rdb, nil
+}
+
+// OpenWithPresence opens MySQL plus a cache Redis, and optionally a dedicated
+// Presence Redis. An empty presenceAddr, or one equal to cacheAddr, reuses the
+// cache client so local/dev topologies stay single-instance.
+func OpenWithPresence(
+	ctx context.Context,
+	mysqlDSN, cacheAddr, presenceAddr string,
+	farmTTL time.Duration,
+) (*Store, func() error, error) {
+	storage, closeStorage, err := Open(ctx, mysqlDSN, cacheAddr, farmTTL)
+	if err != nil {
+		return nil, nil, err
+	}
+	presenceAddr = strings.TrimSpace(presenceAddr)
+	cacheAddr = strings.TrimSpace(cacheAddr)
+	if presenceAddr == "" || presenceAddr == cacheAddr {
+		return storage, closeStorage, nil
+	}
+	client, err := openRedisClient(ctx, presenceAddr)
+	if err != nil {
+		_ = closeStorage()
+		return nil, nil, fmt.Errorf("store: presence redis: %w", err)
+	}
+	storage.presenceRDB = client
+	return storage, func() error {
+		return errors.Join(client.Close(), closeStorage())
+	}, nil
 }
 
 // mysqlDSNWithInterpolation lets the driver safely encode placeholders into
@@ -300,7 +367,22 @@ func (s *Store) Ping(ctx context.Context) error {
 	if err := s.rdb.Ping(ctx).Err(); err != nil {
 		return fmt.Errorf("redis: %w", err)
 	}
+	if s.presenceRDB != nil && s.presenceRDB != s.rdb {
+		if err := s.presenceRDB.Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("presence redis: %w", err)
+		}
+	}
 	return nil
+}
+
+func (s *Store) presenceClient() *redis.Client {
+	if s == nil {
+		return nil
+	}
+	if s.presenceRDB != nil {
+		return s.presenceRDB
+	}
+	return s.rdb
 }
 
 var (

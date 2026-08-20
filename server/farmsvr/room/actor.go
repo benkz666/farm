@@ -507,14 +507,66 @@ func (a *FarmActor) ClaimTaskState(dayKey int64, taskID uint32, claimedAt int64)
 
 func (a *FarmActor) MailsReady() bool { return a != nil && a.mailsReady }
 
+func (a *FarmActor) HasMail(mailID uint64) bool {
+	if a == nil || a.mails == nil {
+		return false
+	}
+	_, exists := a.mails[mailID]
+	return exists
+}
+
 func (a *FarmActor) LoadMails(mails []store.Mail) {
 	if a == nil {
 		return
 	}
+	// A targeted MailClaim cold load may already have changed one mail while the
+	// full mailbox baseline was still absent. Reapply those Actor-owned facts so
+	// an asynchronous MySQL projection cannot temporarily roll state backwards.
+	pending := append([]stampedMailMutation(nil), a.mailMutations...)
 	a.mailsReady = true
 	a.mails = make(map[uint64]store.Mail, len(mails))
 	a.mailDeleted = nil
 	for _, mail := range mails {
+		a.mails[mail.ID] = mail
+	}
+	for _, stamped := range pending {
+		mutation := stamped.mutation
+		mail, exists := a.mails[mutation.MailID]
+		switch mutation.Kind {
+		case outbox.MailRead:
+			if exists {
+				mail.Read = true
+				a.mails[mutation.MailID] = mail
+			}
+		case outbox.MailClaim:
+			if exists {
+				mail.Read, mail.Claimed = true, true
+				a.mails[mutation.MailID] = mail
+			}
+		case outbox.MailDelete:
+			delete(a.mails, mutation.MailID)
+			if a.mailDeleted == nil {
+				a.mailDeleted = make(map[uint64]struct{})
+			}
+			a.mailDeleted[mutation.MailID] = struct{}{}
+		}
+	}
+}
+
+// LoadMailForClaim installs one cold row without declaring the whole mailbox
+// loaded. This lets MailClaim stay O(1) in mailbox size; a later MailList still
+// obtains the complete baseline through LoadMails above.
+func (a *FarmActor) LoadMailForClaim(mail store.Mail) {
+	if a == nil || mail.ID == 0 {
+		return
+	}
+	if a.mails == nil {
+		a.mails = make(map[uint64]store.Mail, 1)
+	}
+	if _, deleted := a.mailDeleted[mail.ID]; deleted {
+		return
+	}
+	if _, exists := a.mails[mail.ID]; !exists {
 		a.mails[mail.ID] = mail
 	}
 }
@@ -591,7 +643,7 @@ func (a *FarmActor) DeleteMailsState(mailID uint64, occurredAt int64) int64 {
 }
 
 func (a *FarmActor) ClaimMailState(mailID uint64, occurredAt int64) (store.Mail, error) {
-	if !a.MailsReady() {
+	if a == nil || a.mails == nil {
 		return store.Mail{}, errors.New("room: mail state is not loaded")
 	}
 	mail, ok := a.mails[mailID]

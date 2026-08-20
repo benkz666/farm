@@ -218,7 +218,7 @@ spec:
           image: oliver006/redis_exporter:v1.62.0
           imagePullPolicy: IfNotPresent
           env:
-            - {name: REDIS_ADDR, value: "redis://redis:6379"}
+            - {name: REDIS_ADDR, value: "redis://redis:6379,redis://redis-journal:6379,redis://redis-presence:6379"}
           ports:
             - {name: metrics, containerPort: 9121}
           resources:

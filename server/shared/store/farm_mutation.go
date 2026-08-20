@@ -54,7 +54,7 @@ func (s *Store) MaterializeFarmMutations(ctx context.Context, mutations []*farmv
 		return err
 	}
 	events := mutationOutboxEvents(mutations)
-	if err := insertOutboxEventsTx(ctx, tx, events, now); err != nil {
+	if err := insertOutboxEventsTx(ctx, tx, s.outboxScope(), events, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

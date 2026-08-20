@@ -28,6 +28,22 @@ func TestPersistPlanKeepsReducedModeUntilMixedMutation(t *testing.T) {
 	}
 }
 
+func TestTargetedMailClaimSurvivesLaterStaleMailboxBaseline(t *testing.T) {
+	actor := &FarmActor{}
+	actor.LoadMailForClaim(store.Mail{ID: 7, AttachmentCoin: 50})
+	if _, err := actor.ClaimMailState(7, 123); err != nil {
+		t.Fatalf("ClaimMailState: %v", err)
+	}
+
+	// Projection is asynchronous, so a subsequent full baseline may still
+	// contain the old unclaimed row. Actor-owned state must remain authoritative.
+	actor.LoadMails([]store.Mail{{ID: 7, AttachmentCoin: 50}})
+	mails := actor.MailSnapshot()
+	if len(mails) != 1 || !mails[0].Claimed || !mails[0].Read {
+		t.Fatalf("mail state rolled back after stale baseline: %#v", mails)
+	}
+}
+
 func TestPendingWriteMutationContainsOnlyExactDirtyRows(t *testing.T) {
 	agg := farm.NewAggregate(42, "alice")
 	agg.Items[farm.SeedItem(1)] = 10

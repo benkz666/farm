@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>经典农场 3000 万 DAU 容量评估报告</title>
+  <style>
+    :root {
+      --bg:#f4f6f8; --paper:#fff; --ink:#17202a; --muted:#667085;
+      --line:#dfe4ea; --brand:#174a7e; --ok:#157347; --ok-bg:#eaf7f0;
+      --bad:#b42318; --bad-bg:#fff0ee; --warn:#8a6100; --warn-bg:#fff8df;
+    }
+    * { box-sizing:border-box }
+    body { margin:0; color:var(--ink); background:var(--bg);
+      font:15px/1.68 system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif }
+    main { width:min(1080px,calc(100% - 32px)); margin:28px auto 72px }
+    header,.section { background:var(--paper); border:1px solid var(--line); padding:28px 32px; margin:0 0 18px }
+    h1 { font-size:30px; line-height:1.25; margin:0 0 8px }
+    h2 { font-size:21px; margin:0 0 16px; padding-bottom:8px; border-bottom:1px solid var(--line) }
+    h3 { font-size:17px; margin:24px 0 8px }
+    p { margin:8px 0 12px }
+    .sub,.small { color:var(--muted) }
+    .small { font-size:13px }
+    .meta { display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:16px; color:var(--muted); font-size:13px }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0 }
+    .metric { border:1px solid var(--line); padding:14px 16px; min-height:94px }
+    .metric strong { display:block; color:var(--brand); font-size:26px; line-height:1.2 }
+    .metric span { color:var(--muted); font-size:13px }
+    .callout { border-left:4px solid var(--brand); padding:13px 16px; margin:16px 0; background:#f3f7fb }
+    .callout.ok { border-color:var(--ok); background:var(--ok-bg) }
+    .callout.bad { border-color:var(--bad); background:var(--bad-bg) }
+    .callout.warn { border-color:var(--warn); background:var(--warn-bg) }
+    .scroll { overflow-x:auto }
+    table { width:100%; border-collapse:collapse; margin:12px 0 20px; font-size:13px }
+    th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top }
+    th { background:#f5f7f9; font-weight:650 }
+    td.n,th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+    .pass { color:var(--ok); font-weight:700 }
+    .fail { color:var(--bad); font-weight:700 }
+    .screen { color:var(--warn); font-weight:700 }
+    code { background:#eef1f4; padding:1px 4px; font-size:.92em }
+    ol,ul { padding-left:22px }
+    li { margin:5px 0 }
+    .formula { font:600 16px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+      background:#f5f7f9; border:1px solid var(--line); padding:12px 16px; overflow:auto }
+    .bars { margin:12px 0 20px }
+    .barrow { display:grid; grid-template-columns:150px 1fr 88px; gap:10px; align-items:center; margin:8px 0; font-size:13px }
+    .bar { background:#e8edf2; height:14px }
+    .bar i { display:block; height:100%; background:var(--brand) }
+    .bar i.bad { background:var(--bad) }
+    .toc { columns:2; margin:0 }
+    footer { color:var(--muted); font-size:12px; padding:8px 2px }
+    @media (max-width:800px) {
+      header,.section { padding:22px 18px }
+      .grid { grid-template-columns:1fr 1fr }
+      .toc { columns:1 }
+      .barrow { grid-template-columns:110px 1fr 74px }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>经典农场 3000 万 DAU 容量评估报告</h1>
+    <p class="sub">单实例安全下界标定 + 2 倍弱扩展校验</p>
+    <div class="meta">
+      <span>测试日期：2026-08-19</span>
+      <span>环境：单节点 K3s，32 逻辑核 / 61.5 GiB</span>
+      <span>行为模型：31 个接口混合流量</span>
+      <span>数据来源：本次源码重建镜像与当日实测，不引用历史压测值</span>
+    </div>
+    <div class="grid">
+      <div class="metric"><strong>0.9U</strong><span>已认证单实例安全下界</span></div>
+      <div class="metric"><strong>38 组</strong><span>3000 万 DAU 的算术基础量</span></div>
+      <div class="metric"><strong>&lt;88.9%</strong><span>当前半扩展拓扑的容量效率上界</span></div>
+      <div class="metric"><strong>不通过</strong><span>双分片 1.6U / 1.8U 弱扩展</span></div>
+    </div>
+    <div class="callout warn">
+      <strong>评审结论：</strong>
+      当前实现已经证明单实例可承载 0.9U，但没有证明 38 个实例可线性承载 33.33U。
+      应用扩成双实例而 MySQL、Redis 仍共享时，1.6U 即违反 P99 SLO。
+      因而“38 组”是容量除法结果和采购下界，不是生产放行结论；生产方案必须让数据层按 UID
+      与 Farm 同步分片，再补做完整弱扩展验收。
+    </div>
+  </header>
+
+  <section class="section">
+    <h2>目录</h2>
+    <ol class="toc">
+      <li>口径与方法</li><li>工作负载与 SLO</li><li>实验拓扑和资源</li>
+      <li>单实例标定结果</li><li>水平扩展结果</li><li>MySQL 锁竞争优化</li>
+      <li>3000 万 DAU 容量规划</li><li>风险、边界与验收项</li>
+    </ol>
+  </section>
+
+  <section class="section">
+    <h2>1. 口径与方法</h2>
+    <p>
+      评估不把 CPU、连接数、Actor 数分别线性拟合，而把三者按生产行为比例绑定成标准容量单元。
+      这样单次实验同时包含连接保活、Actor 常驻、业务读写和跨农场访问的交互成本。
+    </p>
+    <div class="scroll"><table>
+      <tr><th>维度</th><th class="n">1U</th><th class="n">0.9U 认证点</th><th class="n">3000 万 DAU 峰值</th></tr>
+      <tr><td>业务 QPS</td><td class="n">10,000</td><td class="n">9,000</td><td class="n">333,333</td></tr>
+      <tr><td>WebSocket 连接</td><td class="n">120,000</td><td class="n">108,000</td><td class="n">4,000,000</td></tr>
+      <tr><td>驻留 Actor</td><td class="n">162,600</td><td class="n">146,340</td><td class="n">5,420,000</td></tr>
+    </table></div>
+    <p class="formula">基础实例数 N = ceil(33.333U ÷ 0.9U) = 38</p>
+    <p>
+      该除法成立的前提是弱扩展效率可接受。因此实验分两步：
+      先固定整数配额找单实例安全下界，再保持每实例配额不变，把 Gateway、Farm、Social 扩成 2 倍，
+      检查总负载能否同步扩成 2 倍。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>2. 工作负载与 SLO</h2>
+    <h3>2.1 生产行为假设</h3>
+    <div class="scroll"><table>
+      <tr><th>参数</th><th class="n">取值</th><th>推导</th></tr>
+      <tr><td>DAU</td><td class="n">30,000,000</td><td>目标规模</td></tr>
+      <tr><td>每人每天会话</td><td class="n">2</td><td>轻度、常规、社交重度用户加权</td></tr>
+      <tr><td>活跃窗口 / 峰值系数</td><td class="n">10 小时 / 2</td><td>窗口内峰值到达率 3,333 次/秒</td></tr>
+      <tr><td>平均会话 / 操作频率</td><td class="n">20 分钟 / 5 次每分钟</td><td>峰值在线 400 万、峰值 QPS 333,333</td></tr>
+      <tr><td>接口组合</td><td class="n">31 个</td><td>按每会话 100 次业务请求的固定权重混合</td></tr>
+    </table></div>
+    <h3>2.2 硬性通过条件</h3>
+    <ul>
+      <li>目标请求发送兑现率 ≥98%。</li>
+      <li>31 个接口分别满足 P90 &lt;300ms、P99 &lt;500ms。</li>
+      <li>技术错误率 ≤0.1%；连接数和 Actor 数达到目标。</li>
+      <li>每个接口、每个发压分片至少 500 个样本。</li>
+    </ul>
+    <p class="small">
+      业务状态冲突不作为技术故障；报告中的认证轮仍优先使用夹具干净、错误为零的结果。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>3. 实验拓扑和资源</h2>
+    <h3>3.1 单实例档</h3>
+    <div class="scroll"><table>
+      <tr><th>组件</th><th class="n">副本</th><th class="n">单副本配额</th><th>说明</th></tr>
+      <tr><td>Gateway</td><td class="n">1</td><td class="n">3C / 12GiB</td><td>无状态接入层</td></tr>
+      <tr><td>Farm</td><td class="n">1</td><td class="n">3C / 10GiB</td><td>1024 个逻辑分片全部映射到 farm-0</td></tr>
+      <tr><td>Social</td><td class="n">1</td><td class="n">1C / 512MiB</td><td>社交查询</td></tr>
+      <tr><td>MySQL</td><td class="n">1</td><td class="n">6C / 6GiB</td><td>数据层单独观察，不要求利用率贴近 70%</td></tr>
+      <tr><td>Redis data / journal / presence</td><td class="n">各 1</td><td class="n">1C / 1C / 1C</td><td>三个独立进程</td></tr>
+    </table></div>
+    <h3>3.2 双实例弱扩展档</h3>
+    <p>
+      Gateway 与 Social 各 2 副本。Farm 不能简单设置 <code>replicas=2</code>：
+      同一 UID 的 Actor 不能同时驻留两个实例，因此使用静态分片，
+      逻辑片 0–511 路由到 farm-0，512–1023 路由到 farm-1。
+      MySQL 和三组 Redis 在本轮仍为共享单实例——这是实验结果最重要的边界。
+    </p>
+    <p>
+      双实例档每个 Gateway 3C/9GiB、每个 Farm 3C/10GiB、每个 Social 1C/256MiB；
+      MySQL 6C/6GiB。发压器固定 3 个 Pod，不计入容量单元。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>4. 单实例标定结果</h2>
+    <div class="scroll"><table>
+      <tr>
+        <th>档位</th><th class="n">时长</th><th class="n">请求数</th><th class="n">技术错误</th>
+        <th class="n">最差 P90</th><th class="n">最差 P99</th><th class="n">失败接口</th><th>结论</th>
+      </tr>
+      <tr>
+        <td>0.9U</td><td class="n">180s</td><td class="n">1,620,000</td><td class="n">0</td>
+        <td class="n">7.0ms</td><td class="n">259.4ms</td><td class="n">0 / 31</td><td class="pass">通过</td>
+      </tr>
+      <tr>
+        <td>1.0U</td><td class="n">180s</td><td class="n">1,800,000</td><td class="n">0</td>
+        <td class="n">21.3ms</td><td class="n">967.1ms</td><td class="n">27 / 31</td><td class="fail">失败</td>
+      </tr>
+    </table></div>
+    <div class="bars">
+      <div class="barrow"><span>0.9U 最差 P99</span><div class="bar"><i style="width:51.9%"></i></div><span>259 / 500</span></div>
+      <div class="barrow"><span>1.0U 最差 P99</span><div class="bar"><i class="bad" style="width:100%"></i></div><span>967 / 500</span></div>
+    </div>
+    <div class="callout ok">
+      单实例安全下界为 <strong>0.9U</strong>，真实拐点位于 [0.9U, 1.0U)。
+      本项目按用户要求不继续二分，因此不能把 0.95U 或其他中间值写成已认证容量。
+    </div>
+    <h3>4.1 0.9U 资源水位</h3>
+    <div class="scroll"><table>
+      <tr><th>组件</th><th class="n">CPU P95 / 配额</th><th class="n">CPU 利用率</th><th class="n">内存峰值 / 配额</th><th class="n">内存利用率</th></tr>
+      <tr><td>Gateway</td><td class="n">1.99 / 3C</td><td class="n">66%</td><td class="n">7.17 / 12GiB</td><td class="n">60%</td></tr>
+      <tr><td>Farm</td><td class="n">2.13 / 3C</td><td class="n">71%</td><td class="n">6.97 / 10GiB</td><td class="n">70%</td></tr>
+      <tr><td>Social</td><td class="n">0.44 / 1C</td><td class="n">44%</td><td class="n">0.11 / 0.5GiB</td><td class="n">22%</td></tr>
+      <tr><td>MySQL</td><td class="n">1.60 / 6C</td><td class="n">27%</td><td class="n">2.92 / 6GiB</td><td class="n">49%</td></tr>
+    </table></div>
+    <p>
+      应用层达到了预设口径：Gateway 与 Farm CPU 接近 70%，Farm 内存也接近 70%；
+      Social 明显偏轻，但保留 1C 整数配额便于调度。MySQL 的内存受数据体量和连接峰值影响，
+      不用 70% 作为定档条件。
+    </p>
+  </section>
+
+  <section class="section">
+    <h2>5. 水平扩展结果</h2>
+    <div class="scroll"><table>
+      <tr>
+        <th>轮次</th><th class="n">总负载</th><th class="n">时长</th><th class="n">技术错误</th>
+        <th class="n">最差 P90</th><th class="n">最差 P99</th><th class="n">Farm CPU/实例</th><th>结论</th>
+      </tr>
+      <tr><td>双分片基线</td><td class="n">1.6U</td><td class="n">180s</td><td class="n">12</td><td class="n">75.9ms</td><td class="n">922.8ms</td><td class="n">2.43C</td><td class="fail">失败</td></tr>
+      <tr><td>双分片、MySQL 6C</td><td class="n">1.8U</td><td class="n">180s</td><td class="n">7</td><td class="n">143.4ms</td><td class="n">1,232.1ms</td><td class="n">2.42C</td><td class="fail">失败</td></tr>
+      <tr><td>outbox DELETE</td><td class="n">1.8U</td><td class="n">120s</td><td class="n">3</td><td class="n">187.2ms</td><td class="n">1,466.2ms</td><td class="n">2.44C</td><td class="fail">失败</td></tr>
+      <tr><td>READ COMMITTED</td><td class="n">1.8U</td><td class="n">120s</td><td class="n">3</td><td class="n">174.2ms</td><td class="n">1,373.0ms</td><td class="n">2.48C</td><td class="fail">失败</td></tr>
+      <tr><td>按 Farm 分区 outbox</td><td class="n">1.8U</td><td class="n">45s</td><td class="n">0</td><td class="n">261.4ms</td><td class="n">1,370.5ms</td><td class="n">2.37C</td><td class="screen">筛选失败</td></tr>
+    </table></div>
+    <h3>5.1 扩展效率应如何表述</h3>
+    <p>
+      单实例认证容量 C₁=0.9U。双实例在 1.6U 已经失败，因此双实例 SLO 容量 C₂&lt;1.6U：
+    </p>
+    <p class="formula">E_capacity = C₂ ÷ (2 × C₁) &lt; 1.6 ÷ 1.8 = 88.9%</p>
+    <p>
+      这只是上界，不是精确效率；没有双实例通过点，不能严谨地写成 71% 或其他单值。
+      而且本轮只扩了应用，未扩 MySQL/Redis，测得的是“应用扩容、数据层共享”的半扩展拓扑。
+    </p>
+    <h3>5.2 同负载下的实例开销</h3>
+    <div class="scroll"><table>
+      <tr><th>服务</th><th class="n">单实例 0.9U</th><th class="n">双实例 1.8U（每实例仍 0.9U）</th><th class="n">额外 CPU</th><th class="n">CPU 效率代理</th></tr>
+      <tr><td>Gateway</td><td class="n">1.99C</td><td class="n">2.10C</td><td class="n">+5.5%</td><td class="n">94.8%</td></tr>
+      <tr><td>Farm</td><td class="n">2.13C</td><td class="n">2.44C</td><td class="n">+14.6%</td><td class="n">87.3%</td></tr>
+    </table></div>
+    <p>
+      Farm 的额外成本来自跨分片 RPC、跨实例结果投递和共享数据层竞争。
+      该 CPU 比值可以指导配额，但不能替代逐接口 P99 的容量效率。
+    </p>
+    <h3>5.3 扩容前：配额与资源利用率</h3>
+    <p class="small">
+      数据源：<code>e-ceil-09u</code>，0.9U，180 秒。CPU 为 C 窗口平均值，
+      内存为 working set 峰值；配额与利用率均按同一服务的全部副本汇总。
+    </p>
+    <div class="scroll"><table>
+      <tr>
+        <th>服务</th><th class="n">副本</th><th class="n">CPU 配额</th><th class="n">CPU 平均</th>
+        <th class="n">CPU 利用率</th><th class="n">内存配额</th><th class="n">内存峰值</th><th class="n">内存利用率</th>
+      </tr>
+      <tr><td>Gateway</td><td class="n">1</td><td class="n">3C</td><td class="n">1.88C</td><td class="n">62.7%</td><td class="n">12GiB</td><td class="n">7.17GiB</td><td class="n">59.8%</td></tr>
+      <tr><td>Farm</td><td class="n">1</td><td class="n">3C</td><td class="n">1.96C</td><td class="n">65.3%</td><td class="n">10GiB</td><td class="n">6.97GiB</td><td class="n">69.7%</td></tr>
+      <tr><td>Social</td><td class="n">1</td><td class="n">1C</td><td class="n">0.40C</td><td class="n">39.7%</td><td class="n">0.5GiB</td><td class="n">0.11GiB</td><td class="n">21.0%</td></tr>
+      <tr><td>MySQL</td><td class="n">1</td><td class="n">6C</td><td class="n">1.28C</td><td class="n">21.3%</td><td class="n">6GiB</td><td class="n">2.92GiB</td><td class="n">48.7%</td></tr>
+      <tr><td>Redis data</td><td class="n">1</td><td class="n">1C</td><td class="n">0.25C</td><td class="n">25.3%</td><td class="n">1.75GiB</td><td class="n">0.41GiB</td><td class="n">23.3%</td></tr>
+      <tr><td>Redis journal</td><td class="n">1</td><td class="n">1C</td><td class="n">0.44C</td><td class="n">44.1%</td><td class="n">1GiB</td><td class="n">0.01GiB</td><td class="n">1.2%</td></tr>
+      <tr><td>Redis presence</td><td class="n">1</td><td class="n">1C</td><td class="n">0.30C</td><td class="n">29.5%</td><td class="n">0.75GiB</td><td class="n">0.05GiB</td><td class="n">6.7%</td></tr>
+    </table></div>
+
+    <h3>5.4 扩容后：配额与资源利用率</h3>
+    <p class="small">
+      数据源：<code>m-scale2-18u-rc</code>，1.8U，120 秒。Gateway、Farm、Social 扩为两份；
+      MySQL 与三组 Redis 仍为共享单实例，这也是扩容后尾延迟的主要边界。
+    </p>
+    <div class="scroll"><table>
+      <tr>
+        <th>服务</th><th class="n">副本</th><th class="n">CPU 总配额</th><th class="n">CPU 平均</th>
+        <th class="n">CPU 利用率</th><th class="n">内存总配额</th><th class="n">内存峰值合计</th><th class="n">内存利用率</th>
+      </tr>
+      <tr><td>Gateway</td><td class="n">2</td><td class="n">6C</td><td class="n">4.03C</td><td class="n">67.1%</td><td class="n">18GiB</td><td class="n">14.17GiB</td><td class="n">78.7%</td></tr>
+      <tr><td>Farm</td><td class="n">2</td><td class="n">6C</td><td class="n">4.65C</td><td class="n">77.6%</td><td class="n">20GiB</td><td class="n">13.57GiB</td><td class="n">67.9%</td></tr>
+      <tr><td>Social</td><td class="n">2</td><td class="n">2C</td><td class="n">0.86C</td><td class="n">42.9%</td><td class="n">0.5GiB</td><td class="n">0.17GiB</td><td class="n">34.4%</td></tr>
+      <tr><td>MySQL</td><td class="n">1</td><td class="n">6C</td><td class="n">3.74C</td><td class="n">62.4%</td><td class="n">6GiB</td><td class="n">3.53GiB</td><td class="n">58.9%</td></tr>
+      <tr><td>Redis data</td><td class="n">1</td><td class="n">1C</td><td class="n">0.48C</td><td class="n">47.5%</td><td class="n">0.625GiB</td><td class="n">0.56GiB</td><td class="n">89.9%</td></tr>
+      <tr><td>Redis journal</td><td class="n">1</td><td class="n">2C</td><td class="n">0.86C</td><td class="n">42.9%</td><td class="n">0.5GiB</td><td class="n">0.02GiB</td><td class="n">4.4%</td></tr>
+      <tr><td>Redis presence</td><td class="n">1</td><td class="n">1C</td><td class="n">0.53C</td><td class="n">53.3%</td><td class="n">0.375GiB</td><td class="n">0.10GiB</td><td class="n">25.3%</td></tr>
+    </table></div>
+
+    <h3>5.5 扩容前后逐接口对比</h3>
+    <p class="small">
+      “发送 / QPS”中的 QPS 按各自稳态窗口计算；P90/P99 取三个发压分片中的最差值。
+      扩容前共 162 万请求、0 错误、31/31 通过；扩容后共 216 万请求、3 个技术错误、
+      31/31 因 P99 超过 500ms 而失败。
+    </p>
+    <div class="scroll"><table style="min-width:1420px">
+      <tr>
+        <th rowspan="2">接口</th>
+        <th colspan="5">扩容前：0.9U / 1×应用</th>
+        <th colspan="5">扩容后：1.8U / 2×应用</th>
+      </tr>
+      <tr>
+        <th class="n">发送 / QPS</th><th class="n">P90 ms</th><th class="n">P99 ms</th><th class="n">错误率</th><th>SLO</th>
+        <th class="n">发送 / QPS</th><th class="n">P90 ms</th><th class="n">P99 ms</th><th class="n">错误率</th><th>SLO</th>
+      </tr>
+      <tr><td>购买<br><code>buy</code></td><td class="n">39,042 / 216.9</td><td class="n">5.6</td><td class="n">166.4</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">52,194 / 434.9</td><td class="n">93.1</td><td class="n fail">847.7</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>铲除<br><code>clear</code></td><td class="n">42,186 / 234.4</td><td class="n">5.5</td><td class="n">139.9</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">56,151 / 467.9</td><td class="n">93.7</td><td class="n fail">915.1</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>图鉴<br><code>codex-list</code></td><td class="n">35,433 / 196.8</td><td class="n">3.7</td><td class="n">140.4</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">46,968 / 391.4</td><td class="n">60.3</td><td class="n fail">1,072.7</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>进入好友农场<br><code>enter-friend</code></td><td class="n">82,572 / 458.7</td><td class="n">5.3</td><td class="n">122.6</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">110,427 / 920.2</td><td class="n">131.9</td><td class="n fail">995.5</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>进入自己农场<br><code>enter-self</code></td><td class="n">16,608 / 92.3</td><td class="n">3.6</td><td class="n">141.3</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">22,233 / 185.3</td><td class="n">84.9</td><td class="n fail">1,092.9</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>施肥<br><code>fertilize</code></td><td class="n">50,499 / 280.6</td><td class="n">5.8</td><td class="n">151.3</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">67,491 / 562.4</td><td class="n">104.5</td><td class="n fail">1,002.6</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>好友列表<br><code>friend-list</code></td><td class="n">90,726 / 504.0</td><td class="n">3.4</td><td class="n">118.6</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">121,356 / 1,011.3</td><td class="n">38.0</td><td class="n fail">809.6</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>生成分享<br><code>gen-share</code></td><td class="n">20,892 / 116.1</td><td class="n">1.8</td><td class="n">104.1</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">27,798 / 231.7</td><td class="n">27.1</td><td class="n fail">1,023.0</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>收获<br><code>harvest</code></td><td class="n">80,952 / 449.7</td><td class="n">5.5</td><td class="n">121.2</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">107,820 / 898.5</td><td class="n">93.2</td><td class="n fail">1,093.8</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>好友申请列表<br><code>list-friend-requests</code></td><td class="n">75,768 / 420.9</td><td class="n">2.5</td><td class="n">115.8</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">101,226 / 843.5</td><td class="n">37.4</td><td class="n fail">826.1</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>领取邮件<br><code>mail-claim</code></td><td class="n">19,623 / 109.0</td><td class="n">6.2</td><td class="n">221.2</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">26,010 / 216.8</td><td class="n">111.3</td><td class="n fail">891.3</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>删除邮件<br><code>mail-delete</code></td><td class="n">3,165 / 17.6</td><td class="n">4.9</td><td class="n">160.5</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">4,296 / 35.8</td><td class="n">116.2</td><td class="n fail">1,235.5</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>邮件列表<br><code>mail-list</code></td><td class="n">72,882 / 404.9</td><td class="n">5.2</td><td class="n">212.7</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">97,242 / 810.4</td><td class="n">119.1</td><td class="n fail">1,185.6</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>读邮件<br><code>mail-read</code></td><td class="n">33,753 / 187.5</td><td class="n">6.0</td><td class="n">138.6</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">45,285 / 377.4</td><td class="n">135.5</td><td class="n fail">879.4</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>除虫（跨园）<br><code>pest-cross</code></td><td class="n">27,438 / 152.4</td><td class="n">6.4</td><td class="n">173.0</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">36,723 / 306.0</td><td class="n">160.4</td><td class="n fail">1,023.0</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>除虫（本园）<br><code>pest-local</code></td><td class="n">42,546 / 236.4</td><td class="n">5.9</td><td class="n">167.3</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">56,796 / 473.3</td><td class="n">96.8</td><td class="n fail">1,089.4</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>激活宠物<br><code>pet-activate</code></td><td class="n">3,168 / 17.6</td><td class="n">6.4</td><td class="n">180.3</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">4,335 / 36.1</td><td class="n">83.7</td><td class="n fail">899.2</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>喂养宠物<br><code>pet-feed</code></td><td class="n">30,903 / 171.7</td><td class="n">5.7</td><td class="n">128.6</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">40,896 / 340.8</td><td class="n">97.5</td><td class="n fail">1,059.2</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>宠物状态<br><code>pet-status</code></td><td class="n">38,652 / 214.7</td><td class="n">3.4</td><td class="n">131.3</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">51,231 / 426.9</td><td class="n">53.3</td><td class="n fail">1,007.1</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>种植<br><code>plant</code></td><td class="n">69,066 / 383.7</td><td class="n">5.5</td><td class="n">130.1</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">91,641 / 763.7</td><td class="n">95.8</td><td class="n fail">932.6</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>搜索用户<br><code>search-user</code></td><td class="n">43,788 / 243.3</td><td class="n">2.6</td><td class="n">100.8</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">58,656 / 488.8</td><td class="n">44.1</td><td class="n fail">999.2</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>出售<br><code>sell</code></td><td class="n">30,513 / 169.5</td><td class="n">6.1</td><td class="n">190.2</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">40,950 / 341.2</td><td class="n">100.1</td><td class="n fail">1,134.3</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>偷菜<br><code>steal</code></td><td class="n">67,971 / 377.6</td><td class="n">6.3</td><td class="n">159.0</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">90,330 / 752.8</td><td class="n">171.7</td><td class="n fail">1,015.5</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>同步<br><code>sync</code></td><td class="n">62,808 / 348.9</td><td class="n">5.3</td><td class="n">193.5</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">83,808 / 698.4</td><td class="n">85.4</td><td class="n fail">1,131.1</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>领取任务奖励<br><code>task-claim</code></td><td class="n">38,349 / 213.1</td><td class="n">5.7</td><td class="n">213.5</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">51,369 / 428.1</td><td class="n">93.1</td><td class="n fail">1,164.0</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>任务列表<br><code>task-list</code></td><td class="n">156,387 / 868.8</td><td class="n">3.4</td><td class="n">134.2</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">207,765 / 1,731.4</td><td class="n">66.4</td><td class="n fail">1,001.7</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>翻地<br><code>till</code></td><td class="n">41,949 / 233.1</td><td class="n">5.7</td><td class="n">207.2</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">56,091 / 467.4</td><td class="n">107.8</td><td class="n fail">930.6</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>浇水（跨园）<br><code>water-cross</code></td><td class="n">68,502 / 380.6</td><td class="n">7.0</td><td class="n">259.4</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">91,026 / 758.5</td><td class="n">156.0</td><td class="n fail">1,022.7</td><td class="n">0.0033%</td><td class="fail">失败</td></tr>
+      <tr><td>浇水（本园）<br><code>water-local</code></td><td class="n">138,252 / 768.1</td><td class="n">5.7</td><td class="n">142.8</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">184,224 / 1,535.2</td><td class="n">104.8</td><td class="n fail">1,185.2</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>除草（跨园）<br><code>weed-cross</code></td><td class="n">42,258 / 234.8</td><td class="n">6.3</td><td class="n">136.7</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">56,394 / 469.9</td><td class="n">174.2</td><td class="n fail">1,373.0</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+      <tr><td>除草（本园）<br><code>weed-local</code></td><td class="n">53,349 / 296.4</td><td class="n">5.4</td><td class="n">142.5</td><td class="n">0.0000%</td><td class="pass">通过</td><td class="n">71,268 / 593.9</td><td class="n">86.5</td><td class="n fail">817.2</td><td class="n">0.0000%</td><td class="fail">失败</td></tr>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <h2>6. MySQL 锁竞争优化</h2>
+    <p>
+      性能数据库的语句摘要定位到热点：
+      <code>DELETE FROM farm_outbox WHERE event_id IN (...)</code> 的锁等待占总耗时 96.5%。
+      原索引以 <code>published_at</code> 开头，而所有待投递行该字段均为 NULL；
+      两个 Farm dispatcher 会在同一索引区间执行 claim 与 DELETE。
+    </p>
+    <div class="scroll"><table>
+      <tr><th>阶段</th><th>改动</th><th class="n">DELETE 锁等待占比</th><th class="n">单次 DELETE</th><th class="n">系统行锁等待</th><th>结果</th></tr>
+      <tr><td>初始</td><td>REPEATABLE READ + 共享热区</td><td class="n">96.5%</td><td class="n">22.5ms</td><td class="n">23.4/s</td><td class="fail">严重竞争</td></tr>
+      <tr><td>RC 探针</td><td>READ COMMITTED，消除 next-key gap lock</td><td class="n">51.4%</td><td class="n">1.0ms</td><td class="n">10–12/s</td><td class="pass">单语句快约 22×</td></tr>
+      <tr><td>实例分区</td><td>增加 producer_farm_id，claim/ack 限定实例索引区间</td><td class="n">28.2%</td><td class="n">0.94ms</td><td class="n">7.9/s</td><td class="pass">跨实例锁区间隔离</td></tr>
+    </table></div>
+    <p>
+      分区实现没有动态创建 N 张表，而是在同表增加 <code>producer_farm_id</code>，
+      索引改为 <code>(producer_farm_id, published_at, dead_lettered_at, next_attempt_at, created_at)</code>。
+      该方式具备相同的锁区间隔离效果，同时更容易迁移、备份和扩容。
+    </p>
+    <div class="callout warn">
+      锁优化是真实有效的，但 1.8U P99 仍停在约 1.37 秒，说明 outbox 锁不是唯一瓶颈。
+      当前最合理的下一步不是继续微调 DELETE，而是把 MySQL、Redis journal 与 Farm 一起按 UID 分片，
+      再重复弱扩展实验。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>7. 3000 万 DAU 容量规划</h2>
+    <h3>7.1 应用层基础规划</h3>
+    <p>
+      按 0.9U 认证点做容量除法需要 38 组。考虑双分片时 Farm CPU 增加 14.6%，
+      不建议继续使用 3C 卡在 81% 水位；将 Farm 调为 4C 后，实测同负载 CPU 水位约 61%。
+    </p>
+    <div class="scroll"><table>
+      <tr><th>服务</th><th class="n">基础数量</th><th class="n">单实例规格</th><th class="n">合计 CPU</th><th class="n">合计内存</th><th>依据</th></tr>
+      <tr><td>Gateway</td><td class="n">38</td><td class="n">3C / 10GiB</td><td class="n">114C</td><td class="n">380GiB</td><td>0.9U 单实例 + 5.5% 扩展开销，约 70% CPU、72% 内存</td></tr>
+      <tr><td>Farm</td><td class="n">38</td><td class="n">4C / 10GiB</td><td class="n">152C</td><td class="n">380GiB</td><td>吸收 14.6% 跨分片 CPU 开销</td></tr>
+      <tr><td>Social</td><td class="n">24</td><td class="n">1C / 1GiB</td><td class="n">24C</td><td class="n">24GiB</td><td>0.44C/0.9U，按 70% 水位取整</td></tr>
+      <tr><td><strong>应用合计</strong></td><td class="n"></td><td class="n"></td><td class="n"><strong>290C</strong></td><td class="n"><strong>784GiB</strong></td><td>不含数据层与容灾副本</td></tr>
+    </table></div>
+    <h3>7.2 三可用区容量</h3>
+    <p>
+      若要求任意一个可用区失效后仍保有全部基础容量，应用数量按 1.5 倍配置：
+      Gateway 57、Farm 57、Social 36，三者合计约 435C / 1,176GiB。
+      这是容量冗余；MySQL、Redis 的副本数还需按各自高可用协议另算。
+    </p>
+    <h3>7.3 数据层必须单独规划</h3>
+    <ul>
+      <li><strong>证据最保守的方案：</strong>MySQL 写分片与 38 个 Farm 分片一一对齐；每个分片承接约 0.9U。减少 MySQL 分片数前，必须补测 2 Farm : 1 MySQL 的生产耐久配置。</li>
+      <li><strong>Redis journal：</strong>流键已经按 Farm 实例隔离，生产应把 keyspace 或实例也按 Farm 分片拆分，避免把 38 份单线程负载压到一个 Redis 主节点。</li>
+      <li><strong>Redis data / presence：</strong>按 UID 一致性哈希分片；容量由最热分片命令率和内存决定，不按应用 Pod 数机械相乘。</li>
+      <li><strong>MySQL 内存：</strong>本轮 2.92–3.74GiB 只反映测试数据集，不代表 3000 万用户的数据工作集；生产内存、磁盘和 IOPS 必须按数据量、索引量、保留期另算。</li>
+    </ul>
+    <div class="callout">
+      <strong>推荐落地口径：</strong>
+      先按 38 Gateway + 38 Farm + 24 Social 做应用采购基线；
+      Farm 用 4C 而不是 3C。数据层以 38 个 UID 分区为安全起点，
+      在目标硬件上通过“2 Farm : 1 DB”“4 Farm : 1 DB”阶梯实验后再合并分区，不能直接假设共享数据库线性扩展。
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>8. 风险、边界与验收项</h2>
+    <div class="callout bad">
+      当前报告是容量实验结论，不是生产上线签字。最关键的缺口是：
+      双实例实验没有同步扩展数据层，因此完整 2 倍弱扩展尚未通过。
+    </div>
+    <ol>
+      <li><strong>生产耐久性：</strong>测试使用 <code>innodb_flush_log_at_trx_commit=2</code>、<code>sync_binlog=0</code>、<code>innodb_doublewrite=OFF</code>。生产若要求事务与 binlog 强持久，需恢复安全设置并重测；容量只会持平或下降。</li>
+      <li><strong>快速轮用途：</strong>45 秒分区轮满足最低样本数，只用于筛选；最终放行需 180 秒标准轮和至少 600 秒浸泡轮。</li>
+      <li><strong>跨节点网络：</strong>单节点 K3s 未覆盖真实跨节点 RTT、负载均衡器、可用区网络和数十实例连接矩阵。</li>
+      <li><strong>分片偏斜：</strong>1024 逻辑片映射到 38 个 Farm 时不能完全均分；最热实例为 27 片，相对理想均值约高 0.2%，影响很小。</li>
+      <li><strong>行为模型：</strong>结果只适用于当前 31 接口权重、连接密度和 Actor 保留策略。埋点校准后若会话时长、操作频率或跨农场占比变化，应重新计算 U。</li>
+      <li><strong>下一次标准验收：</strong>2×Gateway、2×Farm、2×MySQL 分区、2×Redis journal 分区，在 1.8U 跑 180 秒；通过后才能把 2 倍扩展效率写成 100% 附近的实测值。</li>
+    </ol>
+  </section>
+
+  <section class="section">
+    <h2>原始证据索引</h2>
+    <ul>
+      <li>单实例认证：<code>bench/results/ceiling-20260819/e-ceil-09u/</code></li>
+      <li>单实例失败点：<code>bench/results/ceiling-20260819/e-ceil-10u/</code></li>
+      <li>双分片 1.6U：<code>bench/results/ceiling-20260819/f-scale2-16u/</code></li>
+      <li>双分片 1.8U 最终干净轮：<code>bench/results/ceiling-20260819/k-scale2-18u-final/</code></li>
+      <li>READ COMMITTED 干净轮：<code>bench/results/ceiling-20260819/m-scale2-18u-rc/</code></li>
+      <li>outbox 实例分区快速轮：<code>bench/results/ceiling-20260819/n-scale2-18u-partition-quick/</code></li>
+      <li>行为模型：<code>bench/model/user-behavior.capacity-100-v1.json</code></li>
+    </ul>
+  </section>
+
+  <footer>
+    结论版本：2026-08-19 23:00。报告中的“通过”均指逐接口 SLO 通过；
+    “筛选”不替代标准时长认证。
+  </footer>
+</main>
+</body>
+</html>

@@ -56,14 +56,16 @@ func (s *Store) InsertOutboxEvents(ctx context.Context, events []outbox.Event) e
 	now := time.Now().UnixMilli()
 	nextAttemptAt := now + outboxInitialDelay.Milliseconds()
 	values := make([]string, 0, len(events))
-	args := make([]any, 0, len(events)*7)
+	args := make([]any, 0, len(events)*8)
+	farmID := s.outboxScope()
 	for _, event := range events {
 		if event.EventID == "" || event.TargetUID == 0 || event.Kind == "" || len(event.Payload) == 0 {
 			return errors.New("store: invalid outbox event")
 		}
-		values = append(values, "(?, ?, ?, ?, ?, 0, ?, NULL, ?)")
+		values = append(values, "(?, ?, ?, ?, ?, ?, 0, ?, NULL, ?)")
 		args = append(args,
 			event.EventID,
+			farmID,
 			event.ProducerUID,
 			event.TargetUID,
 			string(event.Kind),
@@ -73,7 +75,7 @@ func (s *Store) InsertOutboxEvents(ctx context.Context, events []outbox.Event) e
 		)
 	}
 	query := `INSERT INTO farm_outbox (
-		event_id, producer_uid, target_uid, kind, payload,
+		event_id, producer_farm_id, producer_uid, target_uid, kind, payload,
 		attempts, next_attempt_at, published_at, created_at
 	) VALUES ` + strings.Join(values, ",") + `
 	ON DUPLICATE KEY UPDATE event_id = event_id`
@@ -105,13 +107,14 @@ func (s *Store) ClaimDueOutbox(ctx context.Context, limit int, now int64) ([]Out
 	rows, err := tx.QueryContext(ctx, `
 		SELECT event_id, producer_uid, target_uid, kind, payload, attempts
 		FROM farm_outbox
-		WHERE published_at IS NULL
+		WHERE producer_farm_id = ?
+		  AND published_at IS NULL
 		  AND dead_lettered_at IS NULL
 		  AND next_attempt_at <= ?
 		  AND (claim_until IS NULL OR claim_until <= ?)
 		ORDER BY next_attempt_at ASC, created_at ASC
 		LIMIT ?
-		FOR UPDATE SKIP LOCKED`, now, now, limit)
+		FOR UPDATE SKIP LOCKED`, s.outboxScope(), now, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: select due outbox: %w", err)
 	}
@@ -140,15 +143,15 @@ func (s *Store) ClaimDueOutbox(ctx context.Context, limit int, now int64) ([]Out
 	}
 
 	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids)+2)
-	args = append(args, token, claimUntil)
+	args := make([]any, 0, len(ids)+3)
+	args = append(args, token, claimUntil, s.outboxScope())
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
 	update := `UPDATE farm_outbox
 		SET claim_token = ?, claim_until = ?
-		WHERE event_id IN (` + strings.Join(placeholders, ",") + `)`
+		WHERE producer_farm_id = ? AND event_id IN (` + strings.Join(placeholders, ",") + `)`
 	if _, err := tx.ExecContext(ctx, update, args...); err != nil {
 		return nil, fmt.Errorf("store: claim outbox rows: %w", err)
 	}
@@ -158,15 +161,21 @@ func (s *Store) ClaimDueOutbox(ctx context.Context, limit int, now int64) ([]Out
 	return claimed, nil
 }
 
+// MarkOutboxPublished 直接删除已投递的行，而不是把 published_at 从 NULL 改成
+// 时间戳。published_at 是 idx_outbox_publish 的首列，改值会让索引条目从 NULL 区
+// 搬到时间戳区（一删一插），而已投递的行留着只是等 24 小时后被清理——2 倍水平
+// 扩展一轮压测就积压 61.7 万行，越积随机写越多。删除让表稳定在"在途事件"的量级。
+//
+// 幂等性不受影响：event_id 是主键，重放期内的重复 INSERT 仍命中 ON DUPLICATE
+// KEY；行删除后若真被重新插入，接收方按 CrossReceipts 去重。
 func (s *Store) MarkOutboxPublished(ctx context.Context, eventID string) error {
 	if s == nil || s.db == nil || eventID == "" {
 		return errors.New("store: invalid mark published")
 	}
-	now := time.Now().UnixMilli()
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE farm_outbox
-		SET published_at = ?, dead_lettered_at = NULL, claim_token = NULL, claim_until = NULL
-		WHERE event_id = ? AND published_at IS NULL`, now, eventID)
+		DELETE FROM farm_outbox
+		WHERE producer_farm_id = ? AND event_id = ? AND published_at IS NULL`,
+		s.outboxScope(), eventID)
 	if err != nil {
 		return fmt.Errorf("store: mark outbox published: %w", err)
 	}
@@ -184,7 +193,7 @@ func (s *Store) MarkOutboxPublishedBatch(ctx context.Context, eventIDs []string)
 	}
 	placeholders := make([]string, len(eventIDs))
 	args := make([]any, 0, len(eventIDs)+1)
-	args = append(args, time.Now().UnixMilli())
+	args = append(args, s.outboxScope())
 	for index, eventID := range eventIDs {
 		if eventID == "" {
 			return errors.New("store: invalid mark published batch event")
@@ -193,9 +202,9 @@ func (s *Store) MarkOutboxPublishedBatch(ctx context.Context, eventIDs []string)
 		args = append(args, eventID)
 	}
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE farm_outbox
-		SET published_at = ?, dead_lettered_at = NULL, claim_token = NULL, claim_until = NULL
-		WHERE event_id IN (`+strings.Join(placeholders, ",")+`) AND published_at IS NULL`, args...)
+		DELETE FROM farm_outbox
+		WHERE producer_farm_id = ? AND event_id IN (`+strings.Join(placeholders, ",")+`)
+		  AND published_at IS NULL`, args...)
 	if err != nil {
 		return fmt.Errorf("store: mark outbox published batch: %w", err)
 	}
@@ -209,8 +218,8 @@ func (s *Store) MarkOutboxRetry(ctx context.Context, eventID string, attempts in
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE farm_outbox
 		SET attempts = ?, next_attempt_at = ?, claim_token = NULL, claim_until = NULL
-		WHERE event_id = ? AND published_at IS NULL`,
-		attempts, nextAttemptAt, eventID)
+		WHERE producer_farm_id = ? AND event_id = ? AND published_at IS NULL`,
+		attempts, nextAttemptAt, s.outboxScope(), eventID)
 	if err != nil {
 		return fmt.Errorf("store: mark outbox retry: %w", err)
 	}
@@ -224,8 +233,8 @@ func (s *Store) MarkOutboxDeadLetter(ctx context.Context, eventID string, attemp
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE farm_outbox
 		SET attempts = ?, dead_lettered_at = ?, claim_token = NULL, claim_until = NULL
-		WHERE event_id = ? AND published_at IS NULL`,
-		attempts, time.Now().UnixMilli(), eventID)
+		WHERE producer_farm_id = ? AND event_id = ? AND published_at IS NULL`,
+		attempts, time.Now().UnixMilli(), s.outboxScope(), eventID)
 	if err != nil {
 		return fmt.Errorf("store: mark outbox dead letter: %w", err)
 	}
@@ -238,7 +247,8 @@ func (s *Store) DeletePublishedOutboxBefore(ctx context.Context, before int64) (
 	}
 	result, err := s.db.ExecContext(ctx, `
 		DELETE FROM farm_outbox
-		WHERE published_at IS NOT NULL AND published_at < ?`, before)
+		WHERE producer_farm_id = ? AND published_at IS NOT NULL AND published_at < ?`,
+		s.outboxScope(), before)
 	if err != nil {
 		return 0, fmt.Errorf("store: delete published outbox: %w", err)
 	}

@@ -12,7 +12,13 @@ import (
 func OpenStorage(ctx context.Context, config Config) (*store.Store, func() error, error) {
 	startupContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	storage, closeStorage, err := store.Open(startupContext, config.MySQLDSN, config.RedisAddr, 0)
+	storage, closeStorage, err := store.OpenWithPresence(
+		startupContext,
+		config.MySQLDSN,
+		config.RedisAddr,
+		Getenv("FARM_PRESENCE_REDIS_ADDR", config.RedisAddr),
+		0,
+	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: open storage: %w", config.Name, err)
 	}

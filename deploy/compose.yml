@@ -4,7 +4,25 @@ x-common-environment: &common-environment
   FARM_ENV: dev
   FARM_MYSQL_DSN: farm:farm@tcp(mysql:3306)/farm?parseTime=true&loc=Local
   FARM_REDIS_ADDR: redis:6379
+  FARM_EVENT_REDIS_ADDR: redis-journal:6379
+  FARM_PRESENCE_REDIS_ADDR: redis-presence:6379
   FARM_INTERNAL_TOKEN: dev-only-internal-token-change-me
+
+x-redis-perf: &redis-perf
+  image: redis:7-alpine
+  command:
+    - redis-server
+    - --save
+    - ""
+    - --appendonly
+    - "no"
+    - --maxmemory-policy
+    - noeviction
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 20
 
 services:
   mysql:
@@ -31,25 +49,22 @@ services:
       retries: 20
 
   redis:
-    image: redis:7-alpine
+    <<: *redis-perf
     cpus: 1.0
     mem_limit: 1g
     ports: ["127.0.0.1:6379:6379"]
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-      - --appendfsync
-      - everysec
-      - --maxmemory-policy
-      - noeviction
-    volumes:
-      - farm_redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+
+  redis-journal:
+    <<: *redis-perf
+    cpus: 1.0
+    mem_limit: 1g
+    ports: ["127.0.0.1:6380:6379"]
+
+  redis-presence:
+    <<: *redis-perf
+    cpus: 1.0
+    mem_limit: 512m
+    ports: ["127.0.0.1:6381:6379"]
 
   migrate:
     profiles: ["app"]
@@ -76,6 +91,8 @@ services:
     depends_on: &storage-dependencies
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
     environment:
       <<: *common-environment
@@ -95,6 +112,8 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
     environment:
@@ -105,7 +124,7 @@ services:
       FARM_ACTOR_MAX_RESIDENT: ${FARM_ACTOR_MAX_RESIDENT:-20000}
       FARM_COMMITTER_SHARDS: ${FARM_COMMITTER_SHARDS:-8}
       FARM_WRITE_JOURNAL_SHARDS: ${FARM_WRITE_JOURNAL_SHARDS:-32}
-      FARM_WRITE_JOURNAL_PROJECTORS: ${FARM_WRITE_JOURNAL_PROJECTORS:-4}
+      FARM_WRITE_JOURNAL_PROJECTORS: ${FARM_WRITE_JOURNAL_PROJECTORS:-32}
       FARM_WRITE_JOURNAL_BATCH: ${FARM_WRITE_JOURNAL_BATCH:-1024}
       FARM_WRITE_JOURNAL_BLOCK: ${FARM_WRITE_JOURNAL_BLOCK:-50ms}
       FARM_WRITE_JOURNAL_LATEST_TTL: ${FARM_WRITE_JOURNAL_LATEST_TTL:-24h}
@@ -149,6 +168,8 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -178,6 +199,8 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -207,6 +230,8 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       social: {condition: service_started}
       farm: {condition: service_started}
@@ -263,6 +288,8 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
     environment:
       FARM_TIME_PROFILE: ${FARM_TIME_PROFILE:-demo}
@@ -324,9 +351,11 @@ services:
     profiles: ["obs"]
     image: oliver006/redis_exporter:v1.62.0
     environment:
-      REDIS_ADDR: redis://redis:6379
+      REDIS_ADDR: redis://redis:6379,redis://redis-journal:6379,redis://redis-presence:6379
     depends_on:
       redis: {condition: service_healthy}
+      redis-journal: {condition: service_healthy}
+      redis-presence: {condition: service_healthy}
 
   cadvisor:
     profiles: ["obs"]
@@ -343,8 +372,6 @@ services:
 volumes:
   farm_mysql_data:
     name: benkz_mysql_data
-  farm_redis_data:
-    name: benkz_redis_data
   farm_prometheus_data:
     name: benkz_prometheus_data
   farm_grafana_data:

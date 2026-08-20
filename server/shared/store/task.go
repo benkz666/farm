@@ -74,49 +74,9 @@ func (s *Store) ListTasks(ctx context.Context, uid uint64, dayKey int64) ([]Task
 	// INSERT/DELETE/兼容迁移事务。进度与领取操作仍会通过 ensureDailyTasks
 	// 幂等物化任务板；这里只把尚未落库的定义合成为零写入的只读视图。
 	definitions := dailyTaskDefinitionsFor(uid, dayKey)
-	startMs, nextStartMs, validDay := gameconfig.LocalDayBounds(dayKey)
-	if !validDay {
-		startMs, nextStartMs = 0, 0
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT task_id, progress, target, reward_coin,
-		       claimed_at IS NOT NULL, FALSE AS legacy_daily_claimed
-		FROM player_task
-		WHERE uid = ? AND logic_day = ?
-		UNION ALL
-		SELECT 0, 0, 0, 0, FALSE,
-		       EXISTS(
-		           SELECT 1 FROM daily_login
-		           WHERE uid = ? AND created_at >= ? AND created_at < ?
-		       )`, uid, dayKey, uid, startMs, nextStartMs)
+	snapshot, err := s.loadTaskSnapshot(ctx, uid, dayKey)
 	if err != nil {
 		return nil, fmt.Errorf("store: list tasks: %w", err)
-	}
-	defer rows.Close()
-
-	type persistedTask struct {
-		progress uint32
-		claimed  bool
-	}
-	byID := make(map[uint32]persistedTask, len(definitions))
-	legacyDailyClaimed := false
-	for rows.Next() {
-		var id, progress, ignoredTarget uint32
-		var ignoredReward int64
-		var claimed, legacyClaimed bool
-		if err := rows.Scan(&id, &progress, &ignoredTarget, &ignoredReward, &claimed, &legacyClaimed); err != nil {
-			return nil, fmt.Errorf("store: scan task: %w", err)
-		}
-		legacyDailyClaimed = legacyDailyClaimed || legacyClaimed
-		if _, ok := dailyTaskDefinitionByID(definitions, id); ok {
-			byID[id] = persistedTask{progress: progress, claimed: claimed}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("store: iterate tasks: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, fmt.Errorf("store: close task rows: %w", err)
 	}
 
 	tasks := make([]Task, 0, len(definitions))
@@ -130,14 +90,14 @@ func (s *Store) ListTasks(ctx context.Context, uid uint64, dayKey int64) ([]Task
 			Target:     definition.target,
 			RewardCoin: definition.rewardCoin,
 		}
-		if persisted, ok := byID[definition.id]; ok {
+		if persisted, ok := snapshot.byID[definition.id]; ok {
 			task.Progress = min(persisted.progress, definition.target)
 			task.Claimed = persisted.claimed
 			if task.Claimed {
 				task.Progress = task.Target
 			}
 		}
-		if definition.id == TaskDailyLoginID && legacyDailyClaimed {
+		if definition.id == TaskDailyLoginID && snapshot.legacyDailyClaimed {
 			task.Progress = task.Target
 			task.Claimed = true
 		}

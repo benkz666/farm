@@ -94,88 +94,20 @@ func TestJournalProtoBufferPoolReturnsEmptyReusableBuffer(t *testing.T) {
 	}
 }
 
-func TestProjectionLimiterPrioritizesForegroundAndAvoidsBatchGapOscillation(t *testing.T) {
-	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 4})
+func TestProjectionLimiterKeepsConfiguredWidthUnderForegroundLoad(t *testing.T) {
+	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 8, BatchSize: 8})
 	journal.foregroundQueue.Store(1)
+	journal.appendInFlight.Store(4)
 	journal.adjustProjectionLimit()
-	journal.projectLimiter.mu.Lock()
-	limit := journal.projectLimiter.limit
-	journal.projectLimiter.mu.Unlock()
-	if limit != 1 {
-		t.Fatalf("projector limit under foreground pressure = %d, want 1", limit)
+	if limit := journal.projectLimiter.Limit(); limit != 8 {
+		t.Fatalf("projector limit under foreground pressure = %d, want 8", limit)
 	}
 
 	journal.foregroundQueue.Store(0)
-	journal.adjustProjectionLimit()
-	journal.projectLimiter.mu.Lock()
-	limit = journal.projectLimiter.limit
-	journal.projectLimiter.mu.Unlock()
-	if limit != 1 {
-		t.Fatalf("projector limit in foreground hold window = %d, want 1", limit)
-	}
-
-	journal.lastForeground.Store(time.Now().Add(-projectionForegroundHold - time.Millisecond).UnixNano())
-	journal.adjustProjectionLimit()
-	journal.projectLimiter.mu.Lock()
-	limit = journal.projectLimiter.limit
-	journal.projectLimiter.mu.Unlock()
-	if limit != 4 {
-		t.Fatalf("projector limit after foreground hold = %d, want 4", limit)
-	}
-}
-
-func TestProjectionLimiterAddsOnlyOneWorkerForConfirmedBacklog(t *testing.T) {
-	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 4, BatchSize: 8})
-	journal.foregroundQueue.Store(1)
-	journal.markProjectionBacklog(8)
-	journal.adjustProjectionLimit()
-	journal.projectLimiter.mu.Lock()
-	limit := journal.projectLimiter.limit
-	journal.projectLimiter.mu.Unlock()
-	if limit != 2 {
-		t.Fatalf("projector limit with foreground and full batch = %d, want 2", limit)
-	}
-
-	journal.projectionBacklog.Store(0)
-	journal.adjustProjectionLimit()
-	journal.projectLimiter.mu.Lock()
-	limit = journal.projectLimiter.limit
-	journal.projectLimiter.mu.Unlock()
-	if limit != 1 {
-		t.Fatalf("projector limit after backlog pressure expires = %d, want 1", limit)
-	}
-}
-
-func TestProjectionLimiterScalesFromAggregateBacklog(t *testing.T) {
-	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 8, BatchSize: 8})
-	journal.foregroundQueue.Store(1)
-
-	journal.projectionBacklog.Store(8 * projectionMediumBatches)
-	journal.adjustProjectionLimit()
-	if limit := journal.projectLimiter.Limit(); limit != 4 {
-		t.Fatalf("projector limit at medium aggregate backlog = %d, want 4", limit)
-	}
-
-	journal.projectionBacklog.Store(8 * projectionHighBatches)
+	journal.appendInFlight.Store(0)
 	journal.adjustProjectionLimit()
 	if limit := journal.projectLimiter.Limit(); limit != 8 {
-		t.Fatalf("projector limit at high aggregate backlog = %d, want 8", limit)
-	}
-}
-
-func TestProjectionLimiterPrioritizesForegroundBarrier(t *testing.T) {
-	journal := NewFarmWriteJournal(nil, nil, FarmWriteJournalConfig{Projectors: 4, BatchSize: 8})
-	journal.foregroundQueue.Store(1)
-	journal.barrierWaiters.Store(1)
-	journal.adjustProjectionLimit()
-	if limit := journal.projectLimiter.Limit(); limit != 4 {
-		t.Fatalf("projector limit while a foreground barrier waits = %d, want 4", limit)
-	}
-
-	journal.barrierWaiters.Store(0)
-	journal.adjustProjectionLimit()
-	if limit := journal.projectLimiter.Limit(); limit != 1 {
-		t.Fatalf("projector limit after foreground barrier drains = %d, want 1", limit)
+		t.Fatalf("projector limit after foreground drain = %d, want 8", limit)
 	}
 }
 
